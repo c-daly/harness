@@ -1,7 +1,9 @@
 """Content-addressed blob sidecar. Log + blobs = the unit of truth.
 
 Payloads over INLINE_THRESHOLD bytes (and all binary content) live here;
-events reference them by BlobRef. Fold operations fail loudly on missing blobs.
+events reference them by BlobRef. Fold passes BlobRefs through untouched;
+dereferencing (and loud MissingBlobError failure) happens in consumers that
+need the bytes — provider adapters and telemetry, not the fold.
 """
 
 import hashlib

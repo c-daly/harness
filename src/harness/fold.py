@@ -1,4 +1,12 @@
-"""Fold facts into state. Never executes side effects; never runs hooks."""
+"""Fold facts into state. Never executes side effects; never runs hooks.
+
+Assumes a well-formed log: seqs strictly increasing and unique (the writer's
+single monotonic counter guarantees this; the reader's repair path truncates,
+never duplicates). Unknown EVENT types are skipped (UnknownEvent falls through
+the dispatch); unknown BLOCK kinds inside ModelCallCompleted.message fail
+loudly in Message.model_validate — a conscious asymmetry: new block kinds
+require a binary upgrade, new event types must not break old readers.
+"""
 
 from dataclasses import dataclass, field
 
@@ -69,7 +77,11 @@ def fold(envelopes: list[Envelope]) -> FoldedState:
 
 def resume_repairs(state: FoldedState) -> list[ToolCallAborted]:
     """One ToolCallAborted per dangling intent. The fold cannot know whether the
-    side effect ran, so it surfaces the uncertainty instead of guessing."""
+    side effect ran, so it surfaces the uncertainty instead of guessing.
+
+    Caller contract: append these to the session log (EventLogWriter.append)
+    before the next fold — that closes the intents and renders the aborted
+    calls as error tool-results in the rebuilt transcript."""
     return [
         ToolCallAborted(call_id=call_id, reason="dangling intent at resume (crash?)")
         for call_id in sorted(state.open_intents)
