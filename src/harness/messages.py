@@ -18,6 +18,10 @@ class Role(StrEnum):
 
 class _Block(BaseModel):
     model_config = ConfigDict(frozen=True)
+    # NOTE: frozen=True blocks attribute reassignment but does NOT deep-freeze
+    # dict fields — in-place mutation of args/provider_extras is possible.
+    # Never mutate them after construction. Stored event dicts stay safe only
+    # because model_dump() copies nested dicts (regression-tested).
     provider_extras: dict[str, Any] = Field(default_factory=dict)
 
 

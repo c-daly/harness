@@ -53,3 +53,15 @@ def test_image_block_references_blob():
 
 def test_cache_hint_flag():
     assert Message.user_text("x", cache_hint=True).cache_hint is True
+
+
+def test_stored_event_dicts_are_isolated_from_live_mutation():
+    msg = Message(
+        role=Role.ASSISTANT,
+        blocks=(
+            ToolCallBlock(call_id=CallId("c1"), tool=ToolName("bash"), args={"command": "ls"}),
+        ),
+    )
+    dumped = msg.model_dump()
+    msg.blocks[0].args["command"] = "changed"  # frozen does not deep-freeze dicts
+    assert dumped["blocks"][0]["args"]["command"] == "ls"
