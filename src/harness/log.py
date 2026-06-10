@@ -1,9 +1,10 @@
 """Per-session append-only JSONL log: the source of truth (with the blob sidecar)."""
 
+import json
 import os
 from pathlib import Path
 
-from harness.events import Envelope
+from harness.events import Envelope, parse_envelope_line
 from harness.types import SessionId
 
 
@@ -54,3 +55,32 @@ class EventLogWriter:
 
     def __exit__(self, *exc) -> None:
         self.close()
+
+
+class TornLogError(Exception):
+    """Log ends in a torn line and repair was not authorized."""
+
+
+def read_session(base: Path, session_id: SessionId, *, repair: bool = False) -> list[Envelope]:
+    path = base / "sessions" / f"{session_id}.jsonl"
+    raw = path.read_text(encoding="utf-8")
+    envelopes: list[Envelope] = []
+    good_offset = 0
+    for line in raw.splitlines(keepends=True):
+        stripped = line.strip()
+        if not stripped:
+            good_offset += len(line)
+            continue
+        try:
+            json.loads(stripped)  # structural check first: is this even a complete line?
+        except json.JSONDecodeError:
+            torn = raw[good_offset:]
+            if not repair:
+                raise TornLogError(f"{path}: torn tail at byte {good_offset}") from None
+            (path.parent / f"{session_id}.torn").write_text(torn, encoding="utf-8")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(raw[:good_offset])
+            break
+        envelopes.append(parse_envelope_line(stripped))
+        good_offset += len(line)
+    return envelopes
