@@ -14,9 +14,10 @@ class UnknownToolError(Exception):
 class ToolSpec:
     name: ToolName
     description: str
-    parameters: dict[str, Any]  # JSON Schema
+    parameters: dict[str, Any]  # JSON Schema; frozen protects the ref, not the dict contents
 
 
+# runtime_checkable verifies attribute presence only; __call__ being async is not checked
 @runtime_checkable
 class Tool(Protocol):
     spec: ToolSpec
@@ -29,6 +30,8 @@ class ToolRegistry:
         self._tools: dict[ToolName, Tool] = {}
 
     def register(self, tool: Tool) -> None:
+        """Register a tool. Silent overwrite on name collision — callers own
+        name uniqueness (the plugin loader will make collisions loud)."""
         self._tools[tool.spec.name] = tool
 
     def get(self, name: ToolName) -> Tool:
