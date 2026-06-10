@@ -50,3 +50,11 @@ def test_parent_linkage_recorded(tmp_path):
     envs = read_session(tmp_path, SessionId("child"))
     assert envs[0].event.parent_session_id == "parent"
     assert envs[0].event.parent_seq == 7
+
+
+def test_start_twice_raises(tmp_path):
+    import pytest
+    with Session(tmp_path, SessionId("s1")) as session:
+        session.start()
+        with pytest.raises(RuntimeError, match="already called"):
+            session.start()

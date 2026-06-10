@@ -50,6 +50,8 @@ class Session:
         self._seq = 0
 
     def start(self) -> Envelope:
+        if self._seq != 0:
+            raise RuntimeError("Session.start() already called")
         parent_id, parent_seq = self._parent if self._parent else (None, None)
         return self.append(
             SessionStarted(
@@ -60,6 +62,7 @@ class Session:
         )
 
     def append(self, event: Event) -> Envelope:
+        # _seq advances before the write and is not rolled back on failure: a failed write leaves a gap, never a duplicate
         self._seq += 1
         envelope = Envelope(session_id=self.id, seq=self._seq, ts=time.time(), event=event)
         self._writer.append(envelope)   # source of truth first
