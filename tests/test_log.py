@@ -86,7 +86,7 @@ def test_reader_quarantines_torn_tail(tmp_path):
     assert len(envs) == 1
     assert (tmp_path / "sessions" / "s1.torn").read_text().startswith('{"v": 1')
     # file itself truncated back to valid JSONL
-    assert path.read_text().endswith("\n")
+    assert path.read_text().endswith("}\n")
 
 
 def test_reader_without_repair_raises_on_torn_tail(tmp_path):
