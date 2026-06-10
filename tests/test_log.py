@@ -43,3 +43,12 @@ def test_intent_events_are_fsynced(tmp_path, monkeypatch):
         before = len(synced)
         w.append(_envelope(2, ToolCallProposed(call_id=CallId("c"), tool=ToolName("bash"), args={})))
         assert len(synced) == before + 1
+
+
+def test_lock_released_when_init_fails(tmp_path):
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    (sessions / "s1.jsonl").mkdir()  # open-for-append will raise IsADirectoryError
+    with pytest.raises(IsADirectoryError):
+        EventLogWriter(tmp_path, SessionId("s1"))
+    assert not (sessions / "s1.lock").exists()

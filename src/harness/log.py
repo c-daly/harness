@@ -23,7 +23,21 @@ class EventLogWriter:
         os.write(fd, str(os.getpid()).encode())
         os.close(fd)
         self.path = sessions / f"{session_id}.jsonl"
-        self._fh = open(self.path, "a", encoding="utf-8")
+        try:
+            self._fh = open(self.path, "a", encoding="utf-8")
+            # one syscall per session start: make the new file's directory
+            # entry durable — intent fsyncs can't protect a name that was
+            # never written to disk
+            dir_fd = os.open(sessions, os.O_RDONLY)
+            try:
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
+        except Exception:
+            if getattr(self, "_fh", None) is not None:
+                self._fh.close()
+            self._lock_path.unlink(missing_ok=True)
+            raise
 
     def append(self, envelope: Envelope) -> None:
         self._fh.write(envelope.model_dump_json() + "\n")
