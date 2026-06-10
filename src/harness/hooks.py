@@ -101,7 +101,7 @@ class ChainOutcome:
     decisions: tuple[tuple[str, DispatchDecision], ...]  # (hook name, decision) per hook run
     effective: ProposedAction | None  # post-rewrites; None iff blocked
     blocked: Block | None
-    ask: Ask | None  # set iff some hook deferred to the user
+    ask: Ask | None  # first Ask in chain order (highest priority); every Ask is in decisions
 
 
 _DispatchFn = Callable[[ProposedAction], DispatchDecision | Awaitable[DispatchDecision]]
@@ -115,6 +115,17 @@ async def _maybe_await(value):
 
 
 class HookBus:
+    """Hook registry + chain runner.
+
+    Dispatch hooks fail CLOSED: a timeout or exception becomes Block with a
+    structurally distinct reason, recorded like any decision -- a buggy plugin
+    hook can never crash a session or silently permit a call. Lifecycle hooks
+    fail OPEN (skip + warning). Timeouts cancel the in-flight hook coroutine
+    (asyncio.wait_for): hooks holding resources must release them in finally.
+    register_*_async are aliases of their sync counterparts; both accept sync
+    or async callables.
+    """
+
     def __init__(self, *, dispatch_timeout: float = 10.0, lifecycle_timeout: float = 10.0) -> None:
         self._dispatch: list[tuple[int, int, str, _DispatchFn]] = []
         self._lifecycle: dict[LifecyclePoint, list[tuple[str, _LifecycleFn]]] = {}
@@ -139,13 +150,17 @@ class HookBus:
         decisions: list[tuple[str, DispatchDecision]] = []
         current = action
         ask: Ask | None = None
-        for _, _, name, fn in self._dispatch:
+        for _, _, name, fn in list(self._dispatch):
             try:
                 decision = await asyncio.wait_for(
                     _maybe_await(fn(current)), timeout=self._dispatch_timeout
                 )
             except TimeoutError:
                 decision = Block(reason=f"hook {name!r} timed out (fail closed)")
+            except Exception as exc:
+                decision = Block(
+                    reason=f"hook {name!r} raised {type(exc).__name__}: {exc} (fail closed)"
+                )
             decisions.append((name, decision))
             match decision:
                 case Block():
@@ -153,7 +168,8 @@ class HookBus:
                 case Rewrite(action=new_action):
                     current = new_action
                 case Ask():
-                    ask = decision  # chain continues; dispatcher suspends on it
+                    if ask is None:
+                        ask = decision  # first (highest-priority) Ask wins
                 case Allow():
                     pass
         return ChainOutcome(tuple(decisions), current, None, ask)
@@ -163,7 +179,7 @@ class HookBus:
     ) -> tuple[tuple[LifecycleContribution, ...], list[str]]:
         contributions: list[LifecycleContribution] = []
         warnings: list[str] = []
-        for name, fn in self._lifecycle.get(point, []):
+        for name, fn in list(self._lifecycle.get(point, [])):
             try:
                 result = await asyncio.wait_for(
                     _maybe_await(fn(ctx)), timeout=self._lifecycle_timeout

@@ -109,3 +109,26 @@ def test_decision_payload_serializes_rewrite_fully():
     assert payload["kind"] == "rewrite"
     assert payload["tool"] == "bash"
     assert payload["args"] == {"command": "rm -rf /"}
+
+
+async def test_dispatch_hook_exception_fails_closed():
+    def boom(action):
+        raise RuntimeError("plugin bug")
+
+    bus = HookBus()
+    bus.register_dispatch("first", lambda a: Allow(), priority=10)
+    bus.register_dispatch("boom", boom, priority=20)
+    bus.register_dispatch("never", lambda a: Allow(), priority=30)
+    outcome = await bus.run_dispatch(CALL)
+    assert outcome.blocked is not None
+    assert "boom" in outcome.blocked.reason and "RuntimeError" in outcome.blocked.reason
+    assert [n for n, _ in outcome.decisions] == ["first", "boom"]
+
+
+async def test_first_ask_wins():
+    bus = HookBus()
+    bus.register_dispatch("a1", lambda a: Ask(reason="first reason"), priority=10)
+    bus.register_dispatch("a2", lambda a: Ask(reason="second reason"), priority=20)
+    outcome = await bus.run_dispatch(CALL)
+    assert outcome.ask is not None and outcome.ask.reason == "first reason"
+    assert len(outcome.decisions) == 2  # both asks recorded
