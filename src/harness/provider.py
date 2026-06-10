@@ -58,6 +58,7 @@ class StreamStop:
 Chunk = TextDelta | ThinkingDelta | ToolCallDelta | UsageReport | StreamStop
 
 
+# NOTE: implementations may be async generators; strict mypy may flag the def-vs-asyncgen mismatch — revisit with the LiteLLM adapter (Phase 2)
 @runtime_checkable
 class ModelProvider(Protocol):
     def complete(
@@ -69,29 +70,36 @@ class ModelProvider(Protocol):
     ) -> AsyncIterator[Chunk]: ...
 
 
-async def collect(stream: AsyncIterator[Chunk]) -> tuple[Message, Usage]:
-    """Accumulate a chunk stream into a completed assistant message + usage."""
+async def collect(stream: AsyncIterator[Chunk]) -> tuple[Message, Usage, str]:
+    """Accumulate a chunk stream into (assistant message, usage, stop_reason).
+
+    stop_reason is "unknown" if the stream ends without a StreamStop —
+    truncation must never masquerade as a clean end_turn."""
     text_parts: list[str] = []
     tool_blocks: list[ToolCallBlock] = []
     usage = Usage()
+    stop_reason = "unknown"
     async for chunk in stream:
         match chunk:
             case TextDelta(text=t):
                 text_parts.append(t)
             case ToolCallDelta(call_id=cid, tool=tool, args_json=raw):
-                assert tool is not None
+                # early fail with context; Pydantic re-validates unconditionally
+                assert tool is not None, f"ToolCallDelta {cid} arrived with tool=None"
                 tool_blocks.append(
                     ToolCallBlock(call_id=cid, tool=tool, args=json.loads(raw))
                 )
             case UsageReport(usage=u):
-                usage = u
-            case ThinkingDelta() | StreamStop():
-                pass
+                usage = u  # last report wins; incremental accumulation is Phase 2
+            case StreamStop(stop_reason=sr):
+                stop_reason = sr
+            case ThinkingDelta():
+                pass  # no ThinkingBlock in the message model yet; dropped by design
     blocks: list = []
     if text_parts:
         blocks.append(TextBlock(text="".join(text_parts)))
     blocks.extend(tool_blocks)
-    return Message(role=Role.ASSISTANT, blocks=tuple(blocks)), usage
+    return Message(role=Role.ASSISTANT, blocks=tuple(blocks)), usage, stop_reason
 
 
 # --- scripted fake ---
