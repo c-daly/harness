@@ -62,6 +62,17 @@ class TornLogError(Exception):
 
 
 def read_session(base: Path, session_id: SessionId, *, repair: bool = False) -> list[Envelope]:
+    """Read a session log into envelopes.
+
+    Valid lines parse via parse_envelope_line (unknown event types degrade to
+    UnknownEvent). A structurally incomplete line — a torn tail from a crash,
+    or mid-file corruption — stops the scan: without repair, TornLogError;
+    with repair=True, everything from the first bad line onward (including
+    any valid lines after mid-file corruption) is quarantined to <id>.torn
+    and the log is truncated to the last good line. Repair refuses to run
+    while the session lock is held (a live writer may own the torn bytes),
+    and refuses to overwrite a differing prior quarantine.
+    """
     path = base / "sessions" / f"{session_id}.jsonl"
     raw = path.read_text(encoding="utf-8")
     envelopes: list[Envelope] = []
@@ -74,10 +85,21 @@ def read_session(base: Path, session_id: SessionId, *, repair: bool = False) -> 
         try:
             json.loads(stripped)  # structural check first: is this even a complete line?
         except json.JSONDecodeError:
-            torn = raw[good_offset:]
+            byte_offset = len(raw[:good_offset].encode("utf-8"))
             if not repair:
-                raise TornLogError(f"{path}: torn tail at byte {good_offset}") from None
-            (path.parent / f"{session_id}.torn").write_text(torn, encoding="utf-8")
+                raise TornLogError(f"{path}: torn tail at byte {byte_offset}") from None
+            lock_path = path.parent / f"{session_id}.lock"
+            if lock_path.exists():
+                raise TornLogError(
+                    f"{path}: repair refused — session lock held ({lock_path})"
+                ) from None
+            torn = raw[good_offset:]
+            torn_path = path.parent / f"{session_id}.torn"
+            if torn_path.exists() and torn_path.read_text(encoding="utf-8") != torn:
+                raise TornLogError(
+                    f"{torn_path}: differing quarantine already exists — move it aside first"
+                ) from None
+            torn_path.write_text(torn, encoding="utf-8")
             with open(path, "w", encoding="utf-8") as fh:
                 fh.write(raw[:good_offset])
             break

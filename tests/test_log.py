@@ -96,3 +96,28 @@ def test_reader_without_repair_raises_on_torn_tail(tmp_path):
         fh.write("{garbage")
     with pytest.raises(TornLogError):
         read_session(tmp_path, SessionId("s1"))
+
+
+def test_repair_refused_while_lock_held(tmp_path):
+    with EventLogWriter(tmp_path, SessionId("s1")) as w:
+        w.append(_envelope(1, SessionStarted()))
+        path = tmp_path / "sessions" / "s1.jsonl"
+        with open(path, "a") as fh:
+            fh.write("{torn")
+        with pytest.raises(TornLogError, match="lock held"):
+            read_session(tmp_path, SessionId("s1"), repair=True)
+    # lock released on close: repair now proceeds
+    envs = read_session(tmp_path, SessionId("s1"), repair=True)
+    assert len(envs) == 1
+
+
+def test_repair_never_overwrites_differing_quarantine(tmp_path):
+    with EventLogWriter(tmp_path, SessionId("s1")) as w:
+        w.append(_envelope(1, SessionStarted()))
+    sessions = tmp_path / "sessions"
+    (sessions / "s1.torn").write_text("{previous crash fragment")
+    with open(sessions / "s1.jsonl", "a") as fh:
+        fh.write("{different torn")
+    with pytest.raises(TornLogError, match="quarantine already exists"):
+        read_session(tmp_path, SessionId("s1"), repair=True)
+    assert (sessions / "s1.torn").read_text() == "{previous crash fragment"
