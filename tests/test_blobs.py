@@ -32,3 +32,17 @@ def test_missing_blob_fails_loudly(tmp_path):
 
 def test_inline_threshold_is_sane():
     assert 1024 <= INLINE_THRESHOLD <= 64 * 1024
+
+
+def test_concurrent_put_same_content_is_safe(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+
+    store = BlobStore(tmp_path / "blobs")
+    data = b"same payload" * 100
+
+    with ThreadPoolExecutor(max_workers=10) as pool:
+        refs = list(pool.map(lambda _: store.put(data), range(10)))
+
+    assert all(r == refs[0] for r in refs)
+    assert store.get(refs[0]) == data
+    assert list((tmp_path / "blobs").glob("*.tmp")) == []

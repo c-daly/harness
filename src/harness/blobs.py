@@ -5,6 +5,7 @@ events reference them by BlobRef. Fold operations fail loudly on missing blobs.
 """
 
 import hashlib
+import uuid
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
@@ -31,13 +32,13 @@ class BlobStore:
         digest = hashlib.sha256(data).hexdigest()
         path = self._root / digest
         if not path.exists():
-            tmp = path.with_suffix(".tmp")
+            tmp = self._root / f"{digest}.{uuid.uuid4().hex}.tmp"
             tmp.write_bytes(data)
-            tmp.rename(path)  # atomic publish
+            tmp.rename(path)  # atomic publish; racing writers replace identical bytes
         return BlobRef(sha256=digest, size=len(data))
 
     def get(self, ref: BlobRef) -> bytes:
         path = self._root / ref.sha256
         if not path.exists():
-            raise MissingBlobError(ref.sha256)
+            raise MissingBlobError(ref)
         return path.read_bytes()
