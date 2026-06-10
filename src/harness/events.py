@@ -5,7 +5,7 @@ Unknown event types parse to UnknownEvent (preserve-and-skip) so a rollback
 never makes newer logs unreadable.
 """
 
-from typing import Annotated, Any, Literal, Union
+from typing import Annotated, Any, ClassVar, Literal, Union
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -14,8 +14,20 @@ from harness.types import SCHEMA_VERSION, AgentId, CallId, ModelId, SessionId, T
 
 
 class _Event(BaseModel):
+    """Base event. Frozen.
+
+    `is_intent` is class-level metadata, not a field: intent events record a
+    proposed action whose side effect may already have run by the time of a
+    crash, so the log writer fsyncs them. It never serializes and cannot be
+    overridden at construction.
+
+    Identity note: events are keyed by (session_id, seq) on the Envelope.
+    Events with dict-valued fields are not hashable -- never key by event
+    identity.
+    """
+
     model_config = ConfigDict(frozen=True)
-    is_intent: bool = Field(default=False, exclude=True, repr=False)
+    is_intent: ClassVar[bool] = False
 
 
 # --- session lifecycle ---
@@ -44,7 +56,7 @@ class UserInterrupt(_Event):
 
 class ToolCallProposed(_Event):
     type: Literal["tool_call_proposed"] = "tool_call_proposed"
-    is_intent: bool = Field(default=True, exclude=True, repr=False)
+    is_intent: ClassVar[bool] = True
     call_id: CallId
     tool: ToolName
     args: dict[str, Any]
@@ -52,7 +64,7 @@ class ToolCallProposed(_Event):
 
 class ModelCallProposed(_Event):
     type: Literal["model_call_proposed"] = "model_call_proposed"
-    is_intent: bool = Field(default=True, exclude=True, repr=False)
+    is_intent: ClassVar[bool] = True
     call_id: CallId
     model: ModelId
 
@@ -66,7 +78,7 @@ class HookDecided(_Event):
 
 class DispatchResolved(_Event):
     type: Literal["dispatch_resolved"] = "dispatch_resolved"
-    is_intent: bool = Field(default=True, exclude=True, repr=False)
+    is_intent: ClassVar[bool] = True
     call_id: CallId
     kind: Literal["tool", "model"]
     tool: ToolName | None = None
@@ -121,7 +133,7 @@ class ModelCallCancelled(_Event):
 
 class PermissionRequested(_Event):
     type: Literal["permission_requested"] = "permission_requested"
-    is_intent: bool = Field(default=True, exclude=True, repr=False)
+    is_intent: ClassVar[bool] = True
     call_id: CallId
     reason: str
 
@@ -241,6 +253,13 @@ class _LaxEnvelope(BaseModel):
 
 
 def parse_envelope_line(line: str) -> Envelope:
+    """Parse one log line.
+
+    Unknown EVENT types degrade to UnknownEvent (preserve-and-skip).
+    A malformed ENVELOPE (invalid JSON, missing/invalid v/session_id/seq/ts)
+    raises pydantic.ValidationError: envelope corruption must fail loudly,
+    never be silently absorbed. Torn-tail handling lives in the log reader.
+    """
     try:
         return Envelope.model_validate_json(line)
     except ValidationError:
