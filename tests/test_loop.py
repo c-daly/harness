@@ -113,3 +113,49 @@ async def test_session_start_lifecycle_injects_and_emits(tmp_path):
     events = [e.event for e in read_session(tmp_path, SessionId("s1"))]
     custom = [e for e in events if isinstance(e, CustomEvent)]
     assert custom and custom[0].namespace == "memory"
+
+
+async def test_session_end_contributions_are_processed(tmp_path):
+    hooks = HookBus()
+    hooks.register_lifecycle(
+        "teardown", LifecyclePoint.SESSION_END,
+        lambda ctx: (Emit(namespace="memory", name="flushed", data={"n": 2}),),
+    )
+    session, loop = _loop(tmp_path, FakeProvider([text_turn("ok")]), hooks=hooks)
+    await loop.start()
+    await loop.run_turn("hi")
+    await loop.end()
+    session.close()
+    events = [e.event for e in read_session(tmp_path, SessionId("s1"))]
+    custom = [e for e in events if isinstance(e, CustomEvent)]
+    assert custom and custom[0].name == "flushed"
+    assert events[-1].type == "session_ended"
+
+
+async def test_end_twice_raises(tmp_path):
+    import pytest
+    session, loop = _loop(tmp_path, FakeProvider([text_turn("ok")]))
+    await loop.start()
+    await loop.end()
+    with pytest.raises(RuntimeError, match="already called"):
+        await loop.end()
+    session.close()
+
+
+async def test_dispatch_infrastructure_failure_logs_and_raises(tmp_path):
+    import pytest
+    provider = FakeProvider([tool_call_turn("go", ToolName("echo"), {"text": "x"})])
+    session, loop = _loop(tmp_path, provider)
+    await loop.start()
+
+    async def broken(call):
+        raise RuntimeError("disk on fire")
+
+    loop.dispatcher.dispatch_tool = broken
+    with pytest.raises(RuntimeError, match="disk on fire"):
+        await loop.run_turn("do it")
+    session.close()
+    events = [e.event for e in read_session(tmp_path, SessionId("s1"))]
+    assert any(
+        isinstance(e, ErrorRaised) and e.where == "loop:tool_dispatch" for e in events
+    )

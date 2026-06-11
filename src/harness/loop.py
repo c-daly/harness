@@ -38,16 +38,20 @@ class AgentLoop:
         self.dispatcher = Dispatcher(
             session=session, registry=registry, hooks=hooks, resolver=resolver
         )
+        self._ended = False
 
-    async def start(self) -> None:
-        self.session.start()
-        contributions, warnings = await self.hooks.run_lifecycle(
-            LifecyclePoint.SESSION_START, ctx={"session_id": self.session.id}
-        )
+    async def _apply_contributions(self, point: LifecyclePoint, ctx: dict) -> None:
+        contributions, warnings = await self.hooks.run_lifecycle(point, ctx)
         for c in contributions:
             match c:
                 case Inject(text=text):
-                    self.system_prompt = f"{self.system_prompt}\n\n{text}"
+                    if point is LifecyclePoint.SESSION_START:
+                        self.system_prompt = f"{self.system_prompt}\n\n{text}"
+                    else:
+                        self.session.append(ErrorRaised(
+                            where=f"lifecycle:{point}",
+                            message="Inject ignored outside session_start",
+                        ))
                 case Emit(namespace=ns, name=name, data=data):
                     self.session.append(CustomEvent(namespace=ns, name=name, data=dict(data)))
                 case Annotate(note=note):
@@ -55,9 +59,23 @@ class AgentLoop:
                         CustomEvent(namespace="annotation", name="note", data={"text": note})
                     )
         for warning in warnings:
-            self.session.append(ErrorRaised(where="lifecycle:session_start", message=warning))
+            self.session.append(ErrorRaised(where=f"lifecycle:{point}", message=warning))
+
+    async def start(self) -> None:
+        self.session.start()
+        await self._apply_contributions(
+            LifecyclePoint.SESSION_START, {"session_id": self.session.id}
+        )
 
     async def run_turn(self, user_text: str) -> str:
+        """Run one user turn to completion.
+
+        Raises ModelDispatchBlocked (policy refused the model call) or
+        infrastructure errors from dispatch. After any raise, this loop's
+        history may hold an unanswered user message or unpaired tool calls:
+        treat the loop as dead — start a new session rather than calling
+        run_turn again.
+        """
         self.session.append(UserMessage(text=user_text))
         self.history.append(Message.user_text(user_text))
         for _ in range(self.max_iterations):
@@ -70,12 +88,26 @@ class AgentLoop:
             calls = assistant.tool_calls()
             if not calls:
                 return assistant.text()
-            outcomes = await asyncio.gather(*[
-                self.dispatcher.dispatch_tool(
-                    ProposedToolCall(call_id=c.call_id, tool=c.tool, args=c.args)
-                )
-                for c in calls
-            ])
+            try:
+                outcomes = await asyncio.gather(*[
+                    self.dispatcher.dispatch_tool(
+                        ProposedToolCall(call_id=c.call_id, tool=c.tool, args=c.args)
+                    )
+                    for c in calls
+                ])
+            except Exception as exc:
+                # dispatch_tool converts tool errors to results; only infrastructure
+                # failures (log write, blob store) reach here. Siblings are cancelled
+                # by gather; history is left without tool results — callers must
+                # treat this loop as dead (see docstring).
+                try:
+                    self.session.append(ErrorRaised(
+                        where="loop:tool_dispatch",
+                        message=f"{type(exc).__name__}: {exc}",
+                    ))
+                except Exception:
+                    pass  # the log itself may be the failing infrastructure
+                raise
             for call, outcome in zip(calls, outcomes):
                 self.history.append(
                     Message.tool_result(
@@ -89,7 +121,10 @@ class AgentLoop:
         return f"[stopped: max iterations ({self.max_iterations}) reached]"
 
     async def end(self) -> None:
-        await self.hooks.run_lifecycle(
-            LifecyclePoint.SESSION_END, ctx={"session_id": self.session.id}
+        if self._ended:
+            raise RuntimeError("AgentLoop.end() already called")
+        self._ended = True
+        await self._apply_contributions(
+            LifecyclePoint.SESSION_END, {"session_id": self.session.id}
         )
         self.session.append(SessionEnded())
