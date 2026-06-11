@@ -170,7 +170,8 @@ class AgentLoop:
         truly-incomplete calls get a ToolCallCancelled event + the synthetic
         error result fold renders for them. Repairs are idempotent (a second
         call finds everything paired); each call appends exactly one
-        UserInterrupt. The loop stays alive."""
+        UserInterrupt. The loop stays alive. Callers must ensure at most one
+        call per logical interrupt (each call records a UserInterrupt)."""
         self.repair_turn()
         self.session.append(UserInterrupt())
 

@@ -111,6 +111,7 @@ class HarnessApp(App[None]):
         self.kernel = kernel
         self.catalog_path = catalog_path
         self._turn_worker = None
+        self._interrupting = False
         self._ended = False
         self._stream_buffer = ""
         if ask is not None:
@@ -230,8 +231,7 @@ class HarnessApp(App[None]):
         try:
             reply = await self.kernel.loop.run_turn(prompt)
         except asyncio.CancelledError:
-            self._clear_live()
-            raise                                   # Esc repair lands in Task 7
+            raise  # _after_interrupt owns cleanup; keep _stream_buffer for it to preserve
         except Exception as exc:
             self._clear_live()
             self.kernel.loop.repair_turn()      # orphaned user msg is benign;
@@ -250,19 +250,27 @@ class HarnessApp(App[None]):
             self.screen.action_answer("deny")
             return
         worker = self._turn_worker
-        if worker is None or worker.is_finished:
+        if worker is None or worker.is_finished or self._interrupting:
             return
+        # once per logical interrupt -- an invariant, not a timing bet: a second
+        # Esc in the same tick still sees is_finished=False, so the flag guards it.
+        self._interrupting = True
         worker.cancel()
         self.run_worker(self._after_interrupt(worker), group="driver", exit_on_error=False)
 
     async def _after_interrupt(self, worker) -> None:
         try:
-            await worker.wait()
-        except (WorkerCancelled, WorkerFailed):
-            pass
-        self.kernel.loop.interrupt_turn()
-        self._clear_live()
-        self.say("! ", "interrupted")
+            try:
+                await worker.wait()
+            except (WorkerCancelled, WorkerFailed):
+                pass
+            self.kernel.loop.interrupt_turn()
+            if self._stream_buffer:
+                self.say("~ ", self._stream_buffer)   # keep the partial visible
+            self._clear_live()
+            self.say("! ", "interrupted")
+        finally:
+            self._interrupting = False
 
     async def _finish(self) -> None:
         if self._ended:

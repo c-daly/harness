@@ -365,3 +365,92 @@ async def test_escape_on_permission_modal_denies_it(tmp_path):
         assert "denied by user" in lines
         events = [e.event.type for e in read_session(tmp_path, app.kernel.session.id)]
         assert "user_interrupt" not in events  # the TURN was not interrupted
+
+
+class ParkingProvider:
+    """First complete() call yields the given chunks; subsequent calls park on an
+    Event (like GatedProvider) -- used to drive a turn into a second, blocked model
+    dispatch so Esc can interrupt a genuinely-running turn."""
+
+    def __init__(self, first_chunks):
+        self.first_chunks = first_chunks
+        self.calls = 0
+        self.release = asyncio.Event()
+
+    async def complete(self, *, model, messages, tools=()):
+        self.calls += 1
+        if self.calls == 1:
+            for chunk in self.first_chunks:
+                yield chunk
+            return
+        await self.release.wait()  # park: never released in these tests
+        yield TextDelta(text="unreached")
+        yield UsageReport(usage=Usage())
+        yield StreamStop(stop_reason="end_turn")
+
+
+async def test_escape_after_modal_close_interrupts_running_turn(tmp_path):
+    # Esc #1 denies the modal (turn keeps running); the turn proceeds to model call
+    # #2, which parks; Esc #2 interrupts the genuinely-running turn. Exactly one
+    # user_interrupt is recorded -- the modal-deny Esc must NOT count as an interrupt.
+    engine = PermissionEngine([
+        RuleSet(
+            rules=[PermissionRule(action="ask", tool="echo_tool")],
+            default="allow",
+        )
+    ])
+    provider = ParkingProvider(
+        tool_call_turn("calling", ToolName("echo_tool"), {"text": "hi"})
+    )
+    app = make_app(tmp_path, provider=provider, model=ModelId("parking"), engine=engine)
+    app.kernel.registry.register(EchoTool())
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        await pilot.click("#prompt")
+        await pilot.press(*"run it", "enter")
+        await pilot.pause(0.3)  # modal up after tool call in turn #1
+        assert isinstance(app.screen, PermissionScreen)
+        await pilot.press("escape")  # Esc #1: deny the modal
+        await pilot.pause(0.3)
+        assert not isinstance(app.screen, PermissionScreen)  # modal gone
+        await pilot.pause(0.3)  # turn proceeds to model call #2 -> parks
+        await pilot.press("escape")  # Esc #2: interrupt the running turn
+        await pilot.pause(0.3)
+        lines = "\n".join(str(line) for line in app.query_one(RichLog).lines)
+        assert "denied by user" in lines
+        assert "interrupted" in lines
+    events = [e.event.type for e in read_session(tmp_path, app.kernel.session.id)]
+    assert events.count("user_interrupt") == 1
+
+
+class PartialThenParkProvider:
+    """Yields some streamed text, then parks on an Event -- so an interrupt has a
+    non-empty stream buffer to preserve."""
+
+    def __init__(self) -> None:
+        self.release = asyncio.Event()
+
+    async def complete(self, *, model, messages, tools=()):
+        yield TextDelta(text="partial output")
+        await self.release.wait()  # park: never released here
+        yield TextDelta(text=" tail")
+        yield UsageReport(usage=Usage())
+        yield StreamStop(stop_reason="end_turn")
+
+
+async def test_escape_preserves_partial_streamed_output(tmp_path):
+    provider = PartialThenParkProvider()
+    app = make_app(tmp_path, provider=provider, model=ModelId("partial"))
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        await pilot.click("#prompt")
+        await pilot.press(*"go", "enter")
+        await pilot.pause(0.3)  # partial streamed, turn parked
+        await pilot.press("escape")
+        await pilot.pause(0.3)
+        lines = "\n".join(str(line) for line in app.query_one(RichLog).lines)
+        assert "~ partial output" in lines  # the partial was preserved with the ~ prefix
+        assert "interrupted" in lines
+        assert app.query_one("#live", Static).content == ""  # live tail cleared
+    events = [e.event.type for e in read_session(tmp_path, app.kernel.session.id)]
+    assert events.count("user_interrupt") == 1
