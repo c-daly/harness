@@ -273,6 +273,7 @@ class McpHost:
         self._session = session
         self._transport_factory = transport_factory
         self._pending: list[CustomEvent] | None = []  # None once flushed
+        self._started = False  # single-use latch; survives stop() clearing connections
 
     def _emit(self, name: str, data: dict) -> None:
         if self._session.closed:
@@ -292,8 +293,9 @@ class McpHost:
 
     async def start(self) -> list[str]:
         """Connect everything; per-server failures become warnings, never crashes."""
-        if self.connections:
-            raise RuntimeError("McpHost.start() already called; call stop() first")
+        if self._started:
+            raise RuntimeError("McpHost.start() already called; McpHost is single-use")
+        self._started = True  # set immediately: even a failed start burns the latch
         warnings: list[str] = []
         conns = [
             ServerConnection(
@@ -305,11 +307,14 @@ class McpHost:
         taken = {str(s.name) for s in self._registry.specs()}
         for conn, result in zip(conns, results):
             if isinstance(result, BaseException):
-                self._emit(
-                    "server_failed",
-                    {"server": conn.spec.name, "error": str(result)[:500]},
-                )
-                warnings.append(f"mcp server {conn.spec.name!r} failed to start: {result}")
+                # ServerConnection.start() already prefixes the server name; other
+                # failures (e.g. missing env vars) do not. Add context only when absent
+                # so the message never reads "... failed to start: ... failed to start".
+                msg = str(result)
+                if not msg.startswith("mcp server"):
+                    msg = f"mcp server {conn.spec.name!r} failed to start: {msg}"
+                self._emit("server_failed", {"server": conn.spec.name, "error": msg[:500]})
+                warnings.append(msg)
                 continue
             self.connections[conn.spec.name] = conn
             registered = 0

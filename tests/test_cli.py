@@ -23,6 +23,7 @@ async def test_run_once_returns_final_text_and_closes_session(tmp_path):
     )
     assert await run_once(kernel, "question?") == "the answer"
     # session closed: log readable, ends with SessionEnded
+    # without MCP; an MCP-active session appends mcp/server_stopped after session_ended
     from harness.log import read_session
     envs = read_session(tmp_path, kernel.session.id)
     assert envs[-1].event.type == "session_ended"
@@ -288,6 +289,24 @@ async def test_kernel_with_mcp_runs_tool_and_injects_instructions(tmp_path):
     assert any(c.namespace == "mcp" and c.name == "server_stopped" for c in customs)
     completed = [e.event for e in envelopes if getattr(e.event, "type", "") == "tool_call_completed"]
     assert any(e.result_text == "42" for e in completed)
+
+
+async def test_mcp_server_stopped_lands_after_session_ended(tmp_path):
+    # teardown is post-session: the tail is (session_ended, mcp/server_stopped).
+    # server_stopped must NOT precede session_ended.
+    from harness.log import read_session
+
+    provider = FakeProvider([text_turn("ok")])
+    kernel = build_kernel(
+        provider=provider, base_dir=tmp_path, model=ModelId("fake:echo"),
+        mcp=[fixture_stdio_spec()],
+    )
+    await run_once(kernel, "hi")
+    envelopes = read_session(tmp_path, kernel.session.id)
+    tail = envelopes[-2:]
+    assert [e.event.type for e in tail] == ["session_ended", "custom"]
+    last = tail[-1].event
+    assert last.namespace == "mcp" and last.name == "server_stopped"
 
 
 async def test_mcp_events_never_precede_session_started(tmp_path):

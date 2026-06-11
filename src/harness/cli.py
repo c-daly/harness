@@ -45,7 +45,7 @@ def build_kernel(
     resume_session_id: SessionId | None = None,
     permissions: PermissionEngine | None = None,
     tags: list[str] | None = None,
-    mcp: Sequence[McpServerSpec] | None = None,
+    mcp: Sequence[McpServerSpec] | None = None,  # None disables MCP entirely
 ) -> Kernel:
     from harness.resume import resume_session
 
@@ -116,6 +116,9 @@ async def run_once(kernel: Kernel, prompt: str) -> str:
     finally:
         # stop() then flush() BEFORE session.close(): server_stopped lands in the log;
         # closed sessions drop events.
+        # server teardown is post-session: session_ended is NOT the final envelope when
+        # MCP is active (mcp/server_stopped follows). Teardown is administrative, not
+        # conversational, so it must not precede SESSION_END hooks.
         if kernel.mcp is not None:
             await kernel.mcp.stop()
             # crash path: if flush never ran (loop.start raised), drain the buffered

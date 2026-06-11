@@ -360,6 +360,18 @@ async def test_host_double_start_is_loud(tmp_path):
         session.close()
 
 
+async def test_host_start_stop_start_is_still_loud(tmp_path):
+    # stop() clears connections, but the single-use latch survives it: a second
+    # start() must still refuse rather than reconnect + double-register the hook.
+    host, registry, hooks, session = make_host(tmp_path)
+    await host.start()
+    await host.stop()
+    with pytest.raises(RuntimeError) as exc:
+        await host.start()
+    assert "single-use" in str(exc.value)
+    session.close()
+
+
 async def test_host_stop_after_session_close_does_not_raise(tmp_path):
     host, registry, hooks, session = make_host(tmp_path)
     await host.start()
