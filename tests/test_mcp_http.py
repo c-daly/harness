@@ -44,7 +44,11 @@ def http_fixture_url():
         yield f"http://127.0.0.1:{port}/mcp"
     finally:
         proc.terminate()
-        proc.wait(timeout=10)
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
 
 
 async def test_http_transport_roundtrip(http_fixture_url):
@@ -73,6 +77,10 @@ async def test_http_connect_failure_is_loud_and_fast():
 
 
 async def test_http_transport_with_header_references(http_fixture_url, monkeypatch):
+    """Exercises env-var header resolution + custom httpx client construction.
+
+    FastMCP ignores the Authorization header: this proves the code path
+    executes end-to-end, not that the server received the header."""
     monkeypatch.setenv("FIXTURE_HTTP_AUTH", "Bearer test-token")
     spec = McpServerSpec(
         name="fixture", transport="http", url=http_fixture_url,
