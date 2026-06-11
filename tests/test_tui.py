@@ -498,7 +498,7 @@ async def test_slash_model_switches_via_catalog(tmp_path):
         lines = "\n".join(str(line) for line in app.query_one(RichLog).lines)
         assert "alias-a" in lines and "alias-b" in lines
         await pilot.press(*"/model alias-b", "enter")
-        await pilot.pause(0.2)
+        await pilot.pause(0.3)  # switch runs in a worker now (lazy litellm import)
         assert str(app.kernel.loop.model) == "local/model-b"
         await pilot.press(*"/model nope", "enter")
         await pilot.pause(0.2)
@@ -527,3 +527,17 @@ async def test_slash_quit_exits_cleanly(tmp_path):
     events = [e.event.type for e in read_session(tmp_path, app.kernel.session.id)]
     assert "session_ended" in events
     assert [e for e in events].count("session_ended") == 1
+
+
+async def test_slash_quit_during_running_turn_is_clean(tmp_path):
+    provider = GatedProvider()                       # never released
+    app = make_app(tmp_path, provider=provider, model=ModelId("gated"))
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        await pilot.click("#prompt")
+        await pilot.press(*"stuck", "enter")
+        await pilot.pause(0.2)                       # turn parked
+        await pilot.press(*"/quit", "enter")
+        await pilot.pause(0.3)
+    events = [e.event.type for e in read_session(tmp_path, app.kernel.session.id)]
+    assert events.count("session_ended") == 1        # no crash, clean single end

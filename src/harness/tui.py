@@ -251,7 +251,11 @@ class HarnessApp(App[None]):
             await self._finish()
             self.exit()
         elif command.name == "model":
-            await self._switch_model(command.arg)
+            # catalog.resolve lazily imports litellm (seconds) -- never block the
+            # message handler; the switch applies on the next dispatch anyway
+            self.run_worker(
+                self._switch_model(command.arg), group="driver", exit_on_error=False
+            )
         else:
             self.say("! ", f"unknown command: /{command.name}")
 
@@ -273,6 +277,8 @@ class HarnessApp(App[None]):
         except UnknownAliasError:
             self.say("! ", f"unknown alias: {alias}")
             return
+        # An in-flight turn finishes its current dispatch on the old provider and
+        # picks the new one up next iteration.
         loop = self.kernel.loop
         loop.model = resolved.route
         loop.pricing = resolved.pricing_dict() or None
@@ -281,7 +287,7 @@ class HarnessApp(App[None]):
         # Subagents keep the provider captured at build time -- /model retargets
         # the ROOT loop only (kernel fact; revisit with the plugin loader).
         loop.provider = LiteLLMProvider(api_base=resolved.api_base)
-        self.say("", f"model -> {alias} ({resolved.route})")
+        self.say("", f"model → {alias} ({resolved.route})")
 
     def action_interrupt(self) -> None:
         # The priority Esc binding preempts modal bindings: with a permission
@@ -317,6 +323,7 @@ class HarnessApp(App[None]):
             return
         self._ended = True
         self.workers.cancel_group(self, "agent")
+        await asyncio.sleep(0)  # let the cancelled turn unwind before SessionEnded lands
         try:
             await self.kernel.loop.end()
         except RuntimeError:
