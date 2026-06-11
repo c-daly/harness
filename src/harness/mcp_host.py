@@ -8,6 +8,7 @@ call_tool from other tasks is safe (the session multiplexes by request id).
 
 import asyncio
 import contextlib
+import json
 from datetime import timedelta
 from typing import Any, Callable
 
@@ -18,6 +19,8 @@ from mcp.client.streamable_http import streamable_http_client
 from mcp.shared.exceptions import McpError
 
 from harness.mcp_config import McpServerSpec, resolve_env
+from harness.tools import ToolSpec
+from harness.types import ToolName
 
 _MAX_RESTARTS = 3
 _STOP_TIMEOUT_S = 10.0
@@ -196,3 +199,37 @@ class ServerConnection:
             with contextlib.suppress(BaseException):
                 await task
             raise
+
+
+def render_result(result: types.CallToolResult) -> str:
+    """Tool protocol returns str: join text blocks, summarize the rest, fall
+    back to structuredContent JSON when there is no text at all."""
+    parts: list[str] = []
+    for block in result.content:
+        if isinstance(block, types.TextContent):
+            parts.append(block.text)
+        else:
+            parts.append(f"[{block.type} content omitted]")
+    if not parts and result.structuredContent is not None:
+        parts.append(json.dumps(result.structuredContent))
+    return "\n".join(parts)
+
+
+class McpTool:
+    """Adapter: one MCP server tool as a harness Tool (spec + async __call__)."""
+
+    def __init__(self, conn: ServerConnection, tool: types.Tool) -> None:
+        self.spec = ToolSpec(
+            name=ToolName(f"mcp__{conn.spec.name}__{tool.name}"),
+            description=tool.description or "",
+            parameters=tool.inputSchema,
+        )
+        self._conn = conn
+        self._remote_name = tool.name
+
+    async def __call__(self, args: dict[str, Any]) -> str:
+        result = await self._conn.call_tool(self._remote_name, args)
+        text = render_result(result)
+        if result.isError:
+            raise McpToolError(text or "tool returned an error")
+        return text

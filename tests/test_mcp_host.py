@@ -10,7 +10,7 @@ from mcp import types
 from mcp.shared.memory import create_client_server_memory_streams
 
 from harness.mcp_config import McpServerSpec
-from harness.mcp_host import McpServerError, ServerConnection
+from harness.mcp_host import McpServerError, McpTool, McpToolError, ServerConnection, render_result
 from tests.conftest import FIXTURE_SERVER_PATH, load_fixture_server
 
 
@@ -163,3 +163,55 @@ async def test_is_alive_reflects_lifecycle():
     assert conn.is_alive
     await conn.stop()
     assert not conn.is_alive
+
+
+async def test_mcp_tool_adapter_namespaces_and_calls():
+    conn = ServerConnection(memory_spec(), transport_factory=memory_factory())
+    await conn.start()
+    try:
+        tool = next(t for t in conn.tools if t.name == "add")
+        adapter = McpTool(conn, tool)
+        assert str(adapter.spec.name) == "mcp__fixture__add"
+        assert adapter.spec.description == "Add two integers."
+        assert adapter.spec.parameters.get("type") == "object"
+        assert await adapter({"a": 1, "b": 2}) == "3"
+    finally:
+        await conn.stop()
+
+
+async def test_mcp_tool_iserror_raises_for_dispatcher():
+    conn = ServerConnection(memory_spec(), transport_factory=memory_factory())
+    await conn.start()
+    try:
+        tool = next(t for t in conn.tools if t.name == "fail")
+        adapter = McpTool(conn, tool)
+        with pytest.raises(McpToolError) as exc:
+            await adapter({"message": "boom"})
+        assert "boom" in str(exc.value)
+    finally:
+        await conn.stop()
+
+
+def test_render_result_text_blocks_join():
+    result = types.CallToolResult(
+        content=[
+            types.TextContent(type="text", text="one"),
+            types.TextContent(type="text", text="two"),
+        ]
+    )
+    assert render_result(result) == "one\ntwo"
+
+
+def test_render_result_non_text_blocks_are_summarized():
+    result = types.CallToolResult(
+        content=[
+            types.TextContent(type="text", text="caption"),
+            types.ImageContent(type="image", data="aGk=", mimeType="image/png"),
+        ]
+    )
+    assert render_result(result) == "caption\n[image content omitted]"
+
+
+def test_render_result_structured_fallback_when_no_text():
+    result = types.CallToolResult(content=[], structuredContent={"answer": 42})
+    assert render_result(result) == "{\"answer\": 42}"
