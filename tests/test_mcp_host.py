@@ -9,8 +9,20 @@ import pytest
 from mcp import types
 from mcp.shared.memory import create_client_server_memory_streams
 
+from harness.hooks import HookBus, Inject, LifecyclePoint
 from harness.mcp_config import McpServerSpec
-from harness.mcp_host import McpServerError, McpTool, McpToolError, ServerConnection, render_result
+from harness.mcp_host import (
+    McpHost,
+    McpServerError,
+    McpTool,
+    McpToolError,
+    ServerConnection,
+    _default_transport,
+    render_result,
+)
+from harness.session import Session
+from harness.tools import ToolRegistry, ToolSpec
+from harness.types import ToolName, new_session_id
 from tests.conftest import FIXTURE_SERVER_PATH, load_fixture_server
 
 
@@ -215,3 +227,121 @@ def test_render_result_non_text_blocks_are_summarized():
 def test_render_result_structured_fallback_when_no_text():
     result = types.CallToolResult(content=[], structuredContent={"answer": 42})
     assert render_result(result) == "{\"answer\": 42}"
+
+
+def test_render_result_empty_everything_is_empty_string():
+    assert render_result(types.CallToolResult(content=[])) == ""
+
+
+def make_session(tmp_path) -> Session:
+    return Session(tmp_path, new_session_id())
+
+
+def make_host(tmp_path, specs=None, **kwargs):
+    registry = ToolRegistry()
+    hooks = HookBus()
+    session = make_session(tmp_path)
+    host = McpHost(
+        specs if specs is not None else [memory_spec()],
+        registry=registry, hooks=hooks, session=session,
+        transport_factory=memory_factory(), **kwargs,
+    )
+    return host, registry, hooks, session
+
+
+async def test_host_start_registers_namespaced_tools(tmp_path):
+    host, registry, hooks, session = make_host(tmp_path)
+    warnings = await host.start()
+    try:
+        assert warnings == []
+        names = {str(s.name) for s in registry.specs()}
+        assert "mcp__fixture__add" in names
+        assert "mcp__fixture__die" in names
+        result = await registry.get(ToolName("mcp__fixture__add"))({"a": 2, "b": 2})
+        assert result == "4"
+    finally:
+        await host.stop()
+        session.close()
+
+
+async def test_host_instructions_hook_injects_at_session_start(tmp_path):
+    host, registry, hooks, session = make_host(tmp_path)
+    await host.start()
+    try:
+        contributions, hook_warnings = await hooks.run_lifecycle(
+            LifecyclePoint.SESSION_START, {"session_id": session.id}
+        )
+        assert hook_warnings == []
+        injects = [c for c in contributions if isinstance(c, Inject)]
+        assert len(injects) == 1
+        assert "## MCP server: fixture" in injects[0].text
+        assert "Fixture server: use `add` for arithmetic." in injects[0].text
+    finally:
+        await host.stop()
+        session.close()
+
+
+async def test_host_lifecycle_events_buffer_until_flush(tmp_path):
+    host, registry, hooks, session = make_host(tmp_path)
+    queue = session.bus.subscribe()
+    await host.start()
+    try:
+        assert queue.qsize() == 0  # nothing logged before flush
+        session.start()
+        host.flush_events()
+        kinds = []
+        while queue.qsize():
+            envelope = queue.get_nowait()
+            kinds.append(getattr(envelope.event, "name", type(envelope.event).__name__))
+        assert "server_started" in kinds
+    finally:
+        await host.stop()
+        session.close()
+
+
+async def test_host_collision_skips_and_warns(tmp_path):
+    class Squatter:
+        spec = ToolSpec(name=ToolName("mcp__fixture__add"), description="", parameters={})
+
+        async def __call__(self, args):
+            return "squatted"
+
+    host, registry, hooks, session = make_host(tmp_path)
+    registry.register(Squatter())
+    warnings = await host.start()
+    try:
+        assert any("mcp__fixture__add" in w and "collide" in w for w in warnings)
+        # the squatter survives; the MCP tool was skipped, not overwritten
+        assert await registry.get(ToolName("mcp__fixture__add"))({}) == "squatted"
+    finally:
+        await host.stop()
+        session.close()
+
+
+async def test_host_partial_failure_keeps_other_servers(tmp_path):
+    fastmcp = load_fixture_server()
+    bad = McpServerSpec(
+        name="broken", transport="stdio",
+        command=sys.executable, args=("-c", "import sys; sys.exit(3)"),
+    )
+
+    def factory(spec):
+        if spec.name == "broken":
+            return _default_transport(spec)
+        return memory_transport(fastmcp)
+
+    registry = ToolRegistry()
+    hooks = HookBus()
+    session = make_session(tmp_path)
+    host = McpHost(
+        [memory_spec(), bad], registry=registry, hooks=hooks, session=session,
+        transport_factory=factory,
+    )
+    warnings = await host.start()
+    try:
+        assert any("broken" in w for w in warnings)
+        assert "mcp__fixture__add" in {str(s.name) for s in registry.specs()}
+        assert "broken" not in host.connections
+    finally:
+        await host.stop()
+        session.close()

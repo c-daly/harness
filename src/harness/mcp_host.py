@@ -18,8 +18,11 @@ from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import streamable_http_client
 from mcp.shared.exceptions import McpError
 
+from harness.events import CustomEvent
+from harness.hooks import HookBus, Inject, LifecyclePoint
 from harness.mcp_config import McpServerSpec, resolve_env
-from harness.tools import ToolSpec
+from harness.session import Session
+from harness.tools import ToolRegistry, ToolSpec
 from harness.types import ToolName
 
 _MAX_RESTARTS = 3
@@ -233,3 +236,103 @@ class McpTool:
         if result.isError:
             raise McpToolError(text or "tool returned an error")
         return text
+
+
+class McpHost:
+    """Owns all connections. start() is async; the caller starts the host
+    inside the asyncio context, before loop.start().
+    Lifecycle events buffer until flush_events() so nothing precedes
+    SessionStarted in a fresh log; runtime events (restarts) append directly
+    once flushed."""
+
+    def __init__(
+        self,
+        specs,
+        *,
+        registry: ToolRegistry,
+        hooks: HookBus,
+        session: Session,
+        transport_factory: Callable[[McpServerSpec], Any] | None = None,
+    ) -> None:
+        self.connections: dict[str, ServerConnection] = {}
+        self._specs = tuple(specs)
+        self._registry = registry
+        self._hooks = hooks
+        self._session = session
+        self._transport_factory = transport_factory
+        self._pending: list[CustomEvent] | None = []  # None once flushed
+
+    def _emit(self, name: str, data: dict) -> None:
+        event = CustomEvent(namespace="mcp", name=name, data=data)
+        if self._pending is not None:
+            self._pending.append(event)
+        else:
+            self._session.append(event)
+
+    def flush_events(self) -> None:
+        pending, self._pending = self._pending or [], None
+        for event in pending:
+            self._session.append(event)
+
+    async def start(self) -> list[str]:
+        """Connect everything; per-server failures become warnings, never crashes."""
+        warnings: list[str] = []
+        conns = [
+            ServerConnection(
+                spec, transport_factory=self._transport_factory, on_event=self._emit
+            )
+            for spec in self._specs
+        ]
+        results = await asyncio.gather(*(c.start() for c in conns), return_exceptions=True)
+        taken = {str(s.name) for s in self._registry.specs()}
+        for conn, result in zip(conns, results):
+            if isinstance(result, BaseException):
+                self._emit(
+                    "server_failed",
+                    {"server": conn.spec.name, "error": str(result)[:500]},
+                )
+                warnings.append(f"mcp server {conn.spec.name!r} failed to start: {result}")
+                continue
+            self.connections[conn.spec.name] = conn
+            registered = 0
+            for tool in conn.tools:
+                adapter = McpTool(conn, tool)
+                name = str(adapter.spec.name)
+                if name in taken:
+                    self._emit("tool_collision", {"tool": name, "server": conn.spec.name})
+                    warnings.append(
+                        f"mcp tool {name} would collide with an existing tool; skipped"
+                    )
+                    continue
+                taken.add(name)
+                self._registry.register(adapter)
+                registered += 1
+            self._emit(
+                "server_started",
+                {
+                    "server": conn.spec.name,
+                    "tools": registered,
+                    "source": conn.spec.source,
+                    "transport": conn.spec.transport,
+                },
+            )
+        if any(c.instructions for c in self.connections.values()):
+            self._hooks.register_lifecycle(
+                "mcp-instructions", LifecyclePoint.SESSION_START, self._instructions_hook
+            )
+        return warnings
+
+    def _instructions_hook(self, ctx) -> list[Inject]:
+        return [
+            Inject(text=f"## MCP server: {name}\n\n{conn.instructions}")
+            for name, conn in sorted(self.connections.items())
+            if conn.instructions
+        ]
+
+    async def stop(self) -> None:
+        await asyncio.gather(
+            *(c.stop() for c in self.connections.values()), return_exceptions=True
+        )
+        for name in self.connections:
+            self._emit("server_stopped", {"server": name})
+        self.connections.clear()
