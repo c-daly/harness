@@ -371,11 +371,14 @@ def test_origin_edge_cases(tmp_path):
                  event=ToolCallProposed(call_id=CallId("c1"), tool=ToolName("mcp__"), args={})),
         Envelope(session_id=SessionId("s_edge"), seq=3, ts=3.0,
                  event=ToolCallProposed(call_id=CallId("c2"), tool=ToolName("mcp__noseparator"), args={})),
+        Envelope(session_id=SessionId("s_edge"), seq=4, ts=4.0,
+                 event=ToolCallProposed(call_id=CallId("c3"), tool=ToolName("mcp____x"), args={})),
     ])
     conn, _ = rebuild_index(tmp_path)
     by_tool = dict(conn.execute("SELECT tool, origin FROM tool_calls").fetchall())
     assert by_tool["mcp__"] is None
     assert by_tool["mcp__noseparator"] is None
+    assert by_tool["mcp____x"] is None  # empty server segment must not pass IS NOT NULL
 
 
 def test_stats_render_shows_mcp_servers_section(tmp_path):

@@ -117,7 +117,7 @@ def _origin(tool: str) -> str | None:
         return None
     rest = tool[len("mcp__"):]
     server, sep, _ = rest.partition("__")
-    return server if sep else None
+    return server if sep and server else None
 
 
 def index_envelopes(conn: sqlite3.Connection, envelopes: list[Envelope]) -> None:
@@ -156,6 +156,8 @@ def index_envelopes(conn: sqlite3.Connection, envelopes: list[Envelope]) -> None
                  ev.stop_reason, ev.duration_ms, cost, env.ts),
             )
         elif isinstance(ev, ToolCallProposed):
+            # tool/origin reflect the PROPOSED name; a hook rewrite to a different tool
+            # keeps the original attribution (DispatchResolved is deliberately not folded)
             conn.execute(
                 "INSERT OR IGNORE INTO tool_calls (session_id, call_id, tool, origin, ts) VALUES (?,?,?,?,?)",
                 (sid, ev.call_id, ev.tool, _origin(str(ev.tool)), env.ts),
