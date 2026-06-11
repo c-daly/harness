@@ -1,7 +1,7 @@
 from harness.events import SessionStarted, UserMessage
 from harness.log import read_session
 from harness.session import Session, SubscriberBus
-from harness.types import SessionId
+from harness.types import SessionId, new_session_id
 
 
 def test_append_stamps_monotonic_seq(tmp_path):
@@ -58,3 +58,10 @@ def test_start_twice_raises(tmp_path):
         session.start()
         with pytest.raises(RuntimeError, match="already called"):
             session.start()
+
+
+def test_closed_property(tmp_path):
+    session = Session(tmp_path, new_session_id())
+    assert not session.closed
+    session.close()
+    assert session.closed

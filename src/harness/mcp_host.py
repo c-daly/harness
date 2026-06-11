@@ -243,7 +243,12 @@ class McpHost:
     inside the asyncio context, before loop.start().
     Lifecycle events buffer until flush_events() so nothing precedes
     SessionStarted in a fresh log; runtime events (restarts) append directly
-    once flushed."""
+    once flushed.
+
+    Single-use: one McpHost per HookBus/registry per process (start() guards
+    re-entry; a second host on the same bus would duplicate the instructions
+    hook). A dead connection keeps its last instructions: subagent sessions
+    started after a server died still inject them (harmless; tools fail fast)."""
 
     def __init__(
         self,
@@ -263,6 +268,8 @@ class McpHost:
         self._pending: list[CustomEvent] | None = []  # None once flushed
 
     def _emit(self, name: str, data: dict) -> None:
+        if self._session.closed:
+            return  # teardown race: dropping informational events beats masking real errors
         event = CustomEvent(namespace="mcp", name=name, data=data)
         if self._pending is not None:
             self._pending.append(event)
@@ -271,11 +278,15 @@ class McpHost:
 
     def flush_events(self) -> None:
         pending, self._pending = self._pending or [], None
+        if self._session.closed:
+            return
         for event in pending:
             self._session.append(event)
 
     async def start(self) -> list[str]:
         """Connect everything; per-server failures become warnings, never crashes."""
+        if self.connections:
+            raise RuntimeError("McpHost.start() already called; call stop() first")
         warnings: list[str] = []
         conns = [
             ServerConnection(

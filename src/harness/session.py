@@ -49,6 +49,7 @@ class Session:
         self.blobs = BlobStore(base / "sessions" / str(session_id) / "blobs")
         self.bus = SubscriberBus()
         self._seq = start_seq
+        self._closed = False
 
     def start(self) -> Envelope:
         if self._seq != 0:
@@ -72,6 +73,11 @@ class Session:
 
     def close(self) -> None:
         self._writer.close()
+        self._closed = True
+
+    @property
+    def closed(self) -> bool:
+        return self._closed
 
     def __enter__(self) -> "Session":
         return self

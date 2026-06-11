@@ -345,3 +345,25 @@ async def test_host_partial_failure_keeps_other_servers(tmp_path):
     finally:
         await host.stop()
         session.close()
+
+
+async def test_host_double_start_is_loud(tmp_path):
+    host, registry, hooks, session = make_host(tmp_path)
+    await host.start()
+    try:
+        with pytest.raises(RuntimeError) as exc:
+            await host.start()
+        assert "already" in str(exc.value)
+    finally:
+        await host.stop()
+        session.close()
+
+
+async def test_host_stop_after_session_close_does_not_raise(tmp_path):
+    host, registry, hooks, session = make_host(tmp_path)
+    await host.start()
+    session.start()
+    host.flush_events()
+    session.close()
+    await host.stop()  # must not raise: server_stopped events drop silently
+    assert host.connections == {}
