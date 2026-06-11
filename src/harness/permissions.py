@@ -161,14 +161,14 @@ def default_engine(
     """Build an engine from the standard locations; None when no config exists
     (legacy allow-all behavior — the engine is strictly opt-in by presence).
 
-    Layer order: project .harness/permissions.toml, then the user grants file,
-    then user permissions.toml."""
+    Layer order: the user grants file first (approved always-allows override
+    project ask rules; deny-absolute still lets project denies win), then
+    project .harness/permissions.toml, then user permissions.toml."""
     config_home = config_home or Path.home() / ".config" / "harness"
     grants_path = config_home / "grants.toml"
-    candidates = []
+    candidates = [grants_path]
     if project_dir is not None:
         candidates.append(project_dir / ".harness" / "permissions.toml")
-    candidates.append(grants_path)
     candidates.append(config_home / "permissions.toml")
     layers = [RuleSet.load(p) for p in candidates if p.exists()]
     if not layers:

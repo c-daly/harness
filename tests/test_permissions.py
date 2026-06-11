@@ -140,14 +140,28 @@ def test_default_engine_layer_order(tmp_path):
     cfg.mkdir()
     (tmp_path / ".harness").mkdir()
     (tmp_path / ".harness" / "permissions.toml").write_text(
-        "[[rules]]\naction = \"deny\"\ntool = \"bash\"\n"
+        "[[rules]]\naction = \"deny\"\ntool = \"bash\"\n\n"
+        "[[rules]]\naction = \"ask\"\ntool = \"deploy\"\n"
     )
-    (cfg / "grants.toml").write_text("[[rules]]\naction = \"allow\"\ntool = \"bash\"\n")
+    (cfg / "grants.toml").write_text(
+        "[[rules]]\naction = \"allow\"\ntool = \"bash\"\n\n"
+        "[[rules]]\naction = \"allow\"\ntool = \"deploy\"\n"
+    )
     (cfg / "permissions.toml").write_text("default = \"allow\"\n")
     engine = default_engine(project_dir=tmp_path, config_home=cfg)
     assert engine is not None
-    assert engine.decide("bash", {}) == "deny"      # project deny beats user grant
+    assert engine.decide("bash", {}) == "deny"       # deny absolute: a grant can never override
+    assert engine.decide("deploy", {}) == "allow"    # grant overrides project ask (order-pinned)
     assert engine.decide("anything", {}) == "allow"  # user default reached
+
+
+def test_grants_after_project_would_break_ask_override(tmp_path):
+    """Pin the order property directly: with project BEFORE grants, the ask wins."""
+    from harness.permissions import PermissionEngine, PermissionRule, RuleSet
+    project = RuleSet(rules=[PermissionRule(action="ask", tool="deploy")])
+    grants = RuleSet(rules=[PermissionRule(action="allow", tool="deploy")])
+    assert PermissionEngine([grants, project]).decide("deploy", {}) == "allow"
+    assert PermissionEngine([project, grants]).decide("deploy", {}) == "ask"
 
 
 def test_session_grant_not_persisted_by_default(tmp_path):
