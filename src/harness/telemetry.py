@@ -276,3 +276,77 @@ def run_rollup(conn: sqlite3.Connection, root: str) -> dict:
         "outcome": outcome[0] if outcome else None,
         "score": outcome[1] if outcome else None,
     }
+
+
+def stats_summary(conn, tag=None):
+    where, params = "", []
+    if tag:
+        where = "WHERE session_id IN (SELECT session_id FROM tags WHERE tag = ?)"
+        params = [tag]
+    models = conn.execute(
+        "SELECT model, COUNT(*), COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0),"
+        " COALESCE(SUM(cache_read_tokens),0), SUM(cost)"
+        " FROM model_calls " + where + " GROUP BY model ORDER BY model", params
+    ).fetchall()
+    tools = conn.execute(
+        "SELECT tool, COUNT(*), COALESCE(SUM(is_error),0), COALESCE(SUM(blocked),0),"
+        " COALESCE(SUM(asked),0) FROM tool_calls " + where + " GROUP BY tool ORDER BY tool", params
+    ).fetchall()
+    sessions = conn.execute("SELECT COUNT(*) FROM sessions " + where, params).fetchone()[0]
+    retries = conn.execute("SELECT COUNT(*) FROM retries " + where, params).fetchone()[0]
+    return {"sessions": sessions, "retries": retries, "models": models, "tools": tools}
+
+
+def _money(cost):
+    if cost is None:
+        return "n/a"
+    return "$" + format(cost, ".6f")
+
+
+def render_stats(summary):
+    lines = [
+        "sessions: " + str(summary["sessions"]),
+        "retries: " + str(summary["retries"]),
+        "",
+        "models:",
+    ]
+    for model, calls, inp, out, cached, cost in summary["models"]:
+        lines.append(
+            "  " + str(model) + ": calls=" + str(calls) + " in=" + str(inp)
+            + " out=" + str(out) + " cached=" + str(cached) + " cost=" + _money(cost)
+        )
+    lines.append("")
+    lines.append("tools:")
+    for tool, calls, errors, blocked, asked in summary["tools"]:
+        lines.append(
+            "  " + str(tool) + ": calls=" + str(calls) + " errors=" + str(errors)
+            + " blocked=" + str(blocked) + " asked=" + str(asked)
+        )
+    return chr(10).join(lines)
+
+
+_COMPARE_FIELDS = (
+    "sessions", "model_calls", "input_tokens", "output_tokens", "cache_read_tokens",
+    "cost", "model_ms", "tool_calls", "tool_errors", "blocked", "asked", "retries",
+    "outcome", "score",
+)
+
+
+def render_compare(a, b):
+    def fmt(value):
+        if value is None:
+            return "-"
+        if isinstance(value, float):
+            s = format(value, ".6f").rstrip("0").rstrip(".")
+            return s if s else "0"
+        return str(value)
+
+    width = max(len(f) for f in _COMPARE_FIELDS)
+    ra, rb = a["root"][:12], b["root"][:12]
+    header = (" " * width) + "  " + ra.rjust(14) + "  " + rb.rjust(14)
+    lines = [header]
+    for field in _COMPARE_FIELDS:
+        va = fmt(a[field])
+        vb = fmt(b[field])
+        lines.append(field.ljust(width) + "  " + va.rjust(14) + "  " + vb.rjust(14))
+    return chr(10).join(lines)

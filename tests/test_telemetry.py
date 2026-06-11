@@ -231,3 +231,57 @@ def test_run_rollup_unknown_root_raises(tmp_path):
     conn = open_store(tmp_path / "t.db")
     with pytest.raises(KeyError, match="no such session"):
         run_rollup(conn, "typo-sid")
+
+
+# --- Task 4: Query summaries + text renderers ---
+
+def test_stats_summary_groups_and_filters_by_tag(tmp_path):
+    from harness.telemetry import index_envelopes, open_store, stats_summary
+    conn = open_store(tmp_path / "t.db")
+    pricing = {"input_cost_per_token": 1e-6, "output_cost_per_token": 1e-6}
+    index_envelopes(conn, [
+        Envelope(session_id=SessionId("a"), seq=1, ts=1.0, event=SessionStarted()),
+        Envelope(session_id=SessionId("a"), seq=2, ts=1.0,
+                 event=CustomEvent(namespace="harness", name="tag", data={"tag": "exp:x"})),
+        _mcc(3, model="m1", inp=100, out=10, pricing=pricing).model_copy(
+            update={"session_id": SessionId("a")}),
+        Envelope(session_id=SessionId("b"), seq=1, ts=1.0, event=SessionStarted()),
+        _mcc(2, model="m2", inp=999, out=99).model_copy(
+            update={"session_id": SessionId("b")}),
+    ])
+    everything = stats_summary(conn)
+    assert everything["sessions"] == 2 and len(everything["models"]) == 2
+    tagged = stats_summary(conn, tag="exp:x")
+    assert tagged["sessions"] == 1
+    assert len(tagged["models"]) == 1 and tagged["models"][0][0] == "m1"
+
+
+def test_render_stats_is_readable(tmp_path):
+    from harness.telemetry import render_stats
+    text = render_stats({
+        "sessions": 2,
+        "retries": 1,
+        "models": [("m1", 3, 300, 30, 0, 0.00033), ("m2", 1, 999, 99, 0, None)],
+        "tools": [("bash", 4, 1, 1, 2)],
+    })
+    assert "sessions: 2" in text
+    assert "retries: 1" in text
+    assert "m1" in text and "300" in text and "$0.000330" in text
+    assert "m2" in text and "n/a" in text      # unpriced cost renders n/a, never 0
+    assert "bash" in text and "errors=1" in text and "blocked=1" in text and "asked=2" in text
+
+
+def test_render_compare_shows_deltas(tmp_path):
+    from harness.telemetry import render_compare
+    a = {"root": "aaa", "sessions": 2, "model_calls": 3, "input_tokens": 300,
+         "output_tokens": 30, "cache_read_tokens": 0, "cost": 0.0003, "model_ms": 500,
+         "tool_calls": 4, "tool_errors": 1, "blocked": 0, "asked": 1, "retries": 2,
+         "outcome": "ok", "score": 1.0}
+    b = {"root": "bbb", "sessions": 1, "model_calls": 1, "input_tokens": 100,
+         "output_tokens": 10, "cache_read_tokens": 0, "cost": None, "model_ms": 100,
+         "tool_calls": 1, "tool_errors": 0, "blocked": 0, "asked": 0, "retries": 0,
+         "outcome": None, "score": None}
+    text = render_compare(a, b)
+    assert "aaa" in text and "bbb" in text
+    assert "input_tokens" in text and "300" in text and "100" in text
+    assert "outcome" in text and "ok" in text and "-" in text  # absent renders "-"
