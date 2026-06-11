@@ -38,7 +38,6 @@ def _clear_stale_lock(base: Path, session_id: SessionId) -> None:
     raise SessionLockedError(f"{lock}: held by live pid {pid}")
 
 
-
 def _reopen(
     base: Path, session_id: SessionId, *, default_model: ModelId | None = None
 ):
@@ -52,7 +51,13 @@ def _reopen(
 
 def append_events(base: Path, session_id: SessionId, events: list) -> None:
     """Reopen a closed session just long enough to append bookkeeping events
-    (outcomes, annotations). No SessionResumed: this is not a run."""
+    (outcomes, annotations). No SessionResumed: this is not a run.
+
+    A crashed session's dangling intents are NOT repaired here — resume_session
+    owns repair; an outcome appended to a dirty session is still readable and the
+    next resume repairs as usual."""
+    if not events:
+        return  # avoid pointless lock churn
     session, _, _ = _reopen(base, session_id)
     try:
         for event in events:
