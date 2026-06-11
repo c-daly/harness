@@ -59,8 +59,10 @@ async def test_telemetry_end_to_end(tmp_path):
     assert "outcome" in text and "ok" in text
 
 
-async def test_rebuild_with_live_session_in_progress(tmp_path):
-    """A still-open (locked, possibly mid-write) session must not break stats."""
+async def test_rebuild_with_open_active_session(tmp_path):
+    """An open-for-append session (lock held, complete flushed lines) must not
+    break or warn during rebuild. Torn-tail leniency is covered separately in
+    test_telemetry."""
     from harness.events import UserMessage
     from harness.session import Session
     from harness.types import SessionId

@@ -279,6 +279,11 @@ def run_rollup(conn: sqlite3.Connection, root: str) -> dict:
 
 
 def stats_summary(conn: sqlite3.Connection, tag: str | None = None) -> dict:
+    """Per-model and per-tool aggregates, optionally filtered by tag.
+
+    Tags attach per-session only: child sessions spawned by dispatch_agent do
+    NOT inherit the parent's tags — a tag filter shows the tagged session's own
+    counts. Use run_rollup for whole-run (parent + descendants) aggregation."""
     where, params = "", []
     if tag:
         where = "WHERE session_id IN (SELECT session_id FROM tags WHERE tag = ?)"

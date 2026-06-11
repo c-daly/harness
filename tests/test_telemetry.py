@@ -290,6 +290,7 @@ def test_render_compare_shows_deltas(tmp_path):
 # --- Task 6: TelemetrySubscriber ---
 
 def test_subscriber_drains_live_session_into_store(tmp_path):
+    # sync on purpose: put_nowait/get_nowait need no running loop (py3.10+)
     from harness.session import Session
     from harness.telemetry import TelemetrySubscriber, open_store
     from harness.events import UserMessage
