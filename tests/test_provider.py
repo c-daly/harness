@@ -127,3 +127,14 @@ async def test_collect_malformed_args_json_raises_provider_error():
     provider = FakeProvider([chunks])
     with pytest.raises(MalformedStreamError, match="c"):
         await collect(provider.complete(model=ModelId("fake"), messages=[], tools=()))
+
+
+async def test_echo_provider_echoes_last_user_message_forever():
+    from harness.provider import EchoProvider
+    provider = EchoProvider()
+    for text in ("one", "two"):
+        message, usage, stop = await collect(
+            provider.complete(model=ModelId("echo"), messages=[Message.user_text(text)], tools=())
+        )
+        assert message.text() == f"echo: {text}"
+        assert stop == "end_turn"

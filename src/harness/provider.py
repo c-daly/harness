@@ -166,3 +166,22 @@ class FakeProvider:
             raise RuntimeError("FakeProvider script exhausted")
         for chunk in self.script.pop(0):
             yield chunk
+
+
+class EchoProvider:
+    """Infinite demo provider: echoes the last user text. Powers the TUI's
+    no-model mode and multi-turn tests (FakeProvider scripts are finite)."""
+
+    async def complete(
+        self,
+        *,
+        model: ModelId,
+        messages: Sequence[Message],
+        tools: Sequence[ToolSpec] = (),
+    ) -> AsyncIterator[Chunk]:
+        last = next(
+            (m.text() for m in reversed(messages) if m.role == Role.USER and m.text()), ""
+        )
+        yield TextDelta(text=f"echo: {last}")
+        yield UsageReport(usage=Usage())
+        yield StreamStop(stop_reason="end_turn")
