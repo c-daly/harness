@@ -33,7 +33,7 @@ class McpServerSpec:
     headers: dict[str, str] = field(default_factory=dict)  # header -> ENV VAR NAME
     restart: Literal["never", "on_failure"] = "on_failure"
     tool_timeout_s: float = 60.0
-    source: str = "user"  # attribution, not behavior
+    source: str = "user"  # "user" | "project" | "adhoc" — attribution, not behavior
 
 
 def _refs(table: object, *, where: str) -> dict[str, str]:

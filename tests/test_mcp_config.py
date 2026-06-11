@@ -62,6 +62,8 @@ def test_http_spec_parses_with_inferred_transport(tmp_path):
         ('[servers.s]\ncommand = "x"\n[servers.s.env]\nK = "not a var!"\n', "environment variable"),
         ('[servers.s]\nurl = "http://y"\n[servers.s.headers]\nA = "Bearer xyz"\n',
          "environment variable"),
+        ('[servers.s]\ncommand = "x"\nargs = "not-a-list"\n', "args"),
+        ('[servers.s]\ncommand = "x"\nargs = [1, 2]\n', "args"),
     ],
 )
 def test_validation_errors(tmp_path, toml_body, fragment):
@@ -70,6 +72,14 @@ def test_validation_errors(tmp_path, toml_body, fragment):
     with pytest.raises(McpConfigError) as exc:
         load_mcp_file(path, source="user")
     assert fragment in str(exc.value)
+
+
+def test_toml_decode_error_wraps(tmp_path):
+    path = tmp_path / "mcp.toml"
+    path.write_text("[servers.s\ncommand = ")
+    with pytest.raises(McpConfigError) as exc:
+        load_mcp_file(path, source="user")
+    assert "mcp.toml" in str(exc.value)
 
 
 def test_project_shadows_user(tmp_path):
@@ -102,6 +112,14 @@ def test_resolve_env_missing_variable_is_loud(monkeypatch):
     with pytest.raises(McpConfigError) as exc:
         resolve_env({"K": "NOPE_VAR"})
     assert "NOPE_VAR" in str(exc.value)
+
+
+def test_resolve_env_names_all_missing_sorted(monkeypatch):
+    monkeypatch.delenv("ZZ_VAR", raising=False)
+    monkeypatch.delenv("AA_VAR", raising=False)
+    with pytest.raises(McpConfigError) as exc:
+        resolve_env({"K1": "ZZ_VAR", "K2": "AA_VAR"})
+    assert "AA_VAR, ZZ_VAR" in str(exc.value)
 
 
 def test_spec_is_frozen():
