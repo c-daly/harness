@@ -4,7 +4,7 @@
 import asyncio
 from typing import Callable
 
-from harness.dispatcher import Dispatcher
+from harness.dispatcher import Dispatcher, ToolOutcome
 from harness.events import CustomEvent, ErrorRaised, SessionEnded, ToolCallCancelled, UserInterrupt, UserMessage
 from harness.hooks import Annotate, Emit, HookBus, Inject, LifecyclePoint, ProposedToolCall
 from harness.interaction import Resolver
@@ -12,7 +12,7 @@ from harness.messages import Message, Role, ToolResultBlock
 from harness.provider import Chunk, ModelProvider
 from harness.session import Session
 from harness.tools import ToolRegistry
-from harness.types import ModelId
+from harness.types import CallId, ModelId
 
 
 class AgentLoop:
@@ -47,6 +47,9 @@ class AgentLoop:
         )
         self.on_chunk: Callable[[Chunk], None] | None = None  # set by the frontend; root loop only
         self._ended = False
+        # per-turn tool outcomes, recorded at completion so interrupt_turn can
+        # tell completed-but-unpaired calls from truly-cancelled ones
+        self._turn_outcomes: dict[CallId, ToolOutcome] = {}
 
     async def _apply_contributions(self, point: LifecyclePoint, ctx: dict) -> None:
         contributions, warnings = await self.hooks.run_lifecycle(point, ctx)
@@ -98,13 +101,19 @@ class AgentLoop:
             calls = assistant.tool_calls()
             if not calls:
                 return assistant.text()
+            self._turn_outcomes.clear()
+
+            async def _run_one(call):
+                outcome = await self.dispatcher.dispatch_tool(
+                    ProposedToolCall(call_id=call.call_id, tool=call.tool, args=call.args)
+                )
+                # recorded at completion so interrupt_turn can distinguish
+                # completed-but-unpaired calls from truly-cancelled ones
+                self._turn_outcomes[call.call_id] = outcome
+                return outcome
+
             try:
-                outcomes = await asyncio.gather(*[
-                    self.dispatcher.dispatch_tool(
-                        ProposedToolCall(call_id=c.call_id, tool=c.tool, args=c.args)
-                    )
-                    for c in calls
-                ])
+                outcomes = await asyncio.gather(*[_run_one(c) for c in calls])
             except Exception as exc:
                 # dispatch_tool converts tool errors to results; only infrastructure
                 # failures (log write, blob store) reach here. Siblings are cancelled
@@ -131,17 +140,26 @@ class AgentLoop:
         return f"[stopped: max iterations ({self.max_iterations}) reached]"
 
     def interrupt_turn(self) -> None:
-        """In-process mirror of resume repair: call once after cancelling run_turn.
+        """In-process mirror of resume repair: call after cancelling run_turn.
 
-        Closes any unpaired tool_use blocks in the trailing assistant message with
-        ToolCallCancelled events + synthetic error tool_results (matching what
-        fold renders for them), then records UserInterrupt. Keeps this loop alive:
-        run_turn is safe to call again afterwards."""
+        Unpaired tool_use blocks in the trailing assistant message are closed:
+        calls that COMPLETED before cancellation get their real recorded result
+        (the log already holds ToolCallCompleted); truly-incomplete calls get a
+        ToolCallCancelled event + the synthetic error result fold renders for
+        them. Repairs are idempotent (a second call finds everything paired);
+        each call appends exactly one UserInterrupt. The loop stays alive."""
         for call in self._dangling_tool_calls():
-            self.session.append(ToolCallCancelled(call_id=call.call_id))
-            self.history.append(
-                Message.tool_result(call.call_id, text="(call did not complete)", is_error=True)
-            )
+            outcome = self._turn_outcomes.get(call.call_id)
+            if outcome is not None:
+                self.history.append(Message.tool_result(
+                    call.call_id, text=outcome.text, blob=outcome.blob,
+                    is_error=outcome.is_error,
+                ))
+            else:
+                self.session.append(ToolCallCancelled(call_id=call.call_id))
+                self.history.append(Message.tool_result(
+                    call.call_id, text="(call did not complete)", is_error=True,
+                ))
         self.session.append(UserInterrupt())
 
     def _dangling_tool_calls(self):
@@ -162,7 +180,7 @@ class AgentLoop:
             elif msg.role == Role.ASSISTANT:
                 calls = msg.tool_calls()
                 if not calls:
-                    # Assistant message with no tool calls: nothing to repair
+                    # a trailing text-only assistant means the turn completed cleanly -- nothing to repair
                     return []
                 # Return calls lacking a paired result
                 return [c for c in calls if c.call_id not in paired_ids]

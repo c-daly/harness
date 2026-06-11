@@ -13,7 +13,7 @@ from harness.messages import Role, ToolResultBlock
 from harness.provider import FakeProvider, StreamStop, TextDelta, ToolCallDelta, Usage, UsageReport, text_turn, tool_call_turn
 from harness.session import Session
 from harness.tools import ToolRegistry, ToolSpec
-from harness.types import ModelId, SessionId, ToolName
+from harness.types import CallId, ModelId, SessionId, ToolName
 
 
 class Echo:
@@ -204,6 +204,15 @@ class StallTool:
         return "never"
 
 
+class FastTool:
+    """Returns instantly."""
+
+    spec = ToolSpec(name=ToolName("fast"), description="", parameters={})
+
+    async def __call__(self, args):
+        return "fast-done"
+
+
 def _interrupt_loop(tmp_path, provider, registry=None):
     """Build a (session, loop) pair for interrupt tests."""
     session = Session(tmp_path, SessionId("s2"))
@@ -349,3 +358,72 @@ async def test_interrupt_with_clean_history_only_records_interrupt(tmp_path):
     event_types = [e.event.type for e in _read_envelopes_for(tmp_path)]
     assert event_types.count("user_interrupt") == 1
     assert "tool_call_cancelled" not in event_types
+
+
+async def test_interrupt_with_partially_completed_gather_repairs_faithfully(tmp_path):
+    """Cancel mid-gather after one tool completed: the completed call keeps its
+    real recorded result, the stalled call gets the synthetic cancellation, and fold
+    of the log pairs each call_id exactly once."""
+    reg = ToolRegistry()
+    reg.register(FastTool())
+    reg.register(StallTool())
+
+    turn = [
+        ToolCallDelta(index=0, call_id=CallId("f1"), tool=ToolName("fast"), args_json="{}"),
+        ToolCallDelta(index=1, call_id=CallId("s1"), tool=ToolName("stall"), args_json="{}"),
+        UsageReport(usage=Usage()),
+        StreamStop(stop_reason="tool_use"),
+    ]
+    session, loop = _interrupt_loop(tmp_path, FakeProvider([turn]), registry=reg)
+    await loop.start()
+
+    task = asyncio.create_task(loop.run_turn("go"))
+    await asyncio.sleep(0.2)  # fast completes; stall stays parked
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    loop.interrupt_turn()
+
+    # history: f1 paired with its REAL result, s1 with the synthetic
+    results = {}
+    for msg in loop.history:
+        if msg.role == Role.TOOL:
+            for block in msg.blocks:
+                if isinstance(block, ToolResultBlock):
+                    results[block.call_id] = block
+    assert set(results) == {CallId("f1"), CallId("s1")}
+    assert results[CallId("f1")].text == "fast-done"
+    assert results[CallId("f1")].is_error is False
+    assert results[CallId("s1")].text == _CANCELLED_TEXT
+    assert results[CallId("s1")].is_error is True
+
+    events = [e.event for e in _read_envelopes_for(tmp_path)]
+    event_types = [e.type for e in events]
+    # ToolCallCompleted recorded for f1 by the dispatcher; ToolCallCancelled ONLY for s1
+    cancelled_ids = [e.call_id for e in events if e.type == "tool_call_cancelled"]
+    assert cancelled_ids == [CallId("s1")]
+    completed_ids = [e.call_id for e in events if e.type == "tool_call_completed"]
+    assert CallId("f1") in completed_ids
+    assert CallId("s1") not in completed_ids
+    assert event_types.count("user_interrupt") == 1
+
+    # fold parity: exactly ONE tool_result per call_id, with the same content
+    folded = fold(_read_envelopes_for(tmp_path))
+    fold_results = {}
+    for msg in folded.messages:
+        if msg.role == Role.TOOL:
+            for block in msg.blocks:
+                if isinstance(block, ToolResultBlock):
+                    assert block.call_id not in fold_results, "duplicate tool_result for the same call_id"
+                    fold_results[block.call_id] = block
+    assert set(fold_results) == {CallId("f1"), CallId("s1")}
+    assert fold_results[CallId("f1")].text == "fast-done"
+    assert fold_results[CallId("f1")].is_error is False
+    assert fold_results[CallId("s1")].text == _CANCELLED_TEXT
+    assert fold_results[CallId("s1")].is_error is True
+
+    # resurrection: loop survives and the next turn runs clean
+    loop.provider = FakeProvider([text_turn("recovered")])
+    assert await loop.run_turn("again") == "recovered"
+    session.close()
