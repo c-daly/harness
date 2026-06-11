@@ -5,6 +5,7 @@ on_chunk tee (streaming), the Resolver (decisions), and the loop/session/mcp
 lifecycle calls that mirror run_once's ordering contract."""
 
 import asyncio
+from pathlib import Path
 
 from rich.text import Text
 from textual import on
@@ -21,7 +22,7 @@ from harness.hooks import ProposedToolCall
 from harness.interaction import PermissionRequest
 from harness.messages import Role
 from harness.provider import TextDelta, ThinkingDelta
-from harness.tui_support import HistoryRing, expand_file_mentions, parse_slash_command
+from harness.tui_support import HistoryRing, SlashCommand, expand_file_mentions, parse_slash_command
 
 _SNIPPET_CAP = 200
 
@@ -240,8 +241,47 @@ class HarnessApp(App[None]):
         self._clear_live()
         self.say("", reply)
 
-    async def _run_command(self, command) -> None:  # Task 8 fills this in
-        self.say("! ", f"unknown command: /{command.name}")
+    async def _run_command(self, command: SlashCommand) -> None:
+        if command.name == "help":
+            self.say("", "/help  /model [alias]  /tools  /quit  — @/path attaches a file")
+        elif command.name == "tools":
+            for spec in self.kernel.registry.specs():
+                self.say("  ", str(spec.name))
+        elif command.name == "quit":
+            await self._finish()
+            self.exit()
+        elif command.name == "model":
+            await self._switch_model(command.arg)
+        else:
+            self.say("! ", f"unknown command: /{command.name}")
+
+    async def _switch_model(self, alias: str) -> None:
+        if self.catalog_path is None or not Path(self.catalog_path).exists():
+            self.say("! ", "no catalog configured (--catalog)")
+            return
+        # Catalog.load lazily imports litellm on pricing fallback -- slow first touch
+        # is acceptable here; /model is off the hot path.
+        from harness.catalog import Catalog, UnknownAliasError
+
+        catalog = Catalog.load(Path(self.catalog_path))
+        if not alias:
+            for name in catalog.aliases():
+                self.say("  ", name)
+            return
+        try:
+            resolved = catalog.resolve(alias)
+        except UnknownAliasError:
+            self.say("! ", f"unknown alias: {alias}")
+            return
+        loop = self.kernel.loop
+        loop.model = resolved.route
+        loop.pricing = resolved.pricing_dict() or None
+        from harness.provider_litellm import LiteLLMProvider
+
+        # Subagents keep the provider captured at build time -- /model retargets
+        # the ROOT loop only (kernel fact; revisit with the plugin loader).
+        loop.provider = LiteLLMProvider(api_base=resolved.api_base)
+        self.say("", f"model -> {alias} ({resolved.route})")
 
     def action_interrupt(self) -> None:
         # The priority Esc binding preempts modal bindings: with a permission

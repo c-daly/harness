@@ -35,11 +35,12 @@ class EchoTool:
         return args["text"]
 
 
-def make_app(tmp_path, **kernel_kwargs) -> HarnessApp:
+def make_app(tmp_path, catalog_path=None, **kernel_kwargs) -> HarnessApp:
     """Build a HarnessApp for tests.
 
     Special kwargs (consumed here, not forwarded to build_kernel):
       engine: PermissionEngine -- when given, wires up AppBoundAsk + TuiResolver.
+      catalog_path: Path -- when given, forwarded to HarnessApp for /model.
     """
     engine = kernel_kwargs.pop("engine", None)
     ask: AppBoundAsk | None = None
@@ -58,7 +59,7 @@ def make_app(tmp_path, **kernel_kwargs) -> HarnessApp:
         build_kwargs["permissions"] = engine
     build_kwargs.update(kernel_kwargs)
     kernel = build_kernel(**build_kwargs)
-    return HarnessApp(kernel, ask=ask)
+    return HarnessApp(kernel, catalog_path=catalog_path, ask=ask)
 
 
 async def test_submit_renders_user_line_and_reply(tmp_path):
@@ -454,3 +455,75 @@ async def test_escape_preserves_partial_streamed_output(tmp_path):
         assert app.query_one("#live", Static).content == ""  # live tail cleared
     events = [e.event.type for e in read_session(tmp_path, app.kernel.session.id)]
     assert events.count("user_interrupt") == 1
+
+
+
+MODELS_TOML_TWO_ALIASES = (
+    "[models.alias-a]\n"
+    "route = 'local/model-a'\n"
+    "input_cost_per_token = 0.0\n"
+    "output_cost_per_token = 0.0\n"
+    "\n"
+    "[models.alias-b]\n"
+    "route = 'local/model-b'\n"
+    "input_cost_per_token = 0.0\n"
+    "output_cost_per_token = 0.0\n"
+)
+
+
+async def test_slash_help_and_tools_and_unknown(tmp_path):
+    app = make_app(tmp_path)
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        await pilot.click("#prompt")
+        await pilot.press(*"/help", "enter")
+        await pilot.press(*"/tools", "enter")
+        await pilot.press(*"/nope", "enter")
+        await pilot.pause(0.2)
+        lines = "\n".join(str(line) for line in app.query_one(RichLog).lines)
+        assert "/model" in lines                     # help lists commands
+        assert "dispatch_agent" in lines             # tools lists the builtin
+        assert "unknown command" in lines
+
+
+async def test_slash_model_switches_via_catalog(tmp_path):
+    catalog_file = tmp_path / "models.toml"
+    catalog_file.write_text(MODELS_TOML_TWO_ALIASES)
+    app = make_app(tmp_path, catalog_path=catalog_file)
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        await pilot.click("#prompt")
+        await pilot.press(*"/model", "enter")         # no arg: list aliases
+        await pilot.pause(0.2)
+        lines = "\n".join(str(line) for line in app.query_one(RichLog).lines)
+        assert "alias-a" in lines and "alias-b" in lines
+        await pilot.press(*"/model alias-b", "enter")
+        await pilot.pause(0.2)
+        assert str(app.kernel.loop.model) == "local/model-b"
+        await pilot.press(*"/model nope", "enter")
+        await pilot.pause(0.2)
+        lines = "\n".join(str(line) for line in app.query_one(RichLog).lines)
+        assert "unknown alias" in lines
+
+
+async def test_slash_model_without_catalog_says_so(tmp_path):
+    app = make_app(tmp_path)                          # no catalog_path
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        await pilot.click("#prompt")
+        await pilot.press(*"/model", "enter")
+        await pilot.pause(0.2)
+        lines = "\n".join(str(line) for line in app.query_one(RichLog).lines)
+        assert "no catalog" in lines
+
+
+async def test_slash_quit_exits_cleanly(tmp_path):
+    app = make_app(tmp_path)
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        await pilot.click("#prompt")
+        await pilot.press(*"/quit", "enter")
+        await pilot.pause(0.2)
+    events = [e.event.type for e in read_session(tmp_path, app.kernel.session.id)]
+    assert "session_ended" in events
+    assert [e for e in events].count("session_ended") == 1
