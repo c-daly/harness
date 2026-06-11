@@ -1,11 +1,10 @@
 import json
-import sys
 
 from harness.cli import Kernel, build_kernel, main, run_once
-from harness.mcp_config import McpServerSpec, load_mcp_file
+from harness.mcp_config import load_mcp_file
 from harness.provider import FakeProvider, text_turn
 from harness.types import ModelId
-from tests.conftest import FIXTURE_SERVER_PATH
+from tests.conftest import fixture_stdio_spec
 
 
 async def test_build_kernel_wires_dispatch_agent_tool(tmp_path):
@@ -256,15 +255,6 @@ def test_outcome_on_live_session_exits_cleanly(tmp_path, capsys, monkeypatch):
         assert "still running" in str(exc.value)
     finally:
         live.close()
-
-
-def fixture_stdio_spec(**overrides) -> McpServerSpec:
-    defaults = dict(
-        name="fixture", transport="stdio",
-        command=sys.executable, args=(str(FIXTURE_SERVER_PATH),),
-    )
-    defaults.update(overrides)
-    return McpServerSpec(**defaults)
 
 
 async def test_kernel_with_mcp_runs_tool_and_injects_instructions(tmp_path):

@@ -1,27 +1,14 @@
 # tests/test_e2e_phase5.py
 """Phase 5 milestone: MCP servers configured, hosted, enforced, observed -- over a real stdio subprocess."""
 
-import sys
-
 from harness.blobs import INLINE_THRESHOLD
 from harness.cli import build_kernel, run_once
 from harness.log import read_session
-from harness.mcp_config import McpServerSpec
 from harness.permissions import PermissionEngine, PermissionRule, RuleSet
 from harness.provider import FakeProvider, text_turn, tool_call_turn
 from harness.telemetry import rebuild_index, render_stats, stats_summary
 from harness.types import ModelId, ToolName
-from tests.conftest import FIXTURE_SERVER_PATH
-
-
-def fixture_stdio_spec(**overrides) -> McpServerSpec:
-    """Build a McpServerSpec pointing at the stdio fixture server subprocess."""
-    defaults = dict(
-        name="fixture", transport="stdio",
-        command=sys.executable, args=(str(FIXTURE_SERVER_PATH),),
-    )
-    defaults.update(overrides)
-    return McpServerSpec(**defaults)
+from tests.conftest import fixture_stdio_spec
 
 
 def read_envelopes(base_dir, session_id):
