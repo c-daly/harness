@@ -4,7 +4,7 @@ A converter, not a compatibility layer: the clean subset converts, everything
 else is skipped per-server with a warning that names the reason. The critical
 inversion: .mcp.json env/header values are LITERALS (possibly ${VAR}
 expansions); mcp.toml values are env-var NAMES. Only pure references convert.
-Literals are never written anywhere."""
+Literals are never written anywhere — and never echoed into warnings."""
 
 import json
 import re
@@ -31,14 +31,15 @@ def _reference(value: str, *, where: str, warnings: list[str], server: str) -> s
     if match := _PURE_REF.match(value):
         return match.group(1)
     if match := _REF_WITH_DEFAULT.match(value):
+        var = match.group(1)
         warnings.append(
-            f"{server}: {where} used a default expansion {value!r}; the default was"
-            f" dropped (harness reads ${match.group(1)} only)"
+            f"{server}: {where} used a default expansion ${{{var}:-<redacted>}}; the"
+            f" default was dropped (harness reads ${{{var}}} only)"
         )
-        return match.group(1)
+        return var
     if value.startswith("$") or "${" in value:
         raise _Skip(
-            f"{where} value {value!r} is a composite (literal + reference);"
+            f"{where} value is a composite (literal + reference);"
             " export the full value in one env var and re-add by hand"
         )
     raise _Skip(
@@ -76,13 +77,19 @@ def _convert_server(name: str, body, warnings: list[str]) -> McpServerSpec:
         warnings.append(f"{name}: unwrapped Windows .cmd suffix")
         command = command[: -len(".cmd")]
 
+    raw_env = body.get("env") or {}
+    if not isinstance(raw_env, dict):
+        raise _Skip("env must be an object")
+    raw_headers = body.get("headers") or {}
+    if not isinstance(raw_headers, dict):
+        raise _Skip("headers must be an object")
     env = {
         key: _reference(str(value), where=f"env.{key}", warnings=warnings, server=name)
-        for key, value in (body.get("env") or {}).items()
+        for key, value in raw_env.items()
     }
     headers = {
         key: _reference(str(value), where=f"headers.{key}", warnings=warnings, server=name)
-        for key, value in (body.get("headers") or {}).items()
+        for key, value in raw_headers.items()
     }
 
     toml_body: dict = {}
@@ -98,8 +105,15 @@ def _convert_server(name: str, body, warnings: list[str]) -> McpServerSpec:
         toml_body["env"] = env
     if headers:
         toml_body["headers"] = headers
-    if isinstance(body.get("timeout"), (int, float)) and body["timeout"] >= 1000:
-        toml_body["tool_timeout_s"] = body["timeout"] / 1000.0
+    timeout = body.get("timeout")
+    if isinstance(timeout, (int, float)):
+        if timeout >= 1000:
+            toml_body["tool_timeout_s"] = timeout / 1000.0
+        else:
+            warnings.append(
+                f"{name}: timeout {timeout} is below 1000ms and was ignored"
+                " (Claude Code timeouts are milliseconds)"
+            )
     try:
         return _parse_server(name, toml_body, source="adhoc")
     except McpConfigError as exc:

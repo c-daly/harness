@@ -395,6 +395,8 @@ def _mcp_subcommand(argv: list[str]) -> None:
                 raise SystemExit(f"import failed: {exc}") from exc
             for warning in import_warnings:
                 print(f"warning: {warning}", file=sys.stderr)
+            if not specs:
+                print("warning: nothing converted", file=sys.stderr)
             if not args.write:
                 from harness.mcp_config import emit_mcp_toml
 
