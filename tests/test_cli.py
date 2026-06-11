@@ -177,3 +177,58 @@ def test_allow_without_config_warns(tmp_path, capsys, monkeypatch):
     captured = capsys.readouterr()
     assert "echo: hi" in captured.out
     assert "no permission config found" in captured.err
+
+
+async def test_run_with_tags_lands_in_telemetry(tmp_path):
+    from harness.telemetry import rebuild_index
+    kernel = build_kernel(
+        provider=FakeProvider([text_turn("ok")]), base_dir=tmp_path, model=ModelId("fake"),
+        tags=["exp:cli"],
+    )
+    sid = kernel.session.id
+    await run_once(kernel, "hi")
+    conn, warnings = rebuild_index(tmp_path)
+    assert warnings == []
+    tags = conn.execute("SELECT session_id, tag FROM tags").fetchall()
+    assert tags == [(str(sid), "exp:cli")]
+
+
+def test_stats_subcommand_prints_summary(tmp_path, capsys, monkeypatch):
+    import harness.cli as cli_mod
+    # seed one session via the legacy run path
+    monkeypatch.setattr(cli_mod, "default_engine", lambda project_dir=None: None)
+    monkeypatch.setattr(
+        "sys.argv", ["harness", "-p", "hello", "--base-dir", str(tmp_path)]
+    )
+    cli_mod.main()
+    capsys.readouterr()
+    monkeypatch.setattr("sys.argv", ["harness", "stats", "--base-dir", str(tmp_path)])
+    cli_mod.main()
+    out = capsys.readouterr().out
+    assert "sessions: 1" in out and "fake:echo" in out
+
+
+def test_outcome_then_compare_subcommands(tmp_path, capsys, monkeypatch):
+    import harness.cli as cli_mod
+    monkeypatch.setattr(cli_mod, "default_engine", lambda project_dir=None: None)
+    sids = []
+    for prompt in ("one", "two"):
+        monkeypatch.setattr(
+            "sys.argv", ["harness", "-p", prompt, "--base-dir", str(tmp_path)]
+        )
+        cli_mod.main()
+    capsys.readouterr()
+    sids = sorted(p.stem for p in (tmp_path / "sessions").glob("*.jsonl"))
+    monkeypatch.setattr(
+        "sys.argv",
+        ["harness", "outcome", sids[0], "ok", "--score", "0.9", "--base-dir", str(tmp_path)],
+    )
+    cli_mod.main()
+    out = capsys.readouterr().out
+    assert "recorded" in out and sids[0][:8] in out
+    monkeypatch.setattr(
+        "sys.argv", ["harness", "compare", sids[0], sids[1], "--base-dir", str(tmp_path)]
+    )
+    cli_mod.main()
+    out = capsys.readouterr().out
+    assert "outcome" in out and "ok" in out and "input_tokens" in out

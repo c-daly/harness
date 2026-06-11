@@ -26,6 +26,7 @@ class Kernel:
     hooks: HookBus
     provider: ModelProvider
     resumed: bool = field(default=False)
+    tags: list[str] = field(default_factory=list)
 
 
 def build_kernel(
@@ -39,6 +40,7 @@ def build_kernel(
     pricing: dict[str, float] | None = None,
     resume_session_id: SessionId | None = None,
     permissions: PermissionEngine | None = None,
+    tags: list[str] | None = None,
 ) -> Kernel:
     from harness.resume import resume_session
 
@@ -68,15 +70,24 @@ def build_kernel(
     if transcript is not None:
         loop_kwargs["history"] = transcript
     loop = AgentLoop(**loop_kwargs)
-    return Kernel(session=session, loop=loop, registry=registry, hooks=hooks, provider=provider, resumed=resumed)
+    return Kernel(
+        session=session, loop=loop, registry=registry, hooks=hooks, provider=provider,
+        resumed=resumed, tags=tags or [],
+    )
 
 
 async def run_once(kernel: Kernel, prompt: str) -> str:
-    from harness.events import UserInterrupt
+    from harness.events import CustomEvent, UserInterrupt
 
     try:
         if not kernel.resumed:
             await kernel.loop.start()
+            for t in kernel.tags:
+                kernel.session.append(CustomEvent(namespace="harness", name="tag", data={"tag": t}))
+        else:
+            # Resumed kernel: append tags unconditionally before the turn
+            for t in kernel.tags:
+                kernel.session.append(CustomEvent(namespace="harness", name="tag", data={"tag": t}))
         result = await kernel.loop.run_turn(prompt)
         await kernel.loop.end()
         return result
@@ -107,7 +118,49 @@ def _apply_allow_flags(engine: PermissionEngine, allows: list[str]) -> None:
         engine.grant(pattern)
 
 
-def main() -> None:
+def _subcommand(argv: list[str]) -> None:
+    import argparse
+
+    from harness.resume import append_events
+    from harness.telemetry import rebuild_index, render_compare, render_stats, run_rollup, stats_summary
+
+    command, rest = argv[0], argv[1:]
+    parser = argparse.ArgumentParser(prog=f"harness {command}")
+    parser.add_argument("--base-dir", type=Path,
+                        default=Path.home() / ".local" / "share" / "harness")
+    if command == "stats":
+        parser.add_argument("--tag", default=None)
+        args = parser.parse_args(rest)
+        conn, warnings = rebuild_index(args.base_dir)
+        for warning in warnings:
+            print(f"warning: {warning}", file=sys.stderr)
+        print(render_stats(stats_summary(conn, tag=args.tag)))
+    elif command == "compare":
+        parser.add_argument("run_a")
+        parser.add_argument("run_b")
+        args = parser.parse_args(rest)
+        conn, warnings = rebuild_index(args.base_dir)
+        for warning in warnings:
+            print(f"warning: {warning}", file=sys.stderr)
+        try:
+            print(render_compare(run_rollup(conn, args.run_a), run_rollup(conn, args.run_b)))
+        except KeyError as exc:
+            raise SystemExit(str(exc))
+    elif command == "outcome":
+        parser.add_argument("session_id")
+        parser.add_argument("status", choices=("ok", "fail", "abandoned"))
+        parser.add_argument("--score", type=float, default=None)
+        parser.add_argument("--note", default="")
+        args = parser.parse_args(rest)
+        from harness.events import SessionOutcome
+        from harness.types import SessionId
+        append_events(args.base_dir, SessionId(args.session_id), [
+            SessionOutcome(status=args.status, score=args.score, note=args.note)
+        ])
+        print(f"recorded {args.status} for {args.session_id}")
+
+
+def _run_main() -> None:
     parser = argparse.ArgumentParser(prog="harness")
     parser.add_argument("-p", "--prompt", required=True)
     parser.add_argument("--base-dir", type=Path,
@@ -122,6 +175,9 @@ def main() -> None:
     parser.add_argument("--allow", action="append", default=[],
                         metavar="TOOL_GLOB",
                         help="Grant a tool glob at session scope (can be repeated).")
+    parser.add_argument("--tag", action="append", default=[],
+                        metavar="TAG",
+                        help="Tag this run (can be repeated).")
     args = parser.parse_args()
 
     resume_session_id = SessionId(args.resume_session_id) if args.resume_session_id else None
@@ -161,9 +217,18 @@ def main() -> None:
         pricing=pricing,
         resume_session_id=resume_session_id,
         permissions=engine,
+        tags=args.tag,
     )
     from harness.errors import ProviderError
     try:
         print(asyncio.run(_amain(kernel, args.prompt)))
     except ProviderError as exc:
         raise SystemExit(f"provider error: {exc}") from exc
+
+
+def main() -> None:
+    argv = sys.argv[1:]
+    if argv and argv[0] in ("stats", "compare", "outcome"):
+        _subcommand(argv)
+        return
+    _run_main()
