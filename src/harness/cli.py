@@ -162,4 +162,8 @@ def main() -> None:
         resume_session_id=resume_session_id,
         permissions=engine,
     )
-    print(asyncio.run(_amain(kernel, args.prompt)))
+    from harness.errors import ProviderError
+    try:
+        print(asyncio.run(_amain(kernel, args.prompt)))
+    except ProviderError as exc:
+        raise SystemExit(f"provider error: {exc}") from exc

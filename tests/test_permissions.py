@@ -90,10 +90,11 @@ def test_grant_persistence_survives_hostile_strings(tmp_path):
     grants = tmp_path / "grants.toml"
     engine = PermissionEngine([], grants_path=grants)
     hostile = "we\"ird\ntool"
-    engine.grant(hostile, {"arg": "va\"lue"}, persist=True)
+    engine.grant(hostile, {"arg": 'va"lue', 'we}ird=key': "v"}, persist=True)
     reloaded = RuleSet.load(grants)  # must parse, not TOMLDecodeError
     assert reloaded.rules[0].tool == hostile
-    assert reloaded.rules[0].match == {"arg": "va\"lue"}
+    assert reloaded.rules[0].match == {"arg": 'va"lue', 'we}ird=key': "v"}
+    assert reloaded.rules[0].match['we}ird=key'] == "v"
 
 
 def test_ruleset_rejects_invalid_default():

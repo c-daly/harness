@@ -149,7 +149,7 @@ class PermissionEngine:
         self._grants_path.parent.mkdir(parents=True, exist_ok=True)
         lines = ["", "[[rules]]", 'action = "allow"', f"tool = {_toml_str(rule.tool)}"]
         if rule.match:
-            pairs = ", ".join(f"{k} = {_toml_str(v)}" for k, v in rule.match.items())
+            pairs = ", ".join(f"{_toml_str(k)} = {_toml_str(v)}" for k, v in rule.match.items())
             lines.append(f"match = {{ {pairs} }}")
         with open(self._grants_path, "a", encoding="utf-8") as fh:
             fh.write("\n".join(lines) + "\n")
