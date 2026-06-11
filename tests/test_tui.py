@@ -269,8 +269,7 @@ async def test_permission_modal_deny_blocks_tool(tmp_path):
         await pilot.press("n")
         await pilot.pause(0.5)
         lines = "\n".join(str(line) for line in app.query_one(RichLog).lines)
-        # the tool was blocked; either "denied" or error mark (checkmark cross) appears
-        assert "denied" in lines or "\u2717" in lines
+        assert "denied by user" in lines
 
 
 async def test_permission_modal_always_persists_grant(tmp_path):
@@ -303,3 +302,66 @@ async def test_permission_modal_always_persists_grant(tmp_path):
     # grant was persisted
     assert grants_path.exists()
     assert "echo_tool" in grants_path.read_text()
+
+
+async def test_escape_interrupts_turn_and_loop_survives(tmp_path):
+    provider = GatedProvider()  # parks until released -- never released here
+    app = make_app(tmp_path, provider=provider, model=ModelId("gated"))
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        await pilot.click("#prompt")
+        await pilot.press(*"slow", "enter")
+        await pilot.pause(0.2)  # turn parked in the provider
+        await pilot.press("escape")
+        await pilot.pause(0.3)
+        lines = "\n".join(str(line) for line in app.query_one(RichLog).lines)
+        assert "interrupted" in lines.lower()
+        # loop survives: swap provider and run another turn
+        app.kernel.loop.provider = EchoProvider()
+        await pilot.click("#prompt")
+        await pilot.press(*"again", "enter")
+        await pilot.pause(0.3)
+        lines = "\n".join(str(line) for line in app.query_one(RichLog).lines)
+        assert "echo: again" in lines
+    events = [e.event.type for e in read_session(tmp_path, app.kernel.session.id)]
+    assert events.count("user_interrupt") == 1
+
+
+async def test_escape_with_no_turn_running_is_a_noop(tmp_path):
+    app = make_app(tmp_path)
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        await pilot.press("escape")
+        await pilot.pause(0.1)
+        events = [e.event.type for e in read_session(tmp_path, app.kernel.session.id)]
+        assert "user_interrupt" not in events
+
+
+async def test_escape_on_permission_modal_denies_it(tmp_path):
+    # The app-level priority Esc binding preempts the modal own escape binding;
+    # action_interrupt must DELEGATE to the modal -- this test pins that behaviour.
+    engine = PermissionEngine([
+        RuleSet(
+            rules=[PermissionRule(action="ask", tool="echo_tool")],
+            default="allow",
+        )
+    ])
+    provider = FakeProvider([
+        tool_call_turn("calling", ToolName("echo_tool"), {"text": "hi"}),
+        text_turn("done"),
+    ])
+    app = make_app(tmp_path, provider=provider, model=ModelId("fake:echo"), engine=engine)
+    app.kernel.registry.register(EchoTool())
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        await pilot.click("#prompt")
+        await pilot.press(*"run it", "enter")
+        await pilot.pause(0.3)  # modal up
+        assert isinstance(app.screen, PermissionScreen)
+        await pilot.press("escape")
+        await pilot.pause(0.3)
+        assert not isinstance(app.screen, PermissionScreen)  # modal gone
+        lines = "\n".join(str(line) for line in app.query_one(RichLog).lines)
+        assert "denied by user" in lines
+        events = [e.event.type for e in read_session(tmp_path, app.kernel.session.id)]
+        assert "user_interrupt" not in events  # the TURN was not interrupted

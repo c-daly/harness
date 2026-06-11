@@ -13,6 +13,7 @@ from textual.binding import Binding
 from textual.containers import Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Input, RichLog, Static
+from textual.worker import WorkerCancelled, WorkerFailed
 
 from harness.cli import Kernel
 from harness.events import CustomEvent, RetryAttempted, ToolCallCompleted, ToolCallProposed
@@ -32,7 +33,13 @@ def _plain(text: str) -> Text:
 
 
 class AppBoundAsk:
-    """Late-binding ask: built before the app exists, bound at app start."""
+    """Late-binding ask: built before the app exists, bound at app start.
+
+    Concurrent tool asks are safe without a lock: each push_screen_wait call owns
+    its own future and Textual stacks modals in order; answers route to the right
+    future because dismiss() resolves exactly the screen that called it.
+    No lock is needed in v1 -- stacking is the right behaviour.
+    """
 
     def __init__(self) -> None:
         self.app: "HarnessApp | None" = None
@@ -64,7 +71,7 @@ class PermissionScreen(ModalScreen[str]):
         with Vertical(id="permission-box"):
             yield Static(_plain(f"Permission: {what}"))
             yield Static(_plain(self.request.reason))
-            yield Static("[y] allow once   [a] always   [n] deny")
+            yield Static(_plain("[y] allow once   [a] always   [n] deny"))
 
     def action_answer(self, result: str) -> None:
         self.dismiss(result)
@@ -236,8 +243,26 @@ class HarnessApp(App[None]):
     async def _run_command(self, command) -> None:  # Task 8 fills this in
         self.say("! ", f"unknown command: /{command.name}")
 
-    def action_interrupt(self) -> None:             # Task 7 fills this in
-        pass
+    def action_interrupt(self) -> None:
+        # The priority Esc binding preempts modal bindings: with a permission
+        # modal up, Esc means "deny this ask", not "kill the turn".
+        if isinstance(self.screen, PermissionScreen):
+            self.screen.action_answer("deny")
+            return
+        worker = self._turn_worker
+        if worker is None or worker.is_finished:
+            return
+        worker.cancel()
+        self.run_worker(self._after_interrupt(worker), group="driver", exit_on_error=False)
+
+    async def _after_interrupt(self, worker) -> None:
+        try:
+            await worker.wait()
+        except (WorkerCancelled, WorkerFailed):
+            pass
+        self.kernel.loop.interrupt_turn()
+        self._clear_live()
+        self.say("! ", "interrupted")
 
     async def _finish(self) -> None:
         if self._ended:
