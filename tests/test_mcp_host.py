@@ -78,6 +78,17 @@ async def test_connection_stop_is_clean_and_repeatable():
     assert conn.session is None
 
 
+async def test_double_start_is_loud():
+    conn = ServerConnection(memory_spec(), transport_factory=memory_factory())
+    await conn.start()
+    try:
+        with pytest.raises(McpServerError) as exc:
+            await conn.start()
+        assert "already running" in str(exc.value)
+    finally:
+        await conn.stop()
+
+
 async def test_connection_start_failure_raises_mcp_server_error():
     spec = McpServerSpec(
         name="broken", transport="stdio",

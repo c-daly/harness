@@ -88,6 +88,8 @@ class ServerConnection:
         self._restart_lock = asyncio.Lock()
 
     async def start(self) -> None:
+        if self._task is not None:
+            raise McpServerError(f"mcp server {self.spec.name!r} is already running")
         self._ready = asyncio.Event()
         self._stop_signal = asyncio.Event()
         self._failure = None
