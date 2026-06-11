@@ -89,14 +89,70 @@ def test_invalid_action_rejected():
 def test_grant_persistence_survives_hostile_strings(tmp_path):
     grants = tmp_path / "grants.toml"
     engine = PermissionEngine([], grants_path=grants)
-    hostile = 'we"ird\ntool'
-    engine.grant(hostile, {"arg": 'va"lue'}, persist=True)
+    hostile = "we\"ird\ntool"
+    engine.grant(hostile, {"arg": "va\"lue"}, persist=True)
     reloaded = RuleSet.load(grants)  # must parse, not TOMLDecodeError
     assert reloaded.rules[0].tool == hostile
-    assert reloaded.rules[0].match == {"arg": 'va"lue'}
+    assert reloaded.rules[0].match == {"arg": "va\"lue"}
 
 
 def test_ruleset_rejects_invalid_default():
     import pytest
     with pytest.raises(ValueError, match="default"):
         RuleSet(default="maybe")
+
+
+def test_ruleset_loads_toml(tmp_path):
+    p = tmp_path / "permissions.toml"
+    p.write_text(
+        "default = \"ask\"\n\n"
+        "[[rules]]\n"
+        "action = \"deny\"\ntool = \"bash\"\nmatch = { command = \"rm *\" }\n\n"
+        "[[rules]]\n"
+        "action = \"allow\"\ntool = \"read_*\"\n"
+    )
+    rs = RuleSet.load(p)
+    assert rs.default == "ask"
+    assert len(rs.rules) == 2
+    assert rs.rules[0].match == {"command": "rm *"}
+
+
+def test_grant_persists_and_reloads(tmp_path):
+    grants = tmp_path / "grants.toml"
+    engine = PermissionEngine([], grants_path=grants)
+    engine.grant("bash", {"command": "git *"}, persist=True)
+    engine.grant("echo", persist=True)
+    reloaded = RuleSet.load(grants)
+    assert len(reloaded.rules) == 2
+    assert reloaded.rules[0].tool == "bash"
+    assert reloaded.rules[0].match == {"command": "git *"}
+    assert all(r.action == "allow" for r in reloaded.rules)
+
+
+def test_default_engine_none_when_no_config(tmp_path):
+    from harness.permissions import default_engine
+    assert default_engine(project_dir=tmp_path, config_home=tmp_path / "cfg") is None
+
+
+def test_default_engine_layer_order(tmp_path):
+    from harness.permissions import default_engine
+    cfg = tmp_path / "cfg"
+    cfg.mkdir()
+    (tmp_path / ".harness").mkdir()
+    (tmp_path / ".harness" / "permissions.toml").write_text(
+        "[[rules]]\naction = \"deny\"\ntool = \"bash\"\n"
+    )
+    (cfg / "grants.toml").write_text("[[rules]]\naction = \"allow\"\ntool = \"bash\"\n")
+    (cfg / "permissions.toml").write_text("default = \"allow\"\n")
+    engine = default_engine(project_dir=tmp_path, config_home=cfg)
+    assert engine is not None
+    assert engine.decide("bash", {}) == "deny"      # project deny beats user grant
+    assert engine.decide("anything", {}) == "allow"  # user default reached
+
+
+def test_session_grant_not_persisted_by_default(tmp_path):
+    grants = tmp_path / "grants.toml"
+    engine = PermissionEngine([], grants_path=grants)
+    engine.grant("bash")
+    assert not grants.exists()
+    assert engine.decide("bash", {}) == "allow"
