@@ -29,6 +29,9 @@ from harness.session import Session
 from harness.tools import ToolRegistry, ToolSpec
 from harness.types import ModelId, new_call_id
 
+# errors inline (never blob-spilled) so they stay readable; cap keeps log lines bounded
+_ERROR_TEXT_CAP = 4096
+
 
 class ModelDispatchBlocked(Exception):
     pass
@@ -69,10 +72,17 @@ class Dispatcher:
             self.session.append(
                 PermissionRequested(call_id=action.call_id, reason=outcome.ask.reason)
             )
-            allowed = await self.resolver.resolve(
-                PermissionRequest(call_id=action.call_id, action=outcome.effective,
-                                  reason=outcome.ask.reason)
-            )
+            try:
+                allowed = await self.resolver.resolve(
+                    PermissionRequest(call_id=action.call_id, action=outcome.effective,
+                                      reason=outcome.ask.reason)
+                )
+            except Exception as exc:
+                self.session.append(
+                    PermissionResolved(call_id=action.call_id, allowed=False,
+                                       resolver=self.resolver.name)
+                )
+                return None, f"permission channel error: {exc} (denied)"
             self.session.append(
                 PermissionResolved(call_id=action.call_id, allowed=allowed,
                                    resolver=self.resolver.name)
@@ -108,6 +118,8 @@ class Dispatcher:
             is_error = False
         except Exception as exc:
             raw, is_error = f"tool error: {exc}", True
+            if len(raw) > _ERROR_TEXT_CAP:
+                raw = raw[:_ERROR_TEXT_CAP] + " …[truncated]"
         duration_ms = int((time.monotonic() - started) * 1000)
         text: str | None = raw
         blob: BlobRef | None = None

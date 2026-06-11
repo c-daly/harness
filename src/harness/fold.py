@@ -81,7 +81,10 @@ def resume_repairs(state: FoldedState) -> list[ToolCallAborted]:
 
     Caller contract: append these to the session log (EventLogWriter.append)
     before the next fold — that closes the intents and renders the aborted
-    calls as error tool-results in the rebuilt transcript."""
+    calls as error tool-results in the rebuilt transcript.
+
+    Only TOOL intents are repaired: an incomplete model call terminates by
+    exception and its turn never enters the transcript."""
     return [
         ToolCallAborted(call_id=call_id, reason="dangling intent at resume (crash?)")
         for call_id in sorted(state.open_intents)

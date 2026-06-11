@@ -208,3 +208,43 @@ async def test_cross_type_rewrite_is_refused_for_models(tmp_path):
             model=ModelId("fake"), messages=[], tools=(),
         )
     session.close()
+
+
+async def test_resolver_exception_denies_and_closes_the_call(tmp_path):
+    class ExplodingResolver:
+        name = "exploding"
+
+        async def resolve(self, request):
+            raise RuntimeError("ui crashed")
+
+    hooks = HookBus()
+    hooks.register_dispatch("asker", lambda a: Ask(reason="confirm?"), priority=10)
+    session, dispatcher = _kernel_bits(tmp_path, hooks=hooks, resolver=ExplodingResolver())
+    result = await dispatcher.dispatch_tool(
+        ProposedToolCall(call_id=CallId("c1"), tool=ToolName("safe_shell"), args={"command": "x"})
+    )
+    session.close()
+    assert result.is_error and "permission channel error" in result.text
+    events = _events(tmp_path)
+    resolved = [e for e in events if isinstance(e, PermissionResolved)]
+    assert resolved and resolved[0].allowed is False
+    completed = [e for e in events if isinstance(e, ToolCallCompleted)]
+    assert completed and completed[0].is_error
+
+
+async def test_huge_error_text_is_capped(tmp_path):
+    class HugeExploder:
+        spec = ToolSpec(name=ToolName("hboom"), description="", parameters={})
+
+        async def __call__(self, args):
+            raise RuntimeError("x" * 100_000)
+
+    session, dispatcher = _kernel_bits(tmp_path)
+    dispatcher.registry.register(HugeExploder())
+    result = await dispatcher.dispatch_tool(
+        ProposedToolCall(call_id=CallId("c1"), tool=ToolName("hboom"), args={})
+    )
+    session.close()
+    assert result.is_error
+    assert len(result.text) <= 4096 + 20
+    assert result.text.endswith("…[truncated]")
