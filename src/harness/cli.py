@@ -276,4 +276,127 @@ def main() -> None:
     if argv and argv[0] in ("stats", "compare", "outcome"):
         _subcommand(argv)
         return
+    if argv and argv[0] == "mcp":
+        _mcp_subcommand(argv[1:])
+        return
     _run_main()
+
+
+
+def _parse_add_spec(args, refs: dict, headers: dict):
+    """Build a spec from add-flags; round-trips through _parse_server so CLI
+    input obeys exactly the same validation laws as a config file.
+    """
+    from harness.mcp_config import _parse_server
+
+    body: dict = {"restart": args.restart, "tool_timeout_s": args.tool_timeout}
+    if args.command is not None:
+        body["command"] = args.command
+        if args.args:
+            body["args"] = args.args
+        if args.cwd:
+            body["cwd"] = args.cwd
+    if args.url is not None:
+        body["url"] = args.url
+    if refs:
+        body["env"] = refs
+    if headers:
+        body["headers"] = headers
+    return _parse_server(args.name, body, source="adhoc")
+
+
+
+def _mcp_subcommand(argv: list[str]) -> None:
+    from harness.mcp_config import (
+        McpConfigError,
+        McpServerSpec,
+        load_mcp_config,
+        load_mcp_file,
+        project_mcp_path,
+        user_mcp_path,
+        write_scope_file,
+    )
+
+    parser = argparse.ArgumentParser(prog="harness mcp")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    def _common(p: argparse.ArgumentParser) -> None:
+        p.add_argument("--scope", choices=("user", "project"), default="user")
+        p.add_argument(
+            "--config-home", type=Path, default=None,
+            help="Override the user config dir (for tests).",
+        )
+
+    add = sub.add_parser("add")
+    add.add_argument("name")
+    add.add_argument("--command")
+    add.add_argument("--arg", action="append", default=[], dest="args")
+    add.add_argument("--cwd")
+    add.add_argument("--url")
+    add.add_argument(
+        "--env", action="append", default=[],
+        help="VAR=ENV_VAR_NAME (a reference, never a literal value)",
+    )
+    add.add_argument(
+        "--header", action="append", default=[], dest="headers",
+        help="Header=ENV_VAR_NAME holding the full header value",
+    )
+    add.add_argument("--restart", choices=("never", "on_failure"), default="on_failure")
+    add.add_argument("--tool-timeout", type=float, default=60.0, dest="tool_timeout")
+    _common(add)
+
+    lst = sub.add_parser("list")
+    _common(lst)
+
+    rem = sub.add_parser("remove")
+    rem.add_argument("name")
+    _common(rem)
+
+    imp = sub.add_parser("import")
+    imp.add_argument("path", type=Path)
+    imp.add_argument("--write", action="store_true", help="Merge into the scope file instead of printing.")
+    _common(imp)
+
+    args = parser.parse_args(argv)
+
+    def scope_path() -> Path:
+        if args.scope == "project":
+            return project_mcp_path(Path.cwd())
+        return user_mcp_path(args.config_home)
+
+    def existing() -> dict[str, McpServerSpec]:
+        path = scope_path()
+        if not path.exists():
+            return {}
+        return {s.name: s for s in load_mcp_file(path, source=args.scope)}
+
+    try:
+        if args.cmd == "add":
+            try:
+                refs = dict(pair.split("=", 1) for pair in args.env)
+                headers = dict(pair.split("=", 1) for pair in args.headers)
+            except ValueError:
+                raise SystemExit("--env/--header values must be NAME=ENV_VAR_NAME") from None
+            spec = _parse_add_spec(args, refs, headers)
+            servers = existing()
+            servers[spec.name] = spec
+            write_scope_file(scope_path(), tuple(servers.values()))
+            print(f"added {spec.name} ({spec.transport}) to {scope_path()}")
+        elif args.cmd == "list":
+            specs = load_mcp_config(project_dir=Path.cwd(), config_home=args.config_home)
+            if not specs:
+                print("no mcp servers configured")
+            for spec in specs:
+                target = spec.command if spec.transport == "stdio" else spec.url
+                print(f"{spec.name}\t{spec.transport}\t{spec.source}\t{target}")
+        elif args.cmd == "remove":
+            servers = existing()
+            if args.name not in servers:
+                raise SystemExit(f"no server {args.name!r} in {scope_path()}")
+            del servers[args.name]
+            write_scope_file(scope_path(), tuple(servers.values()))
+            print(f"removed {args.name} from {scope_path()}")
+        elif args.cmd == "import":
+            raise SystemExit("import lands in the next commit")
+    except McpConfigError as exc:
+        raise SystemExit(str(exc)) from exc

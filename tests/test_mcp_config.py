@@ -5,11 +5,14 @@ from dataclasses import FrozenInstanceError
 import pytest
 
 from harness.mcp_config import (
+    MANAGED_HEADER,
     McpConfigError,
     McpServerSpec,
+    emit_mcp_toml,
     load_mcp_config,
     load_mcp_file,
     resolve_env,
+    write_scope_file,
 )
 
 STDIO_TOML = """
@@ -133,3 +136,54 @@ def test_spec_is_frozen():
     spec = McpServerSpec(name="s", transport="stdio", command="x")
     with pytest.raises(FrozenInstanceError):
         spec.name = "other"  # type: ignore[misc]
+
+
+
+def test_emit_round_trips_through_loader(tmp_path):
+    specs = (
+        McpServerSpec(name="github", transport="stdio", command="npx",
+                      args=("-y", "pkg"), env={"TOKEN": "GH_PAT"}),
+        McpServerSpec(name="remote", transport="http", url="https://x/mcp",
+                      headers={"Authorization": "X_AUTH"}, restart="never",
+                      tool_timeout_s=30.0),
+    )
+    text = emit_mcp_toml(specs)
+    assert text.startswith(MANAGED_HEADER)
+    path = tmp_path / "mcp.toml"
+    path.write_text(text)
+    loaded = load_mcp_file(path, source="user")
+    assert {s.name for s in loaded} == {"github", "remote"}
+    github = next(s for s in loaded if s.name == "github")
+    assert github.args == ("-y", "pkg")
+    assert github.env == {"TOKEN": "GH_PAT"}
+    remote = next(s for s in loaded if s.name == "remote")
+    assert remote.restart == "never" and remote.tool_timeout_s == 30.0
+
+
+def test_emit_escapes_hostile_strings(tmp_path):
+    dq = chr(34)
+    spec = McpServerSpec(
+        name="evil", transport="stdio", command="x"+dq+" ]]\n[[rules", args=("a"+dq+"b", "new\nline"),
+    )
+    path = tmp_path / "mcp.toml"
+    path.write_text(emit_mcp_toml((spec,)))
+    (loaded,) = load_mcp_file(path, source="user")
+    assert loaded.command == "x"+dq+" ]]\n[[rules"
+    assert loaded.args == ("a"+dq+"b", "new\nline")
+
+
+def test_write_scope_file_refuses_unmanaged(tmp_path):
+    path = tmp_path / "mcp.toml"
+    dq = chr(34)
+    toml_content = "# hand-written\n[servers.mine]\n"+dq+"command"+dq+" = "+dq+"x"+dq+"\n"
+    path.write_text(toml_content)
+    with pytest.raises(McpConfigError) as exc:
+        write_scope_file(path, (McpServerSpec(name="s", transport="stdio", command="y"),))
+    assert "managed" in str(exc.value)
+
+
+def test_write_scope_file_creates_parents(tmp_path):
+    path = tmp_path / "deep" / "mcp.toml"
+    write_scope_file(path, (McpServerSpec(name="s", transport="stdio", command="y"),))
+    (loaded,) = load_mcp_file(path, source="user")
+    assert loaded.name == "s"

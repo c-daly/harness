@@ -12,6 +12,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
+from harness.permissions import _toml_str
+
 _NAME_RE = re.compile(r"[A-Za-z0-9_-]+")
 _ENV_VAR_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _RESTARTS = ("never", "on_failure")
@@ -162,3 +164,45 @@ def resolve_env(refs: dict[str, str]) -> dict[str, str]:
     if missing:
         raise McpConfigError(f"missing environment variables: {', '.join(missing)}")
     return {key: os.environ[var] for key, var in refs.items()}
+
+
+MANAGED_HEADER = '# managed by `harness mcp` -- comments are not preserved\n'
+
+
+def emit_mcp_toml(specs: tuple) -> str:
+    lines = [MANAGED_HEADER.rstrip("\n")]
+    for spec in sorted(specs, key=lambda s: s.name):
+        lines.append("")
+        lines.append(f"[servers.{spec.name}]")
+        lines.append(f"transport = {_toml_str(spec.transport)}")
+        if spec.command is not None:
+            lines.append(f"command = {_toml_str(spec.command)}")
+        if spec.args:
+            joined = ", ".join(_toml_str(a) for a in spec.args)
+            lines.append(f"args = [{joined}]")
+        if spec.cwd is not None:
+            lines.append(f"cwd = {_toml_str(spec.cwd)}")
+        if spec.url is not None:
+            lines.append(f"url = {_toml_str(spec.url)}")
+        if spec.restart != "on_failure":
+            lines.append(f"restart = {_toml_str(spec.restart)}")
+        if spec.tool_timeout_s != 60.0:
+            lines.append(f"tool_timeout_s = {spec.tool_timeout_s}")
+        for table, refs in (("env", spec.env), ("headers", spec.headers)):
+            if refs:
+                lines.append(f"[servers.{spec.name}.{table}]")
+                for key, var in sorted(refs.items()):
+                    lines.append(f"{_toml_str(key)} = {_toml_str(var)}")
+    return "\n".join(lines) + "\n"
+
+
+def write_scope_file(path: Path, specs: tuple) -> None:
+    """Rewrite a scope file we manage. Refuses files without the managed
+    header -- hand-edited configs are the user's; we never clobber them."""
+    if path.exists() and not path.read_text().startswith(MANAGED_HEADER):
+        raise McpConfigError(
+            f"{path} is not managed by `harness mcp` (missing managed header);"
+            " edit it by hand instead"
+        )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(emit_mcp_toml(specs))

@@ -1,7 +1,7 @@
 import sys
 
-from harness.cli import Kernel, build_kernel, run_once
-from harness.mcp_config import McpServerSpec
+from harness.cli import Kernel, build_kernel, main, run_once
+from harness.mcp_config import McpServerSpec, load_mcp_file
 from harness.provider import FakeProvider, text_turn
 from harness.types import ModelId
 from tests.conftest import FIXTURE_SERVER_PATH
@@ -148,7 +148,6 @@ async def test_permission_ask_resolves_and_grant_silences(tmp_path):
 
 def test_main_missing_catalog_is_actionable(tmp_path, capsys, monkeypatch):
     import pytest
-    from harness.cli import main
     monkeypatch.setattr(
         "sys.argv",
         ["harness", "-p", "x", "--model", "gpt",
@@ -351,3 +350,57 @@ def test_no_mcp_flag_skips_mcp(tmp_path, capsys, monkeypatch):
     cli_mod.main()
     captured = capsys.readouterr()
     assert "echo: hi" in captured.out
+
+
+
+
+def run_cli(*args):
+    """Invoke the harness CLI with the given args, patching sys.argv.
+    Propagates SystemExit (e.g. from argparse or validation errors).
+    """
+    import sys
+    old_argv = sys.argv
+    sys.argv = ["harness"] + list(args)
+    try:
+        main()
+    finally:
+        sys.argv = old_argv
+
+
+def test_mcp_add_list_remove_roundtrip(tmp_path, monkeypatch, capsys):
+    home = tmp_path / "home"
+    monkeypatch.chdir(tmp_path)
+    run_cli("mcp", "add", "github", "--command", "npx", "--arg=-y", "--arg=pkg",
+        "--env", "TOKEN=GH_PAT", "--scope", "user", "--config-home", str(home))
+    run_cli("mcp", "list", "--config-home", str(home))
+    out = capsys.readouterr().out
+    assert "github" in out and "stdio" in out and "user" in out
+    run_cli("mcp", "remove", "github", "--scope", "user", "--config-home", str(home))
+    capsys.readouterr() # clear remove output
+    run_cli("mcp", "list", "--config-home", str(home))
+    assert "github" not in capsys.readouterr().out
+
+
+def test_mcp_add_http_with_header(tmp_path, capsys):
+    home = tmp_path / "home"
+    run_cli("mcp", "add", "remote", "--url", "https://x/mcp",
+        "--header", "Authorization=X_AUTH", "--config-home", str(home))
+    loaded = load_mcp_file(home / "mcp.toml", source="user")
+    assert loaded[0].headers == {"Authorization": "X_AUTH"}
+
+
+def test_mcp_add_rejects_literal_looking_env(tmp_path):
+    home = tmp_path / "home"
+    import pytest
+    with pytest.raises(SystemExit):
+        run_cli("mcp", "add", "bad", "--command", "x",
+            "--env", "TOKEN=ghp_abc123literal-token", "--config-home", str(home))
+
+
+def test_mcp_add_rejects_malformed_env_pair(tmp_path):
+    home = tmp_path / "home"
+    import pytest
+    with pytest.raises(SystemExit) as exc:
+        run_cli("mcp", "add", "bad", "--command", "x",
+            "--env", "NOEQUALS", "--config-home", str(home))
+    assert "NAME=ENV_VAR_NAME" in str(exc.value)
