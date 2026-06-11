@@ -30,6 +30,14 @@ class TextBlock(_Block):
     text: str
 
 
+class ThinkingBlock(_Block):
+    """Model reasoning. Never user-visible prose; signature (when a provider
+    issues one) rides in provider_extras and must round-trip verbatim."""
+
+    kind: Literal["thinking"] = "thinking"
+    text: str
+
+
 class ImageBlock(_Block):
     kind: Literal["image"] = "image"
     media_type: str
@@ -52,7 +60,7 @@ class ToolResultBlock(_Block):
 
 
 Block = Annotated[
-    Union[TextBlock, ImageBlock, ToolCallBlock, ToolResultBlock],
+    Union[TextBlock, ThinkingBlock, ImageBlock, ToolCallBlock, ToolResultBlock],
     Field(discriminator="kind"),
 ]
 

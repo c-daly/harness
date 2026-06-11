@@ -65,3 +65,26 @@ def test_stored_event_dicts_are_isolated_from_live_mutation():
     dumped = msg.model_dump()
     msg.blocks[0].args["command"] = "changed"  # frozen does not deep-freeze dicts
     assert dumped["blocks"][0]["args"]["command"] == "ls"
+
+
+def test_thinking_block_round_trips_with_signature():
+    from harness.messages import ThinkingBlock
+    msg = Message(
+        role=Role.ASSISTANT,
+        blocks=(
+            ThinkingBlock(text="let me reason", provider_extras={"signature": "sig123"}),
+            TextBlock(text="answer"),
+        ),
+    )
+    restored = Message.model_validate(msg.model_dump())
+    assert restored.blocks[0].text == "let me reason"
+    assert restored.blocks[0].provider_extras == {"signature": "sig123"}
+
+
+def test_text_excludes_thinking():
+    from harness.messages import ThinkingBlock
+    msg = Message(
+        role=Role.ASSISTANT,
+        blocks=(ThinkingBlock(text="hmm"), TextBlock(text="visible")),
+    )
+    assert msg.text() == "visible"
