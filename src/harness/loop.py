@@ -139,15 +139,13 @@ class AgentLoop:
         )
         return f"[stopped: max iterations ({self.max_iterations}) reached]"
 
-    def interrupt_turn(self) -> None:
-        """In-process mirror of resume repair: call after cancelling run_turn.
-
-        Unpaired tool_use blocks in the trailing assistant message are closed:
-        calls that COMPLETED before cancellation get their real recorded result
-        (the log already holds ToolCallCompleted); truly-incomplete calls get a
-        ToolCallCancelled event + the synthetic error result fold renders for
-        them. Repairs are idempotent (a second call finds everything paired);
-        each call appends exactly one UserInterrupt. The loop stays alive."""
+    def repair_turn(self) -> int:
+        """Close unpaired tool_use blocks in the trailing assistant message
+        (real recorded results for completed calls; ToolCallCancelled + the
+        fold-matching synthetic for the rest). Returns the number repaired.
+        Shared by interrupt_turn (Esc) and the TUI's exception path -- after
+        repair the loop is safe to keep using."""
+        repaired = 0
         for call in self._dangling_tool_calls():
             outcome = self._turn_outcomes.get(call.call_id)
             if outcome is not None:
@@ -160,6 +158,20 @@ class AgentLoop:
                 self.history.append(Message.tool_result(
                     call.call_id, text="(call did not complete)", is_error=True,
                 ))
+            repaired += 1
+        return repaired
+
+    def interrupt_turn(self) -> None:
+        """In-process mirror of resume repair: call after cancelling run_turn.
+
+        Delegates to repair_turn to close unpaired tool_use blocks in the
+        trailing assistant message: calls that COMPLETED before cancellation
+        get their real recorded result (the log already holds ToolCallCompleted);
+        truly-incomplete calls get a ToolCallCancelled event + the synthetic
+        error result fold renders for them. Repairs are idempotent (a second
+        call finds everything paired); each call appends exactly one
+        UserInterrupt. The loop stays alive."""
+        self.repair_turn()
         self.session.append(UserInterrupt())
 
     def _dangling_tool_calls(self):

@@ -1,8 +1,8 @@
 """The Textual frontend: a subscriber plus decision provider.
 
-Swappable by design: everything kernel-side reaches the TUI through four
-seams only -- the SubscriberBus, the on_chunk tee, the Resolver, and the
-run_once ordering contract mirrored in _session_driver."""
+Kernel coupling is deliberate but narrow: the SubscriberBus (render), the
+on_chunk tee (streaming), the Resolver (decisions), and the loop/session/mcp
+lifecycle calls that mirror run_once's ordering contract."""
 
 import asyncio
 
@@ -22,7 +22,8 @@ _SNIPPET_CAP = 200
 
 
 def _plain(text: str) -> Text:
-    """Untrusted strings render as plain Text -- never markup, no control chars."""
+    """Untrusted strings render as plain Text -- no markup, no
+    rendering-unsafe control chars (newline/tab kept)."""
     return Text("".join(ch for ch in text if ch in "\n\t" or ord(ch) >= 32))
 
 
@@ -129,7 +130,14 @@ class HarnessApp(App[None]):
         self.query_one("#prompt", HistoryInput).history.remember(text)
         command = parse_slash_command(text)
         if command is not None:
+            # Commands are deliberately NOT blocked mid-turn: /quit during a
+            # stuck turn must remain possible (it cancels the agent group in
+            # _finish); /help and /tools are read-only; /model mutates the
+            # loop only between dispatches.
             await self._run_command(command)
+            return
+        if self._turn_worker is not None and self._turn_worker.is_running:
+            self.say("! ", "a turn is already running -- Esc to interrupt it first")
             return
         expanded, attached, errors = expand_file_mentions(text)
         if errors:
@@ -149,7 +157,8 @@ class HarnessApp(App[None]):
         except asyncio.CancelledError:
             raise                                   # Esc repair lands in Task 7
         except Exception as exc:
-            self.say("! ", f"turn failed: {exc}")
+            self.kernel.loop.repair_turn()      # orphaned user msg is benign;
+            self.say("! ", f"turn failed: {exc}")  # unpaired tool calls are not
             return
         self.say("", reply)
 

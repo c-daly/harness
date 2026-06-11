@@ -427,3 +427,45 @@ async def test_interrupt_with_partially_completed_gather_repairs_faithfully(tmp_
     loop.provider = FakeProvider([text_turn("recovered")])
     assert await loop.run_turn("again") == "recovered"
     session.close()
+
+
+async def test_repair_turn_returns_count_and_interrupt_delegates(tmp_path):
+    reg = ToolRegistry()
+    reg.register(StallTool())
+
+    session, loop = _interrupt_loop(
+        tmp_path,
+        FakeProvider([tool_call_turn("calling", ToolName("stall"), {}), text_turn("unused")]),
+        registry=reg,
+    )
+    await loop.start()
+
+    task = asyncio.create_task(loop.run_turn("go"))
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    # repair_turn closes the one dangling stall call and reports the count;
+    # it does NOT append UserInterrupt (interrupt_turn owns that).
+    repaired = loop.repair_turn()
+    assert repaired == 1
+    event_types = [e.event.type for e in _read_envelopes_for(tmp_path)]
+    assert "tool_call_cancelled" in event_types
+    assert "user_interrupt" not in event_types
+
+    # idempotent: a second repair finds everything paired and repairs nothing.
+    assert loop.repair_turn() == 0
+
+    # interrupt_turn delegates to repair_turn (already paired) then appends
+    # exactly one UserInterrupt.
+    loop.interrupt_turn()
+    interrupts = [
+        e for e in _read_envelopes_for(tmp_path) if e.event.type == "user_interrupt"
+    ]
+    assert len(interrupts) == 1
+
+    # loop survives: the next turn runs clean.
+    loop.provider = FakeProvider([text_turn("recovered")])
+    assert await loop.run_turn("again") == "recovered"
+    session.close()
