@@ -1,20 +1,9 @@
 """Smoke-test the fixture server over in-memory streams (no subprocess)."""
 
-import importlib.util
-from pathlib import Path
-
 from mcp import types
 from mcp.shared.memory import create_connected_server_and_client_session
 
-_FIXTURE_SERVER_PATH = Path(__file__).parent / "fixtures" / "mcp_fixture_server.py"
-
-
-def load_fixture_server():
-    """Import the fixture module fresh and return its FastMCP instance."""
-    spec = importlib.util.spec_from_file_location("mcp_fixture_server", _FIXTURE_SERVER_PATH)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module.fixture
+from tests.conftest import load_fixture_server
 
 
 async def test_fixture_lists_and_calls():
