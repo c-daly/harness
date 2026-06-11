@@ -302,3 +302,69 @@ async def test_pricing_stamped_into_model_call_completed(tmp_path):
     session.close()
     completed = [e for e in _events(tmp_path) if isinstance(e, ModelCallCompleted)]
     assert completed[0].pricing["input_cost_per_token"] == 1e-6
+
+async def test_dispatch_model_tee_sees_chunks_in_order(tmp_path):
+    from harness.provider import TextDelta, UsageReport, StreamStop, Usage
+
+    session, dispatcher = _kernel_bits(tmp_path)
+    provider = FakeProvider([
+        [TextDelta(text="he"), TextDelta(text="llo"), UsageReport(usage=Usage()), StreamStop(stop_reason="end_turn")]
+    ])
+    seen: list = []
+    message, usage = await dispatcher.dispatch_model(
+        provider=provider, model=ModelId("fake:echo"), messages=[Message.user_text("hi")],
+        tools=(), on_chunk=seen.append,
+    )
+    assert [c.text for c in seen if isinstance(c, TextDelta)] == ["he", "llo"]
+    assert message.text() == "hello"
+
+
+async def test_dispatch_model_tee_exceptions_do_not_break_dispatch(tmp_path):
+    from harness.provider import TextDelta, UsageReport, StreamStop, Usage
+
+    session, dispatcher = _kernel_bits(tmp_path)
+    provider = FakeProvider([
+        [TextDelta(text="he"), TextDelta(text="llo"), UsageReport(usage=Usage()), StreamStop(stop_reason="end_turn")]
+    ])
+
+    def boom(chunk):
+        raise RuntimeError("frontend bug")
+
+    message, _ = await dispatcher.dispatch_model(
+        provider=provider, model=ModelId("fake:echo"), messages=[Message.user_text("hi")],
+        tools=(), on_chunk=boom,
+    )
+    assert message.text() == "hello"
+
+
+async def test_dispatch_model_tee_sees_retry_attempts_fresh(tmp_path):
+    from harness.errors import Overloaded
+    from harness.provider import TextDelta, UsageReport, StreamStop, Usage
+
+    class FlakyStreamProvider:
+        def __init__(self):
+            self.attempts = 0
+
+        async def complete(self, *, model, messages, tools=()):
+            self.attempts += 1
+            if self.attempts < 2:
+                yield TextDelta(text="partial")
+                raise Overloaded("busy")
+            for chunk in [
+                TextDelta(text="full"), TextDelta(text=" reply"),
+                UsageReport(usage=Usage()), StreamStop(stop_reason="end_turn"),
+            ]:
+                yield chunk
+
+    session, dispatcher = _kernel_bits(tmp_path)
+    dispatcher.retry_delays = (0.0,)
+    seen: list = []
+    message, _ = await dispatcher.dispatch_model(
+        provider=FlakyStreamProvider(), model=ModelId("fake"), messages=[], tools=(),
+        on_chunk=seen.append,
+    )
+    # partial from attempt 1 and full chunks from attempt 2
+    text_chunks = [c.text for c in seen if isinstance(c, TextDelta)]
+    assert "partial" in text_chunks
+    assert "full" in text_chunks and " reply" in text_chunks
+    assert message.text() == "full reply"

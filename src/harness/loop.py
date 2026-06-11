@@ -2,13 +2,14 @@
 """The agent loop: build context, dispatch model, dispatch tools concurrently, repeat."""
 
 import asyncio
+from typing import Callable
 
 from harness.dispatcher import Dispatcher
 from harness.events import CustomEvent, ErrorRaised, SessionEnded, UserMessage
 from harness.hooks import Annotate, Emit, HookBus, Inject, LifecyclePoint, ProposedToolCall
 from harness.interaction import Resolver
 from harness.messages import Message
-from harness.provider import ModelProvider
+from harness.provider import Chunk, ModelProvider
 from harness.session import Session
 from harness.tools import ToolRegistry
 from harness.types import ModelId
@@ -44,6 +45,7 @@ class AgentLoop:
         self.dispatcher = Dispatcher(
             session=session, registry=registry, hooks=hooks, resolver=resolver
         )
+        self.on_chunk: Callable[[Chunk], None] | None = None  # set by the frontend; root loop only
         self._ended = False
 
     async def _apply_contributions(self, point: LifecyclePoint, ctx: dict) -> None:
@@ -90,6 +92,7 @@ class AgentLoop:
                 provider=self.provider, model=self.model,
                 messages=messages, tools=self.registry.specs(),
                 pricing=self.pricing,
+                on_chunk=self.on_chunk,
             )
             self.history.append(assistant)
             calls = assistant.tool_calls()

@@ -165,3 +165,14 @@ async def test_dispatch_infrastructure_failure_logs_and_raises(tmp_path):
     assert any(
         isinstance(e, ErrorRaised) and e.where == "loop:tool_dispatch" for e in events
     )
+
+async def test_loop_threads_on_chunk_to_dispatch(tmp_path):
+    from harness.provider import TextDelta
+
+    seen: list = []
+    session, loop = _loop(tmp_path, FakeProvider([text_turn("hi back")]))
+    loop.on_chunk = seen.append
+    await loop.start()
+    await loop.run_turn("hi")
+    session.close()
+    assert any(isinstance(c, TextDelta) for c in seen)

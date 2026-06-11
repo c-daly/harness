@@ -4,6 +4,7 @@
 import asyncio
 import time
 from dataclasses import dataclass
+from typing import AsyncGenerator, Callable
 
 from harness.blobs import INLINE_THRESHOLD, BlobRef
 from harness.errors import ProviderError
@@ -27,7 +28,7 @@ from harness.hooks import (
 )
 from harness.interaction import PermissionRequest, Resolver
 from harness.messages import Message
-from harness.provider import ModelProvider, Usage, collect
+from harness.provider import Chunk, ModelProvider, Usage, collect
 from harness.session import Session
 from harness.tools import ToolRegistry, ToolSpec
 from harness.types import ModelId, new_call_id
@@ -45,6 +46,17 @@ class ToolOutcome:
     text: str | None
     blob: BlobRef | None
     is_error: bool
+
+
+async def _tee(
+    stream: AsyncGenerator[Chunk, None], on_chunk: Callable[[Chunk], None]
+) -> AsyncGenerator[Chunk, None]:
+    async for chunk in stream:
+        try:
+            on_chunk(chunk)
+        except Exception:
+            pass  # a broken frontend must never break dispatch
+        yield chunk
 
 
 class Dispatcher:
@@ -144,6 +156,7 @@ class Dispatcher:
         messages: list[Message],
         tools: tuple[ToolSpec, ...],
         pricing: dict[str, float] | None = None,
+        on_chunk: Callable[[Chunk], None] | None = None,
     ) -> tuple[Message, Usage]:
         """Dispatch a model call through hooks, permissions, and the provider.
 
@@ -167,9 +180,10 @@ class Dispatcher:
         attempt = 0
         while True:
             try:
-                message, usage, stop_reason = await collect(
-                    provider.complete(model=effective.model, messages=messages, tools=tools)
-                )
+                stream = provider.complete(model=effective.model, messages=messages, tools=tools)
+                if on_chunk is not None:
+                    stream = _tee(stream, on_chunk)
+                message, usage, stop_reason = await collect(stream)
                 break
             except ProviderError as exc:
                 if not exc.retryable or attempt >= len(self.retry_delays):
