@@ -5,6 +5,7 @@ secrets. Resolution happens at connection start (resolve_env), so a missing
 variable fails one server loudly without sinking the others.
 """
 
+import math
 import os
 import re
 import tomllib
@@ -96,8 +97,10 @@ def _parse_server(name: str, body: dict, *, source: str) -> McpServerSpec:
     if restart not in _RESTARTS:
         raise McpConfigError(f"server {name!r}: restart must be one of {_RESTARTS}")
     timeout = body.get("tool_timeout_s", 60.0)
-    if not isinstance(timeout, (int, float)) or timeout <= 0:
-        raise McpConfigError(f"server {name!r}: tool_timeout_s must be > 0")
+    if not isinstance(timeout, (int, float)) or timeout <= 0 or not math.isfinite(timeout):
+        raise McpConfigError(
+            f"server {name!r}: tool_timeout_s must be a positive finite number"
+        )
     args = body.get("args", [])
     if not isinstance(args, list) or not all(isinstance(a, str) for a in args):
         raise McpConfigError(f"server {name!r}: args must be an array of strings")
@@ -205,4 +208,6 @@ def write_scope_file(path: Path, specs: tuple) -> None:
             " edit it by hand instead"
         )
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(emit_mcp_toml(specs))
+    tmp = path.with_suffix(".toml.tmp")
+    tmp.write_text(emit_mcp_toml(specs))
+    tmp.rename(path)  # atomic publish, same idiom as blobs.py

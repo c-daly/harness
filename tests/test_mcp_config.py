@@ -63,6 +63,8 @@ def test_http_spec_parses_with_inferred_transport(tmp_path):
         ("[servers.s]\nrestart = \"never\"\n", "command or url"),
         ('[servers.s]\ncommand = "x"\nrestart = "sometimes"\n', "restart"),
         ('[servers.s]\ncommand = "x"\ntool_timeout_s = 0\n', "tool_timeout_s"),
+        ('[servers.s]\ncommand = "x"\ntool_timeout_s = inf\n', "tool_timeout_s"),
+        ('[servers.s]\ncommand = "x"\ntool_timeout_s = nan\n', "tool_timeout_s"),
         ('[servers.s]\ncommand = "x"\ntransport = "http"\n', "transport"),
         ('[servers.s]\ncommand = "x"\n[servers.s.env]\nK = "not a var!"\n', "environment variable"),
         ('[servers.s]\nurl = "http://y"\n[servers.s.headers]\nA = "Bearer xyz"\n',

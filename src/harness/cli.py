@@ -271,18 +271,6 @@ def _run_main() -> None:
         raise SystemExit(f"provider error: {exc}") from exc
 
 
-def main() -> None:
-    argv = sys.argv[1:]
-    if argv and argv[0] in ("stats", "compare", "outcome"):
-        _subcommand(argv)
-        return
-    if argv and argv[0] == "mcp":
-        _mcp_subcommand(argv[1:])
-        return
-    _run_main()
-
-
-
 def _parse_add_spec(args, refs: dict, headers: dict):
     """Build a spec from add-flags; round-trips through _parse_server so CLI
     input obeys exactly the same validation laws as a config file.
@@ -345,7 +333,7 @@ def _mcp_subcommand(argv: list[str]) -> None:
     add.add_argument("--tool-timeout", type=float, default=60.0, dest="tool_timeout")
     _common(add)
 
-    lst = sub.add_parser("list")
+    lst = sub.add_parser("list", help="Show the merged user+project view; --scope does not filter it.")
     _common(lst)
 
     rem = sub.add_parser("remove")
@@ -378,10 +366,11 @@ def _mcp_subcommand(argv: list[str]) -> None:
             except ValueError:
                 raise SystemExit("--env/--header values must be NAME=ENV_VAR_NAME") from None
             spec = _parse_add_spec(args, refs, headers)
+            path = scope_path()
             servers = existing()
             servers[spec.name] = spec
-            write_scope_file(scope_path(), tuple(servers.values()))
-            print(f"added {spec.name} ({spec.transport}) to {scope_path()}")
+            write_scope_file(path, tuple(servers.values()))
+            print(f"added {spec.name} ({spec.transport}) to {path}")
         elif args.cmd == "list":
             specs = load_mcp_config(project_dir=Path.cwd(), config_home=args.config_home)
             if not specs:
@@ -390,13 +379,25 @@ def _mcp_subcommand(argv: list[str]) -> None:
                 target = spec.command if spec.transport == "stdio" else spec.url
                 print(f"{spec.name}\t{spec.transport}\t{spec.source}\t{target}")
         elif args.cmd == "remove":
+            path = scope_path()
             servers = existing()
             if args.name not in servers:
-                raise SystemExit(f"no server {args.name!r} in {scope_path()}")
+                raise SystemExit(f"no server {args.name!r} in {path}")
             del servers[args.name]
-            write_scope_file(scope_path(), tuple(servers.values()))
-            print(f"removed {args.name} from {scope_path()}")
+            write_scope_file(path, tuple(servers.values()))
+            print(f"removed {args.name} from {path}")
         elif args.cmd == "import":
             raise SystemExit("import lands in the next commit")
     except McpConfigError as exc:
         raise SystemExit(str(exc)) from exc
+
+
+def main() -> None:
+    argv = sys.argv[1:]
+    if argv and argv[0] in ("stats", "compare", "outcome"):
+        _subcommand(argv)
+        return
+    if argv and argv[0] == "mcp":
+        _mcp_subcommand(argv[1:])
+        return
+    _run_main()
