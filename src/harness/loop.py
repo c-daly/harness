@@ -35,6 +35,9 @@ class AgentLoop:
         self.model = model
         self.system_prompt = system_prompt
         self.max_iterations = max_iterations
+        # history seeds a RESUMED transcript (resume_session's fold output).
+        # Never call start() on a resumed loop: the session already started
+        # and SESSION_START hooks (memory briefs) must not double-inject.
         self.history: list[Message] = list(history) if history else []
         self.dispatcher = Dispatcher(
             session=session, registry=registry, hooks=hooks, resolver=resolver
