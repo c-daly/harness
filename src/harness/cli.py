@@ -9,6 +9,7 @@ from pathlib import Path
 from harness.hooks import HookBus
 from harness.interaction import HeadlessResolver, Resolver
 from harness.loop import AgentLoop
+from harness.permissions import PermissionEngine
 from harness.provider import FakeProvider, ModelProvider, text_turn
 from harness.session import Session
 from harness.subagent import DispatchAgentTool, SubagentRunner
@@ -36,11 +37,14 @@ def build_kernel(
     hooks: HookBus | None = None,
     pricing: dict[str, float] | None = None,
     resume_session_id: SessionId | None = None,
+    permissions: PermissionEngine | None = None,
 ) -> Kernel:
     from harness.resume import resume_session
 
     resolver = resolver or HeadlessResolver()
     hooks = hooks or HookBus()
+    if permissions is not None:
+        hooks.register_dispatch(permissions.name, permissions, priority=permissions.priority)
     registry = ToolRegistry()
     resumed = False
     if resume_session_id is not None:

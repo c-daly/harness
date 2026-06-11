@@ -68,3 +68,74 @@ async def test_resume_flag_continues_session(tmp_path):
     envs = read_session(tmp_path, sid)
     seqs = [e.seq for e in envs]
     assert seqs == sorted(seqs) and len(set(seqs)) == len(seqs)
+
+
+async def test_permission_engine_denies_through_kernel(tmp_path):
+    from harness.events import HookDecided
+    from harness.log import read_session
+    from harness.permissions import PermissionEngine, PermissionRule, RuleSet
+    from harness.provider import tool_call_turn
+    from harness.types import ToolName
+
+    engine = PermissionEngine([RuleSet(
+        rules=[PermissionRule(action="deny", tool="dispatch_agent")], default="allow"
+    )])
+    kernel = build_kernel(
+        provider=FakeProvider([
+            tool_call_turn("delegating", ToolName("dispatch_agent"), {"prompt": "x"}),
+            text_turn("gave up"),
+        ]),
+        base_dir=tmp_path, model=ModelId("fake"), permissions=engine,
+    )
+    sid = kernel.session.id
+    result = await run_once(kernel, "delegate something")
+    assert result == "gave up"
+    events = [e.event for e in read_session(tmp_path, sid)]
+    denied = [e for e in events if isinstance(e, HookDecided) and e.hook == "permissions"
+              and e.decision["kind"] == "block"]
+    assert denied  # the engine's deny was recorded like any hook decision
+
+
+async def test_permission_ask_resolves_and_grant_silences(tmp_path):
+    from harness.events import PermissionRequested
+    from harness.interaction import ScriptedResolver
+    from harness.log import read_session
+    from harness.permissions import PermissionEngine, PermissionRule, RuleSet
+    from harness.provider import tool_call_turn
+    from harness.types import ToolName
+
+    engine = PermissionEngine([RuleSet(
+        rules=[PermissionRule(action="ask", tool="dispatch_agent")], default="allow"
+    )])
+    class GrantingResolver(ScriptedResolver):
+        """Approve once, then grant - the exact shape of the TUI's
+        'always allow' button. One scripted answer: a second ask would
+        IndexError, so asks2==1 is structurally enforced."""
+
+        def __init__(self, engine):
+            super().__init__([True])
+            self._engine = engine
+
+        async def resolve(self, request):
+            answer = await super().resolve(request)
+            if answer:
+                self._engine.grant("dispatch_agent")
+            return answer
+
+    kernel = build_kernel(
+        provider=FakeProvider([
+            tool_call_turn("first", ToolName("dispatch_agent"), {"prompt": "a"}),
+            text_turn("child one done"),   # child's turn
+            tool_call_turn("second", ToolName("dispatch_agent"), {"prompt": "b"}),
+            text_turn("child two done"),   # child's turn
+            text_turn("all delegated"),
+        ]),
+        base_dir=tmp_path, model=ModelId("fake"), permissions=engine,
+        resolver=GrantingResolver(engine),
+    )
+    sid = kernel.session.id
+    result = await run_once(kernel, "delegate twice")
+    assert result == "all delegated"
+    events = [e.event for e in read_session(tmp_path, sid)]
+    asks = [e for e in events if isinstance(e, PermissionRequested)]
+    assert len(asks) == 1  # second call sailed through on the grant
