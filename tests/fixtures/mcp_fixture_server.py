@@ -37,15 +37,22 @@ def env_probe(name: str) -> str:
 
 
 @fixture.tool()
-def die() -> str:
-    """Exit the server process immediately (for restart tests)."""
+def die() -> None:
+    """Exit the server process immediately (for restart tests).
+
+    WARNING: only safe when the server runs as a subprocess. Calling this
+    through the in-memory transport kills the host process via os._exit —
+    no exception, no cleanup.
+    """
     os._exit(1)
 
 
 if __name__ == "__main__":
-    if len(sys.argv) > 2 and sys.argv[1] == "--http":
+    if len(sys.argv) >= 3 and sys.argv[1] == "--http":
         fixture.settings.host = "127.0.0.1"
-        fixture.settings.port = int(sys.argv[2])
+        fixture.settings.port = int(sys.argv[2])  # ValueError is acceptably loud
         fixture.run("streamable-http")
+    elif len(sys.argv) == 2 and sys.argv[1] == "--http":
+        sys.exit("usage: mcp_fixture_server.py --http PORT")
     else:
         fixture.run("stdio")
