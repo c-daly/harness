@@ -6,7 +6,7 @@ from harness.hooks import HookBus, Inject, Emit, LifecyclePoint
 from harness.interaction import HeadlessResolver
 from harness.log import read_session
 from harness.loop import AgentLoop
-from harness.provider import FakeProvider, text_turn, tool_call_turn
+from harness.provider import FakeProvider, StreamStop, TextDelta, ToolCallDelta, Usage, UsageReport, text_turn, tool_call_turn
 from harness.session import Session
 from harness.tools import ToolRegistry, ToolSpec
 from harness.types import ModelId, SessionId, ToolName
@@ -77,8 +77,14 @@ async def test_parallel_tool_calls_in_one_turn_run_concurrently(tmp_path):
     reg = ToolRegistry()
     reg.register(gate)
     # one assistant turn proposing TWO gate calls; both must run concurrently to pass the barrier
-    turn = tool_call_turn("two", ToolName("gate"), {})
-    turn = turn[:1] + tool_call_turn("", ToolName("gate"), {})[1:2] + turn[1:]
+    from harness.types import new_call_id
+    turn = [
+        TextDelta(text="two"),
+        ToolCallDelta(index=0, call_id=new_call_id(), tool=ToolName("gate"), args_json="{}"),
+        ToolCallDelta(index=1, call_id=new_call_id(), tool=ToolName("gate"), args_json="{}"),
+        UsageReport(usage=Usage()),
+        StreamStop(stop_reason="tool_use"),
+    ]
     provider = FakeProvider([turn, text_turn("both through")])
     session, loop = _loop(tmp_path, provider, registry=reg)
     await loop.start()
