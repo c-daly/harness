@@ -139,3 +139,28 @@ async def test_permission_ask_resolves_and_grant_silences(tmp_path):
     events = [e.event for e in read_session(tmp_path, sid)]
     asks = [e for e in events if isinstance(e, PermissionRequested)]
     assert len(asks) == 1  # second call sailed through on the grant
+
+
+
+def test_main_missing_catalog_is_actionable(tmp_path, capsys, monkeypatch):
+    import pytest
+    from harness.cli import main
+    monkeypatch.setattr(
+        "sys.argv",
+        ["harness", "-p", "x", "--model", "gpt",
+         "--catalog", str(tmp_path / "nope.toml"), "--base-dir", str(tmp_path)],
+    )
+    with pytest.raises(SystemExit) as exc:
+        main()
+    assert "catalog not found" in str(exc.value)
+    assert "--catalog" in str(exc.value)
+
+
+def test_allow_flags_become_session_grants(tmp_path):
+    from harness.permissions import PermissionEngine, PermissionRule, RuleSet
+    from harness.cli import _apply_allow_flags
+    engine = PermissionEngine([RuleSet(rules=[PermissionRule(action="ask", tool="*")])])
+    _apply_allow_flags(engine, ["bash", "read_*"])
+    assert engine.decide("bash", {}) == "allow"
+    assert engine.decide("read_file", {}) == "allow"
+    assert engine.decide("write_file", {}) == "ask"

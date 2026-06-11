@@ -9,7 +9,7 @@ from pathlib import Path
 from harness.hooks import HookBus
 from harness.interaction import HeadlessResolver, Resolver
 from harness.loop import AgentLoop
-from harness.permissions import PermissionEngine
+from harness.permissions import PermissionEngine, default_engine
 from harness.provider import FakeProvider, ModelProvider, text_turn
 from harness.session import Session
 from harness.subagent import DispatchAgentTool, SubagentRunner
@@ -100,6 +100,12 @@ async def _amain(kernel: Kernel, prompt: str) -> str:
         loop.remove_signal_handler(signal.SIGINT)
 
 
+def _apply_allow_flags(engine: PermissionEngine, allows: list[str]) -> None:
+    """Grant each tool glob in allows at session scope."""
+    for pattern in allows:
+        engine.grant(pattern)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="harness")
     parser.add_argument("-p", "--prompt", required=True)
@@ -112,6 +118,9 @@ def main() -> None:
                         help="Path to the model catalog TOML (default: ~/.config/harness/models.toml).")
     parser.add_argument("--resume", dest="resume_session_id", default=None,
                         help="Session ID to resume.")
+    parser.add_argument("--allow", action="append", default=[],
+                        metavar="TOOL_GLOB",
+                        help="Grant a tool glob at session scope (can be repeated).")
     args = parser.parse_args()
 
     resume_session_id = SessionId(args.resume_session_id) if args.resume_session_id else None
@@ -120,7 +129,12 @@ def main() -> None:
         from harness.catalog import Catalog
         from harness.provider_litellm import LiteLLMProvider
 
-        resolved = Catalog.load(args.catalog).resolve(args.model)
+        try:
+            resolved = Catalog.load(args.catalog).resolve(args.model)
+        except FileNotFoundError:
+            raise SystemExit(
+                f"catalog not found at {args.catalog}; create it or pass --catalog <path>"
+            )
         provider: ModelProvider = LiteLLMProvider(api_base=resolved.api_base)
         model = resolved.route
         pricing = resolved.pricing_dict() or None
@@ -129,11 +143,16 @@ def main() -> None:
         model = ModelId("fake:echo")
         pricing = None
 
+    engine = default_engine(project_dir=Path.cwd())
+    if engine and args.allow:
+        _apply_allow_flags(engine, args.allow)
+
     kernel = build_kernel(
         provider=provider,
         base_dir=args.base_dir,
         model=model,
         pricing=pricing,
         resume_session_id=resume_session_id,
+        permissions=engine,
     )
     print(asyncio.run(_amain(kernel, args.prompt)))

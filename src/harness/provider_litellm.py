@@ -39,10 +39,27 @@ from harness.types import CallId, ModelId, ToolName
 
 _FINISH_REASON = {"stop": "end_turn", "tool_calls": "tool_use", "length": "max_tokens"}
 
+_QUIETED = False
+
+
+def _quiet(litellm_module) -> None:
+    """Suppress litellm's stdout banners (they pollute -p output). The attribute
+    set differs across versions -- set what exists, ignore what doesn't."""
+    global _QUIETED
+    if _QUIETED:
+        return
+    for attr, value in (("suppress_debug_info", True), ("set_verbose", False)):
+        try:
+            setattr(litellm_module, attr, value)
+        except Exception:
+            pass
+    _QUIETED = True
+
 
 def map_exception(exc: Exception) -> ProviderError:
     import litellm
 
+    _quiet(litellm)
     # litellm mis-raises missing-credentials as InternalServerError; sniff the
     # message so auth failures stay non-retryable (verified empirically via a
     # keyless --model run)
@@ -196,6 +213,7 @@ class LiteLLMProvider:
     ) -> AsyncIterator[Chunk]:
         import litellm
 
+        _quiet(litellm)
         kwargs: dict[str, Any] = {
             "model": str(model),
             "messages": _messages_to_openai(messages),
