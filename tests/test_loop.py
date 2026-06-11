@@ -1,11 +1,15 @@
 # tests/test_loop.py
 import asyncio
 
+import pytest
+
 from harness.events import CustomEvent, ErrorRaised, UserMessage
+from harness.fold import fold
 from harness.hooks import HookBus, Inject, Emit, LifecyclePoint
 from harness.interaction import HeadlessResolver
 from harness.log import read_session
 from harness.loop import AgentLoop
+from harness.messages import Role, ToolResultBlock
 from harness.provider import FakeProvider, StreamStop, TextDelta, ToolCallDelta, Usage, UsageReport, text_turn, tool_call_turn
 from harness.session import Session
 from harness.tools import ToolRegistry, ToolSpec
@@ -176,3 +180,172 @@ async def test_loop_threads_on_chunk_to_dispatch(tmp_path):
     await loop.run_turn("hi")
     session.close()
     assert any(isinstance(c, TextDelta) for c in seen)
+
+
+# ---- interrupt tests ----
+
+
+class NeverProvider:
+    """complete() waits forever without yielding."""
+
+    async def complete(self, *, model, messages, tools=()):
+        await asyncio.sleep(3600)
+        if False:
+            yield  # type: ignore[misc]
+
+
+class StallTool:
+    """Sleeps forever when called."""
+
+    spec = ToolSpec(name=ToolName("stall"), description="", parameters={})
+
+    async def __call__(self, args):
+        await asyncio.sleep(3600)
+        return "never"
+
+
+def _interrupt_loop(tmp_path, provider, registry=None):
+    """Build a (session, loop) pair for interrupt tests."""
+    session = Session(tmp_path, SessionId("s2"))
+    reg = registry or ToolRegistry()
+    return session, AgentLoop(
+        session=session,
+        provider=provider,
+        registry=reg,
+        hooks=HookBus(),
+        resolver=HeadlessResolver(),
+        model=ModelId("fake"),
+        system_prompt="be brief",
+    )
+
+
+def _read_envelopes_for(tmp_path):
+    return read_session(tmp_path, SessionId("s2"))
+
+
+_CANCELLED_TEXT = "(call did not complete)"
+
+
+async def test_interrupt_during_model_is_benign(tmp_path):
+    session, loop = _interrupt_loop(tmp_path, NeverProvider())
+    await loop.start()
+
+    task = asyncio.create_task(loop.run_turn("hi"))
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    loop.interrupt_turn()
+
+    event_types = [e.event.type for e in _read_envelopes_for(tmp_path)]
+    assert "user_interrupt" in event_types
+    assert "tool_call_cancelled" not in event_types
+
+    # resurrection: loop is still usable
+    loop.provider = FakeProvider([text_turn("recovered")])
+    assert await loop.run_turn("again") == "recovered"
+    session.close()
+
+
+async def test_interrupt_during_tool_gather_repairs_history(tmp_path):
+    reg = ToolRegistry()
+    reg.register(StallTool())
+
+    session, loop = _interrupt_loop(
+        tmp_path,
+        FakeProvider([tool_call_turn("calling", ToolName("stall"), {}), text_turn("never reached")]),
+        registry=reg,
+    )
+    await loop.start()
+
+    task = asyncio.create_task(loop.run_turn("go"))
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    loop.interrupt_turn()
+
+    tool_call_ids = {block.call_id for msg in loop.history for block in msg.tool_calls()}
+    result_call_ids = {
+        block.call_id for msg in loop.history if msg.role == Role.TOOL
+        for block in msg.blocks if isinstance(block, ToolResultBlock)
+    }
+    assert tool_call_ids, "expected at least one tool call in history"
+    assert tool_call_ids == result_call_ids, "all tool_use calls must be paired with results"
+
+    for msg in loop.history:
+        if msg.role == Role.TOOL:
+            for block in msg.blocks:
+                if isinstance(block, ToolResultBlock) and block.call_id in tool_call_ids:
+                    assert block.text == _CANCELLED_TEXT
+                    assert block.is_error is True
+
+    event_types = [e.event.type for e in _read_envelopes_for(tmp_path)]
+    assert "tool_call_cancelled" in event_types
+    assert "user_interrupt" in event_types
+
+    loop.provider = FakeProvider([text_turn("recovered")])
+    assert await loop.run_turn("again") == "recovered"
+    session.close()
+
+
+async def test_interrupt_history_matches_fold_of_log(tmp_path):
+    """After tool-gather interrupt + repair, fold(log) agrees with in-memory history."""
+    reg = ToolRegistry()
+    reg.register(StallTool())
+
+    session, loop = _interrupt_loop(
+        tmp_path,
+        FakeProvider([tool_call_turn("calling", ToolName("stall"), {}), text_turn("never reached")]),
+        registry=reg,
+    )
+    await loop.start()
+
+    task = asyncio.create_task(loop.run_turn("go"))
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    loop.interrupt_turn()
+    session.close()
+
+    envelopes = _read_envelopes_for(tmp_path)
+    folded = fold(envelopes)
+
+    cancelled_in_history: dict[str, str] = {}
+    for msg in loop.history:
+        if msg.role == Role.TOOL:
+            for block in msg.blocks:
+                if isinstance(block, ToolResultBlock) and block.is_error:
+                    cancelled_in_history[block.call_id] = block.text or ""
+
+    cancelled_in_fold: dict[str, str] = {}
+    for msg in folded.messages:
+        if msg.role == Role.TOOL:
+            for block in msg.blocks:
+                if isinstance(block, ToolResultBlock) and block.is_error:
+                    cancelled_in_fold[block.call_id] = block.text or ""
+
+    assert cancelled_in_history, "expected cancelled calls in history"
+    assert cancelled_in_history == cancelled_in_fold, (
+        "in-memory history and fold of log must agree on cancelled tool results"
+    )
+    for text in cancelled_in_history.values():
+        assert text == _CANCELLED_TEXT
+
+
+async def test_interrupt_with_clean_history_only_records_interrupt(tmp_path):
+    """Completed-turn loop: interrupt_turn appends only UserInterrupt."""
+    session, loop = _interrupt_loop(tmp_path, FakeProvider([text_turn("done")]))
+    await loop.start()
+    await loop.run_turn("hello")
+
+    loop.interrupt_turn()
+    session.close()
+
+    event_types = [e.event.type for e in _read_envelopes_for(tmp_path)]
+    assert event_types.count("user_interrupt") == 1
+    assert "tool_call_cancelled" not in event_types

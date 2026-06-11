@@ -5,10 +5,10 @@ import asyncio
 from typing import Callable
 
 from harness.dispatcher import Dispatcher
-from harness.events import CustomEvent, ErrorRaised, SessionEnded, UserMessage
+from harness.events import CustomEvent, ErrorRaised, SessionEnded, ToolCallCancelled, UserInterrupt, UserMessage
 from harness.hooks import Annotate, Emit, HookBus, Inject, LifecyclePoint, ProposedToolCall
 from harness.interaction import Resolver
-from harness.messages import Message
+from harness.messages import Message, Role, ToolResultBlock
 from harness.provider import Chunk, ModelProvider
 from harness.session import Session
 from harness.tools import ToolRegistry
@@ -129,6 +129,44 @@ class AgentLoop:
             ErrorRaised(where="loop", message=f"max iterations ({self.max_iterations}) reached")
         )
         return f"[stopped: max iterations ({self.max_iterations}) reached]"
+
+    def interrupt_turn(self) -> None:
+        """In-process mirror of resume repair: call once after cancelling run_turn.
+
+        Closes any unpaired tool_use blocks in the trailing assistant message with
+        ToolCallCancelled events + synthetic error tool_results (matching what
+        fold renders for them), then records UserInterrupt. Keeps this loop alive:
+        run_turn is safe to call again afterwards."""
+        for call in self._dangling_tool_calls():
+            self.session.append(ToolCallCancelled(call_id=call.call_id))
+            self.history.append(
+                Message.tool_result(call.call_id, text="(call did not complete)", is_error=True)
+            )
+        self.session.append(UserInterrupt())
+
+    def _dangling_tool_calls(self):
+        """tool_use blocks in the last assistant message lacking a paired result.
+
+        Walks history backwards collecting result call_ids until the last assistant
+        message that has tool_calls(); returns its calls that lack paired results.
+        Returns empty list when no trailing unpaired assistant-with-tools exists.
+        Only the segment AFTER the last assistant message is inspected, so an old
+        fully-paired assistant deeper in history is never re-repaired."""
+        # Collect result call_ids and find the last assistant-with-tools
+        paired_ids: set[str] = set()
+        for msg in reversed(self.history):
+            if msg.role == Role.TOOL:
+                for block in msg.blocks:
+                    if isinstance(block, ToolResultBlock):
+                        paired_ids.add(block.call_id)
+            elif msg.role == Role.ASSISTANT:
+                calls = msg.tool_calls()
+                if not calls:
+                    # Assistant message with no tool calls: nothing to repair
+                    return []
+                # Return calls lacking a paired result
+                return [c for c in calls if c.call_id not in paired_ids]
+        return []
 
     async def end(self) -> None:
         if self._ended:
