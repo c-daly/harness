@@ -1,5 +1,7 @@
 """mcp.toml parsing: validation, layering (project shadows user), env references."""
 
+from dataclasses import FrozenInstanceError
+
 import pytest
 
 from harness.mcp_config import (
@@ -64,6 +66,11 @@ def test_http_spec_parses_with_inferred_transport(tmp_path):
          "environment variable"),
         ('[servers.s]\ncommand = "x"\nargs = "not-a-list"\n', "args"),
         ('[servers.s]\ncommand = "x"\nargs = [1, 2]\n', "args"),
+        ('[servers.s]\ncommand = 5\n', "command"),
+        ('[servers.s]\nurl = 42\n', "url"),
+        ('[servers.s]\ncommand = "x"\ncwd = 99\n', "cwd"),
+        ('[servers]\ns = "not a dict"\n', "table"),
+        ('[servers.s]\ncommand = "x"\nrestrat = "never"\n', "unknown keys"),
     ],
 )
 def test_validation_errors(tmp_path, toml_body, fragment):
@@ -124,5 +131,5 @@ def test_resolve_env_names_all_missing_sorted(monkeypatch):
 
 def test_spec_is_frozen():
     spec = McpServerSpec(name="s", transport="stdio", command="x")
-    with pytest.raises(Exception):
+    with pytest.raises(FrozenInstanceError):
         spec.name = "other"  # type: ignore[misc]

@@ -15,6 +15,9 @@ from typing import Literal
 _NAME_RE = re.compile(r"[A-Za-z0-9_-]+")
 _ENV_VAR_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _RESTARTS = ("never", "on_failure")
+_KNOWN_KEYS = frozenset(
+    {"transport", "command", "args", "cwd", "url", "env", "headers", "restart", "tool_timeout_s"}
+)
 
 
 class McpConfigError(Exception):
@@ -29,8 +32,10 @@ class McpServerSpec:
     args: tuple[str, ...] = ()
     cwd: str | None = None
     url: str | None = None
-    env: dict[str, str] = field(default_factory=dict)      # var -> ENV VAR NAME
-    headers: dict[str, str] = field(default_factory=dict)  # header -> ENV VAR NAME
+    # key -> ENV VAR NAME; frozen protects the ref, not contents
+    env: dict[str, str] = field(default_factory=dict)
+    # header -> ENV VAR NAME; frozen protects the ref, not contents
+    headers: dict[str, str] = field(default_factory=dict)
     restart: Literal["never", "on_failure"] = "on_failure"
     tool_timeout_s: float = 60.0
     source: str = "user"  # "user" | "project" | "adhoc" — attribution, not behavior
@@ -51,13 +56,29 @@ def _refs(table: object, *, where: str) -> dict[str, str]:
     return out
 
 
+# Shared parse kernel: the .mcp.json importer (mcp_import) feeds JSON-derived
+# bodies through here too.
 def _parse_server(name: str, body: dict, *, source: str) -> McpServerSpec:
+    if not isinstance(body, dict):
+        raise McpConfigError(
+            f"server {name!r}: body must be a table, got {type(body).__name__}"
+        )
     if not _NAME_RE.fullmatch(name) or "__" in name:
         raise McpConfigError(
             f"server name {name!r} invalid: must match [A-Za-z0-9_-]+ and not contain '__'"
         )
+    unknown = sorted(set(body) - _KNOWN_KEYS)
+    if unknown:
+        raise McpConfigError(f"server {name!r}: unknown keys: {', '.join(unknown)}")
     command = body.get("command")
     url = body.get("url")
+    if command is not None and not isinstance(command, str):
+        raise McpConfigError(f"server {name!r}: command must be a string")
+    if url is not None and not isinstance(url, str):
+        raise McpConfigError(f"server {name!r}: url must be a string")
+    cwd = body.get("cwd")
+    if cwd is not None and not isinstance(cwd, str):
+        raise McpConfigError(f"server {name!r}: cwd must be a string")
     if command is not None and url is not None:
         raise McpConfigError(f"server {name!r}: both command and url given - pick one")
     if command is None and url is None:
@@ -83,7 +104,7 @@ def _parse_server(name: str, body: dict, *, source: str) -> McpServerSpec:
         transport=transport,
         command=command,
         args=tuple(args),
-        cwd=body.get("cwd"),
+        cwd=cwd,
         url=url,
         env=_refs(body.get("env", {}), where=f"servers.{name}.env"),
         headers=_refs(body.get("headers", {}), where=f"servers.{name}.headers"),
@@ -101,7 +122,13 @@ def load_mcp_file(path: Path, *, source: str) -> tuple[McpServerSpec, ...]:
     servers = data.get("servers", {})
     if not isinstance(servers, dict):
         raise McpConfigError(f"{path}: [servers] must be a table")
-    return tuple(_parse_server(name, body, source=source) for name, body in servers.items())
+    out = []
+    for name, body in servers.items():
+        try:
+            out.append(_parse_server(name, body, source=source))
+        except McpConfigError as exc:
+            raise McpConfigError(f"{path}: {exc}") from exc
+    return tuple(out)
 
 
 def user_mcp_path(config_home: Path | None = None) -> Path:
