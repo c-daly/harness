@@ -248,3 +248,46 @@ async def test_huge_error_text_is_capped(tmp_path):
     assert result.is_error
     assert len(result.text) <= 4096 + 20
     assert result.text.endswith("…[truncated]")
+
+
+async def test_retryable_provider_error_retries_and_succeeds(tmp_path):
+    from harness.errors import Overloaded
+    from harness.events import RetryAttempted
+
+    class FlakyProvider:
+        def __init__(self):
+            self.attempts = 0
+
+        async def complete(self, *, model, messages, tools=()):
+            self.attempts += 1
+            if self.attempts < 3:
+                raise Overloaded("busy")
+            for chunk in text_turn("finally"):
+                yield chunk
+
+    session, dispatcher = _kernel_bits(tmp_path)
+    dispatcher.retry_delays = (0.01, 0.01, 0.01)
+    message, _ = await dispatcher.dispatch_model(
+        provider=FlakyProvider(), model=ModelId("fake"), messages=[], tools=()
+    )
+    session.close()
+    assert message.text() == "finally"
+    retries = [e for e in _events(tmp_path) if isinstance(e, RetryAttempted)]
+    assert len(retries) == 2
+
+
+async def test_non_retryable_error_raises_immediately(tmp_path):
+    import pytest
+    from harness.errors import AuthFailed
+
+    class DeadProvider:
+        async def complete(self, *, model, messages, tools=()):
+            raise AuthFailed("bad key")
+            yield  # pragma: no cover
+
+    session, dispatcher = _kernel_bits(tmp_path)
+    with pytest.raises(AuthFailed):
+        await dispatcher.dispatch_model(
+            provider=DeadProvider(), model=ModelId("fake"), messages=[], tools=()
+        )
+    session.close()

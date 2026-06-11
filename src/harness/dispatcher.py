@@ -1,10 +1,12 @@
 # src/harness/dispatcher.py
 """The single enforcement component. Nothing executes except through here."""
 
+import asyncio
 import time
 from dataclasses import dataclass
 
 from harness.blobs import INLINE_THRESHOLD, BlobRef
+from harness.errors import ProviderError
 from harness.events import (
     DispatchResolved,
     HookDecided,
@@ -13,6 +15,7 @@ from harness.events import (
     ModelCallStarted,
     PermissionRequested,
     PermissionResolved,
+    RetryAttempted,
     ToolCallCompleted,
     ToolCallProposed,
 )
@@ -52,11 +55,13 @@ class Dispatcher:
         registry: ToolRegistry,
         hooks: HookBus,
         resolver: Resolver,
+        retry_delays: tuple[float, ...] = (0.5, 2.0, 8.0),
     ) -> None:
         self.session = session
         self.registry = registry
         self.hooks = hooks
         self.resolver = resolver
+        self.retry_delays = retry_delays
 
     async def _run_chain(self, action) -> tuple[object | None, str | None]:
         """Run hooks + Ask resolution. Returns (effective_action, denial_reason)."""
@@ -139,6 +144,12 @@ class Dispatcher:
         messages: list[Message],
         tools: tuple[ToolSpec, ...],
     ) -> tuple[Message, Usage]:
+        """Dispatch a model call through hooks, permissions, and the provider.
+
+        Retries on retryable ProviderError up to len(retry_delays) times.
+        Each retry restarts the whole provider call from scratch; any partial
+        stream already yielded by a previous attempt is discarded.
+        """
         call = ProposedModelCall(call_id=new_call_id(), model=model)
         self.session.append(ModelCallProposed(call_id=call.call_id, model=model))
         effective, denial = await self._run_chain(call)
@@ -152,9 +163,23 @@ class Dispatcher:
         )
         self.session.append(ModelCallStarted(call_id=call.call_id, model=effective.model))
         started = time.monotonic()
-        message, usage, stop_reason = await collect(
-            provider.complete(model=effective.model, messages=messages, tools=tools)
-        )
+        attempt = 0
+        while True:
+            try:
+                message, usage, stop_reason = await collect(
+                    provider.complete(model=effective.model, messages=messages, tools=tools)
+                )
+                break
+            except ProviderError as exc:
+                if not exc.retryable or attempt >= len(self.retry_delays):
+                    raise
+                delay = self.retry_delays[attempt]
+                attempt += 1
+                self.session.append(RetryAttempted(
+                    call_id=call.call_id, attempt=attempt,
+                    reason=f"{type(exc).__name__}: {exc}",
+                ))
+                await asyncio.sleep(delay)
         self.session.append(
             ModelCallCompleted(
                 call_id=call.call_id, model=effective.model,
