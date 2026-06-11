@@ -126,3 +126,15 @@ def test_indexing_is_idempotent(tmp_path):
     index_envelopes(conn, envs)  # re-index same envelopes (rebuild semantics)
     assert conn.execute("SELECT COUNT(*) FROM model_calls").fetchone()[0] == 1
     assert conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0] == 1
+
+
+def test_retries_indexed_for_reliability_queries(tmp_path):
+    from harness.events import RetryAttempted
+    conn = _store(tmp_path)
+    index_envelopes(conn, [
+        _env(1, SessionStarted()),
+        _env(2, RetryAttempted(call_id=CallId("mc9"), attempt=1, reason="Overloaded: busy")),
+        _env(3, RetryAttempted(call_id=CallId("mc9"), attempt=2, reason="Overloaded: busy")),
+    ])
+    rows = conn.execute("SELECT call_id, attempt, reason FROM retries ORDER BY seq").fetchall()
+    assert rows == [("mc9", 1, "Overloaded: busy"), ("mc9", 2, "Overloaded: busy")]

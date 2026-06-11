@@ -21,6 +21,7 @@ from harness.events import (
     Envelope,
     HookDecided,
     ModelCallCompleted,
+    RetryAttempted,
     SessionEnded,
     SessionOutcome,
     SessionResumed,
@@ -88,6 +89,14 @@ CREATE TABLE IF NOT EXISTS outcomes (
     status TEXT NOT NULL,
     score REAL,
     note TEXT,
+    PRIMARY KEY (session_id, seq)
+);
+CREATE TABLE IF NOT EXISTS retries (
+    session_id TEXT NOT NULL,
+    call_id TEXT NOT NULL,
+    attempt INTEGER NOT NULL,
+    reason TEXT,
+    seq INTEGER NOT NULL,
     PRIMARY KEY (session_id, seq)
 );
 """
@@ -166,6 +175,11 @@ def index_envelopes(conn: sqlite3.Connection, envelopes: list[Envelope]) -> None
                     "UPDATE tool_calls SET asked = 1 WHERE session_id = ? AND call_id = ?",
                     (sid, ev.call_id),
                 )
+        elif isinstance(ev, RetryAttempted):
+            conn.execute(
+                "INSERT OR REPLACE INTO retries VALUES (?,?,?,?,?)",
+                (sid, ev.call_id, ev.attempt, ev.reason, env.seq),
+            )
         elif isinstance(ev, CustomEvent) and ev.namespace == "harness" and ev.name == "tag":
             tag = str(ev.data.get("tag", ""))
             if tag:
