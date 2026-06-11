@@ -332,3 +332,100 @@ def test_render_strips_ansi_from_names(tmp_path):
     })
     assert "\x1b" not in text
     assert "evil-model" in text and "red-tool" in text
+
+
+# --- Task 8: origin column + per-server stats ---
+
+def test_tool_origin_derived_from_mcp_prefix(tmp_path):
+    from harness.telemetry import rebuild_index
+    _write_log(tmp_path, "s_mcp", [
+        Envelope(session_id=SessionId("s_mcp"), seq=1, ts=1.0, event=SessionStarted()),
+        Envelope(session_id=SessionId("s_mcp"), seq=2, ts=2.0,
+                 event=ToolCallProposed(call_id=CallId("c1"), tool=ToolName("mcp__github__search"), args={})),
+        Envelope(session_id=SessionId("s_mcp"), seq=3, ts=3.0,
+                 event=ToolCallProposed(call_id=CallId("c2"), tool=ToolName("echo"), args={})),
+    ])
+    conn, _ = rebuild_index(tmp_path)
+    by_tool = dict(conn.execute("SELECT tool, origin FROM tool_calls").fetchall())
+    assert by_tool["mcp__github__search"] == "github"
+    assert by_tool["echo"] is None
+
+
+def test_origin_handles_underscored_server_and_tool_names(tmp_path):
+    from harness.telemetry import rebuild_index
+    _write_log(tmp_path, "s_us", [
+        Envelope(session_id=SessionId("s_us"), seq=1, ts=1.0, event=SessionStarted()),
+        Envelope(session_id=SessionId("s_us"), seq=2, ts=2.0,
+                 event=ToolCallProposed(call_id=CallId("c1"), tool=ToolName("mcp__my_server__do_thing"), args={})),
+    ])
+    conn, _ = rebuild_index(tmp_path)
+    by_tool = dict(conn.execute("SELECT tool, origin FROM tool_calls").fetchall())
+    assert by_tool["mcp__my_server__do_thing"] == "my_server"
+
+
+def test_origin_edge_cases(tmp_path):
+    from harness.telemetry import rebuild_index
+    _write_log(tmp_path, "s_edge", [
+        Envelope(session_id=SessionId("s_edge"), seq=1, ts=1.0, event=SessionStarted()),
+        Envelope(session_id=SessionId("s_edge"), seq=2, ts=2.0,
+                 event=ToolCallProposed(call_id=CallId("c1"), tool=ToolName("mcp__"), args={})),
+        Envelope(session_id=SessionId("s_edge"), seq=3, ts=3.0,
+                 event=ToolCallProposed(call_id=CallId("c2"), tool=ToolName("mcp__noseparator"), args={})),
+    ])
+    conn, _ = rebuild_index(tmp_path)
+    by_tool = dict(conn.execute("SELECT tool, origin FROM tool_calls").fetchall())
+    assert by_tool["mcp__"] is None
+    assert by_tool["mcp__noseparator"] is None
+
+
+def test_stats_render_shows_mcp_servers_section(tmp_path):
+    from harness.telemetry import rebuild_index, stats_summary, render_stats
+    _write_log(tmp_path, "s_srv", [
+        Envelope(session_id=SessionId("s_srv"), seq=1, ts=1.0, event=SessionStarted()),
+        Envelope(session_id=SessionId("s_srv"), seq=2, ts=2.0,
+                 event=ToolCallProposed(call_id=CallId("c1"), tool=ToolName("mcp__github__search"), args={})),
+        Envelope(session_id=SessionId("s_srv"), seq=3, ts=3.0,
+                 event=ToolCallCompleted(call_id=CallId("c1"), result_text="ok", is_error=False, duration_ms=10)),
+    ])
+    conn, _ = rebuild_index(tmp_path)
+    summary = stats_summary(conn)
+    rendered = render_stats(summary)
+    assert "mcp servers" in rendered
+    assert "github" in rendered
+
+
+def test_stats_render_omits_mcp_section_when_no_mcp_tools(tmp_path):
+    from harness.telemetry import rebuild_index, stats_summary, render_stats
+    _write_log(tmp_path, "s_nomcp", [
+        Envelope(session_id=SessionId("s_nomcp"), seq=1, ts=1.0, event=SessionStarted()),
+        Envelope(session_id=SessionId("s_nomcp"), seq=2, ts=2.0,
+                 event=ToolCallProposed(call_id=CallId("c1"), tool=ToolName("bash"), args={})),
+    ])
+    conn, _ = rebuild_index(tmp_path)
+    summary = stats_summary(conn)
+    rendered = render_stats(summary)
+    assert "mcp servers" not in rendered
+
+
+def test_stats_summary_mcp_servers_respects_tag_filter(tmp_path):
+    from harness.telemetry import rebuild_index, stats_summary
+    # session "s_a" tagged "exp:y" has mcp__alpha__ tool
+    # session "s_b" untagged has mcp__beta__ tool
+    # tag filter should return only alpha
+    _write_log(tmp_path, "s_a", [
+        Envelope(session_id=SessionId("s_a"), seq=1, ts=1.0, event=SessionStarted()),
+        Envelope(session_id=SessionId("s_a"), seq=2, ts=1.0,
+                 event=CustomEvent(namespace="harness", name="tag", data={"tag": "exp:y"})),
+        Envelope(session_id=SessionId("s_a"), seq=3, ts=2.0,
+                 event=ToolCallProposed(call_id=CallId("c1"), tool=ToolName("mcp__alpha__op"), args={})),
+    ])
+    _write_log(tmp_path, "s_b", [
+        Envelope(session_id=SessionId("s_b"), seq=1, ts=1.0, event=SessionStarted()),
+        Envelope(session_id=SessionId("s_b"), seq=2, ts=2.0,
+                 event=ToolCallProposed(call_id=CallId("c2"), tool=ToolName("mcp__beta__op"), args={})),
+    ])
+    conn, _ = rebuild_index(tmp_path)
+    tagged = stats_summary(conn, tag="exp:y")
+    server_names = [row[0] for row in tagged["mcp_servers"]]
+    assert server_names == ["alpha"]
+    assert "beta" not in server_names

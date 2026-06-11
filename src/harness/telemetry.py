@@ -63,6 +63,7 @@ CREATE TABLE IF NOT EXISTS tool_calls (
     session_id TEXT NOT NULL,
     call_id TEXT NOT NULL,
     tool TEXT,
+    origin TEXT,
     is_error INTEGER,
     blocked INTEGER NOT NULL DEFAULT 0,
     asked INTEGER NOT NULL DEFAULT 0,
@@ -109,6 +110,16 @@ def open_store(path: Path) -> sqlite3.Connection:
     return conn
 
 
+def _origin(tool: str) -> str | None:
+    """mcp__<server>__<tool> -> <server>; None for builtin/native tools.
+    Server names are validated to never contain '__', so the first split wins."""
+    if not tool.startswith("mcp__"):
+        return None
+    rest = tool[len("mcp__"):]
+    server, sep, _ = rest.partition("__")
+    return server if sep else None
+
+
 def index_envelopes(conn: sqlite3.Connection, envelopes: list[Envelope]) -> None:
     """Fold envelopes into rows. INSERT OR REPLACE / OR IGNORE keys make
     re-indexing the same log idempotent (rebuild semantics)."""
@@ -146,8 +157,8 @@ def index_envelopes(conn: sqlite3.Connection, envelopes: list[Envelope]) -> None
             )
         elif isinstance(ev, ToolCallProposed):
             conn.execute(
-                "INSERT OR IGNORE INTO tool_calls (session_id, call_id, tool, ts) VALUES (?,?,?,?)",
-                (sid, ev.call_id, ev.tool, env.ts),
+                "INSERT OR IGNORE INTO tool_calls (session_id, call_id, tool, origin, ts) VALUES (?,?,?,?,?)",
+                (sid, ev.call_id, ev.tool, _origin(str(ev.tool)), env.ts),
             )
         elif isinstance(ev, ToolCallCompleted):
             conn.execute(
@@ -302,7 +313,13 @@ def stats_summary(conn: sqlite3.Connection, tag: str | None = None) -> dict:
     ).fetchall()
     sessions = conn.execute(f"SELECT COUNT(*) FROM sessions {where}", params).fetchone()[0]
     retries = conn.execute(f"SELECT COUNT(*) FROM retries {where}", params).fetchone()[0]
-    return {"sessions": sessions, "retries": retries, "models": models, "tools": tools}
+    mcp_and = (" AND " + where[len("WHERE "):]) if where else ""
+    mcp_servers = conn.execute(
+        f"SELECT origin, COUNT(*), COALESCE(SUM(is_error),0), COALESCE(SUM(blocked),0)"
+        f" FROM tool_calls WHERE origin IS NOT NULL{mcp_and} GROUP BY origin ORDER BY origin", params
+    ).fetchall()
+    return {"sessions": sessions, "retries": retries, "models": models, "tools": tools,
+            "mcp_servers": mcp_servers}
 
 
 def _money(cost) -> str:
@@ -335,6 +352,11 @@ def render_stats(summary: dict) -> str:
         lines.append(
             f"  {_safe(tool)}: calls={calls} errors={errors} blocked={blocked} asked={asked}"
         )
+    if summary.get("mcp_servers"):
+        lines.append("")
+        lines.append("mcp servers:")
+        for origin, calls, errors, blocked in summary["mcp_servers"]:
+            lines.append(f"  {_safe(origin)}: {calls} calls, {errors} errors, {blocked} blocked")
     return "\n".join(lines)
 
 
