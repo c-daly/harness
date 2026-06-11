@@ -14,12 +14,28 @@ from harness.interaction import PermissionRequest
 from harness.permissions import PermissionEngine
 
 _MENTION_RE = re.compile(r"@(\S+)")
+_TRAILING_PUNCT = ".,!?;:'\")}]"
 
 Answer = str
 
 
+def _mention_paths(text: str) -> list[str]:
+    """@-tokens that look like paths: must start with /, ~/, ./ or ../
+    (bare @words - emails, handles - are plain text), trailing sentence
+    punctuation stripped."""
+    out = []
+    for raw in _MENTION_RE.findall(text):
+        candidate = raw.rstrip(_TRAILING_PUNCT)
+        if candidate.startswith(("/", "~/", "./", "../")):
+            out.append(candidate)
+    return out
+
+
 class HistoryRing:
-    """Input history with shell-like up/down semantics."""
+    """Input history with shell-like up/down semantics.
+
+    Known v1 gap: prev() does not stash the unsaved draft - walking up from a
+    half-typed line and back down loses it."""
 
     def __init__(self) -> None:
         self._items: list[str] = []
@@ -70,12 +86,17 @@ def expand_file_mentions(
     """Expand @<path> mentions into fenced blocks appended to the prompt.
 
     Returns (expanded_text, attached_paths, errors). Any error means the
-    caller should NOT send the prompt (errors name the offending path)."""
+    caller should NOT send the prompt (errors name the offending path). Bare
+    @words are plain text by design; binary files attach as replacement-
+    character text (the size cap bounds it)."""
     attached: list[str] = []
     errors: list[str] = []
     blocks: list[str] = []
-    for raw in _MENTION_RE.findall(text):
+    for raw in _mention_paths(text):
         path = Path(raw).expanduser()
+        if path.is_dir():
+            errors.append(f"@{raw}: is a directory, not a file")
+            continue
         if not path.is_file():
             errors.append(f"@{raw}: no such file")
             continue
@@ -109,6 +130,7 @@ class TuiResolver:
     ask: Callable[[PermissionRequest], Awaitable[Answer]]
     engine: PermissionEngine | None = None
     name: str = "tui"
+    #: Audit trail for tests/UI - unbounded by design (one per permission prompt).
     answers_seen: list[Answer] = field(default_factory=list)
 
     async def resolve(self, request: PermissionRequest) -> bool:

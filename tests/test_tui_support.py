@@ -133,3 +133,21 @@ async def test_tui_resolver_always_without_engine_is_plain_allow():
         reason="ask",
     )
     assert await resolver.resolve(req) is True
+
+
+def test_expand_file_mentions_ignores_emails_and_handles():
+    text, attached, errors = expand_file_mentions("email bob@example.com and ping @alice")
+    assert (text, attached, errors) == ("email bob@example.com and ping @alice", [], [])
+
+
+def test_expand_file_mentions_strips_trailing_punctuation(tmp_path):
+    f = tmp_path / "notes.txt"
+    f.write_text("content")
+    text, attached, errors = expand_file_mentions(f"see @{f}.", max_bytes=1024)
+    assert errors == []
+    assert attached == [str(f)]
+
+
+def test_expand_file_mentions_directory_is_named_as_such(tmp_path):
+    _, _, errors = expand_file_mentions(f"look at @{tmp_path}")
+    assert any("is a directory" in e for e in errors)
