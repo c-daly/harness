@@ -2,13 +2,14 @@
 
 import asyncio
 
-from textual.widgets import Input, RichLog
+from textual.widgets import Input, RichLog, Static
 
 from harness.cli import build_kernel
 from harness.log import read_session
 from harness.permissions import PermissionEngine, PermissionRule, RuleSet
 from harness.provider import (
     EchoProvider,
+    FakeProvider,
     StreamStop,
     TextDelta,
     Usage,
@@ -60,10 +61,10 @@ async def test_session_started_exactly_once_and_teardown(tmp_path):
 
 
 class SlowProvider:
-    """Echo with a 0.5s think time -- long enough to probe concurrency."""
+    """Echo with a 1.5s think time -- long enough to probe concurrency."""
 
     async def complete(self, *, model, messages, tools):
-        await asyncio.sleep(0.5)
+        await asyncio.sleep(1.5)
         yield TextDelta(text="slow done")
         yield UsageReport(usage=Usage())
         yield StreamStop(stop_reason="end_turn")
@@ -80,7 +81,7 @@ async def test_second_submit_while_turn_running_is_rejected(tmp_path):
         await pilot.pause(0.1)
         lines = "\n".join(str(line) for line in app.query_one(RichLog).lines)
         assert "already running" in lines
-        await pilot.pause(0.8)                  # first turn finishes
+        await pilot.pause(2.0)                  # first turn finishes
         lines = "\n".join(str(line) for line in app.query_one(RichLog).lines)
         assert "slow done" in lines
     # exactly ONE user_message in the log
@@ -107,3 +108,54 @@ async def test_turn_failure_renders_and_loop_survives(tmp_path):
         await pilot.pause(0.3)
         lines = "\n".join(str(line) for line in app.query_one(RichLog).lines)
         assert lines.count("turn failed") == 2
+
+
+async def test_streaming_tokens_appear_in_live_tail_then_finalize(tmp_path):
+    provider = FakeProvider([[
+        TextDelta(text="str"), TextDelta(text="eam"),
+        UsageReport(usage=Usage()), StreamStop(stop_reason="end_turn"),
+    ]])
+    app = make_app(tmp_path, provider=provider, model=ModelId("fake:echo"))
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        await pilot.click("#prompt")
+        await pilot.press(*"go", "enter")
+        await pilot.pause(0.3)
+        lines = "\n".join(str(line) for line in app.query_one(RichLog).lines)
+        assert "stream" in lines                                   # finalized
+        assert app.query_one("#live", Static).content == ""       # tail cleared
+
+
+class _FlakyStreamProvider:
+    """Attempt 1 yields partial then raises Overloaded; attempt 2 yields the full reply."""
+
+    def __init__(self):
+        self.attempts = 0
+
+    async def complete(self, *, model, messages, tools=()):
+        from harness.errors import Overloaded
+
+        self.attempts += 1
+        if self.attempts < 2:
+            yield TextDelta(text="par")
+            raise Overloaded("busy")
+        for chunk in [
+            TextDelta(text="full"), TextDelta(text=" reply"),
+            UsageReport(usage=Usage()), StreamStop(stop_reason="end_turn"),
+        ]:
+            yield chunk
+
+
+async def test_retry_resets_live_tail_no_duplication(tmp_path):
+    provider = _FlakyStreamProvider()
+    app = make_app(tmp_path, provider=provider, model=ModelId("fake:echo"))
+    app.kernel.loop.dispatcher.retry_delays = (0.0,)
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        await pilot.click("#prompt")
+        await pilot.press(*"go", "enter")
+        await pilot.pause(0.4)
+        lines = "\n".join(str(line) for line in app.query_one(RichLog).lines)
+        assert "full reply" in lines
+        assert "parfull" not in lines          # the partial didnt bleed into the final
+        assert "retrying" in lines             # the reset was announced

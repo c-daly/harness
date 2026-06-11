@@ -14,8 +14,9 @@ from textual.containers import Vertical
 from textual.widgets import Input, RichLog, Static
 
 from harness.cli import Kernel
-from harness.events import CustomEvent, ToolCallCompleted, ToolCallProposed
+from harness.events import CustomEvent, RetryAttempted, ToolCallCompleted, ToolCallProposed
 from harness.messages import Role
+from harness.provider import TextDelta, ThinkingDelta
 from harness.tui_support import HistoryRing, expand_file_mentions, parse_slash_command
 
 _SNIPPET_CAP = 200
@@ -74,6 +75,24 @@ class HarnessApp(App[None]):
         line.append(_plain(text))
         self.query_one("#transcript", RichLog).write(line)
 
+    def _clear_live(self) -> None:
+        had_content = bool(self._stream_buffer)
+        self._stream_buffer = ""
+        if had_content:
+            self.query_one("#live", Static).update("")
+
+    def _on_chunk(self, chunk) -> None:
+        match chunk:
+            case TextDelta(text=text):
+                self._stream_buffer += text
+                self.query_one("#live", Static).update(_plain(self._stream_buffer))
+            case ThinkingDelta():
+                self.query_one("#live", Static).update(
+                    _plain(self._stream_buffer + " (thinking…)")
+                )
+            case _:
+                pass
+
     async def on_mount(self) -> None:
         self.query_one("#prompt", HistoryInput).focus()
         self.run_worker(self._session_driver(), group="driver", exit_on_error=False)
@@ -87,6 +106,7 @@ class HarnessApp(App[None]):
             await kernel.loop.start()
         else:
             self._render_resumed_history()
+        self.kernel.loop.on_chunk = self._on_chunk
         for tag in kernel.tags:
             kernel.session.append(
                 CustomEvent(namespace="harness", name="tag", data={"tag": tag})
@@ -114,10 +134,13 @@ class HarnessApp(App[None]):
                 self.say("⚙ ", str(tool))
             case ToolCallCompleted(result_text=text, is_error=is_error):
                 snippet = (text or "(blob)")[:_SNIPPET_CAP]
-                self.say("\u2717 " if is_error else "\u2713 ", snippet)
+                self.say("✗ " if is_error else "✓ ", snippet)
             case CustomEvent(namespace="mcp", name=name, data=data):
                 server = data.get("server", "")
                 self.say("mcp ", f"{name}: {server}")
+            case RetryAttempted():
+                self._clear_live()
+                self.say("! ", "retrying…")
             case _:
                 pass
 
@@ -152,14 +175,18 @@ class HarnessApp(App[None]):
         )
 
     async def _run_turn(self, prompt: str) -> None:
+        self._clear_live()
         try:
             reply = await self.kernel.loop.run_turn(prompt)
         except asyncio.CancelledError:
+            self._clear_live()
             raise                                   # Esc repair lands in Task 7
         except Exception as exc:
+            self._clear_live()
             self.kernel.loop.repair_turn()      # orphaned user msg is benign;
             self.say("! ", f"turn failed: {exc}")  # unpaired tool calls are not
             return
+        self._clear_live()
         self.say("", reply)
 
     async def _run_command(self, command) -> None:  # Task 8 fills this in
