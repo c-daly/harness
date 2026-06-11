@@ -11,10 +11,13 @@ from textual import on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
+from textual.screen import ModalScreen
 from textual.widgets import Input, RichLog, Static
 
 from harness.cli import Kernel
 from harness.events import CustomEvent, RetryAttempted, ToolCallCompleted, ToolCallProposed
+from harness.hooks import ProposedToolCall
+from harness.interaction import PermissionRequest
 from harness.messages import Role
 from harness.provider import TextDelta, ThinkingDelta
 from harness.tui_support import HistoryRing, expand_file_mentions, parse_slash_command
@@ -26,6 +29,45 @@ def _plain(text: str) -> Text:
     """Untrusted strings render as plain Text -- no markup, no
     rendering-unsafe control chars (newline/tab kept)."""
     return Text("".join(ch for ch in text if ch in "\n\t" or ord(ch) >= 32))
+
+
+class AppBoundAsk:
+    """Late-binding ask: built before the app exists, bound at app start."""
+
+    def __init__(self) -> None:
+        self.app: "HarnessApp | None" = None
+
+    async def __call__(self, request: PermissionRequest) -> str:
+        if self.app is None:
+            return "deny"  # fail closed before the app is up
+        return await self.app.push_screen_wait(PermissionScreen(request))
+
+
+class PermissionScreen(ModalScreen[str]):
+    BINDINGS = [
+        Binding("y", "answer('allow')", "allow once"),
+        Binding("a", "answer('always')", "always"),
+        Binding("n", "answer('deny')", "deny"),
+        Binding("escape", "answer('deny')", show=False),
+    ]
+
+    def __init__(self, request: PermissionRequest) -> None:
+        super().__init__()
+        self.request = request
+
+    def compose(self) -> ComposeResult:
+        action = self.request.action
+        what = (
+            f"tool {action.tool}" if isinstance(action, ProposedToolCall)
+            else f"model {action.model}"
+        )
+        with Vertical(id="permission-box"):
+            yield Static(_plain(f"Permission: {what}"))
+            yield Static(_plain(self.request.reason))
+            yield Static("[y] allow once   [a] always   [n] deny")
+
+    def action_answer(self, result: str) -> None:
+        self.dismiss(result)
 
 
 class HistoryInput(Input):
@@ -55,13 +97,17 @@ class HarnessApp(App[None]):
     """
     BINDINGS = [Binding("escape", "interrupt", "Interrupt", priority=True)]
 
-    def __init__(self, kernel: Kernel, *, catalog_path=None) -> None:
+    def __init__(
+        self, kernel: Kernel, *, catalog_path=None, ask: "AppBoundAsk | None" = None
+    ) -> None:
         super().__init__()
         self.kernel = kernel
         self.catalog_path = catalog_path
         self._turn_worker = None
         self._ended = False
         self._stream_buffer = ""
+        if ask is not None:
+            ask.app = self
 
     def compose(self) -> ComposeResult:
         with Vertical():
@@ -86,7 +132,7 @@ class HarnessApp(App[None]):
                 self.query_one("#live", Static).update(_plain(self._stream_buffer))
             case ThinkingDelta():
                 self.query_one("#live", Static).update(
-                    _plain(self._stream_buffer + " (thinking…)")
+                    _plain(self._stream_buffer + " (thinking\u2026)")
                 )
             case _:
                 pass
@@ -129,16 +175,16 @@ class HarnessApp(App[None]):
     def _render_event(self, event) -> None:
         match event:
             case ToolCallProposed(tool=tool):
-                self.say("⚙ ", str(tool))
+                self.say("\u2699 ", str(tool))
             case ToolCallCompleted(result_text=text, is_error=is_error):
                 snippet = (text or "(blob)")[:_SNIPPET_CAP]
-                self.say("✗ " if is_error else "✓ ", snippet)
+                self.say("\u2717 " if is_error else "\u2713 ", snippet)
             case CustomEvent(namespace="mcp", name=name, data=data):
                 server = data.get("server", "")
                 self.say("mcp ", f"{name}: {server}")
             case RetryAttempted():
                 self._clear_live()
-                self.say("! ", "retrying…")
+                self.say("! ", "retrying\u2026")
             case _:
                 pass
 
@@ -209,8 +255,10 @@ class HarnessApp(App[None]):
         await self._finish()
 
 
-async def run_tui(kernel: Kernel, *, catalog_path=None) -> None:
-    app = HarnessApp(kernel, catalog_path=catalog_path)
+async def run_tui(
+    kernel: Kernel, *, catalog_path=None, ask: "AppBoundAsk | None" = None
+) -> None:
+    app = HarnessApp(kernel, catalog_path=catalog_path, ask=ask)
     try:
         await app.run_async()
     finally:

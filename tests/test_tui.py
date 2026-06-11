@@ -15,19 +15,50 @@ from harness.provider import (
     ThinkingDelta,
     Usage,
     UsageReport,
+    tool_call_turn,
+    text_turn,
 )
-from harness.tui import HarnessApp
-from harness.types import ModelId
+from harness.tools import ToolSpec
+from harness.tui import AppBoundAsk, HarnessApp, PermissionScreen
+from harness.tui_support import TuiResolver
+from harness.types import ModelId, ToolName
+
+
+class EchoTool:
+    spec = ToolSpec(
+        name=ToolName("echo_tool"),
+        description="Echo the input back",
+        parameters={"type": "object", "properties": {"text": {"type": "string"}}},
+    )
+
+    async def __call__(self, args: dict) -> str:
+        return args["text"]
 
 
 def make_app(tmp_path, **kernel_kwargs) -> HarnessApp:
-    kernel = build_kernel(
+    """Build a HarnessApp for tests.
+
+    Special kwargs (consumed here, not forwarded to build_kernel):
+      engine: PermissionEngine -- when given, wires up AppBoundAsk + TuiResolver.
+    """
+    engine = kernel_kwargs.pop("engine", None)
+    ask: AppBoundAsk | None = None
+    resolver = None
+    if engine is not None:
+        ask = AppBoundAsk()
+        resolver = TuiResolver(ask=ask, engine=engine)
+    build_kwargs: dict = dict(
         provider=kernel_kwargs.pop("provider", EchoProvider()),
         base_dir=tmp_path,
         model=kernel_kwargs.pop("model", ModelId("echo")),
-        **kernel_kwargs,
     )
-    return HarnessApp(kernel)
+    if resolver is not None:
+        build_kwargs["resolver"] = resolver
+    if engine is not None and "permissions" not in kernel_kwargs:
+        build_kwargs["permissions"] = engine
+    build_kwargs.update(kernel_kwargs)
+    kernel = build_kernel(**build_kwargs)
+    return HarnessApp(kernel, ask=ask)
 
 
 async def test_submit_renders_user_line_and_reply(tmp_path):
@@ -185,3 +216,90 @@ async def test_thinking_only_stream_clears_live_tail(tmp_path):
         await pilot.press(*"two", "enter")     # thinking-only turn
         await pilot.pause(0.3)
         assert str(app.query_one("#live", Static).content) == ""   # not stuck
+
+
+async def test_permission_modal_allow_completes_turn(tmp_path):
+    engine = PermissionEngine([
+        RuleSet(
+            rules=[PermissionRule(action="ask", tool="echo_tool")],
+            default="allow",
+        )
+    ])
+    provider = FakeProvider([
+        tool_call_turn("calling", ToolName("echo_tool"), {"text": "hi"}),
+        text_turn("done"),
+    ])
+    app = make_app(tmp_path, provider=provider, model=ModelId("fake:echo"), engine=engine)
+    app.kernel.registry.register(EchoTool())
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        await pilot.click("#prompt")
+        await pilot.press(*"run it", "enter")
+        await pilot.pause(0.3)                       # modal up; dispatch parked
+        assert isinstance(app.screen, PermissionScreen)
+        await pilot.press("y")
+        await pilot.pause(0.5)
+        lines = "\n".join(str(line) for line in app.query_one(RichLog).lines)
+        assert "done" in lines
+    app.kernel.session.close()
+    events = [e.event.type for e in read_session(tmp_path, app.kernel.session.id)]
+    assert "permission_requested" in events
+    assert "permission_resolved" in events
+
+
+async def test_permission_modal_deny_blocks_tool(tmp_path):
+    engine = PermissionEngine([
+        RuleSet(
+            rules=[PermissionRule(action="ask", tool="echo_tool")],
+            default="allow",
+        )
+    ])
+    provider = FakeProvider([
+        tool_call_turn("calling", ToolName("echo_tool"), {"text": "hi"}),
+        text_turn("done"),
+    ])
+    app = make_app(tmp_path, provider=provider, model=ModelId("fake:echo"), engine=engine)
+    app.kernel.registry.register(EchoTool())
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        await pilot.click("#prompt")
+        await pilot.press(*"run it", "enter")
+        await pilot.pause(0.3)                       # modal up
+        assert isinstance(app.screen, PermissionScreen)
+        await pilot.press("n")
+        await pilot.pause(0.5)
+        lines = "\n".join(str(line) for line in app.query_one(RichLog).lines)
+        # the tool was blocked; either "denied" or error mark (checkmark cross) appears
+        assert "denied" in lines or "\u2717" in lines
+
+
+async def test_permission_modal_always_persists_grant(tmp_path):
+    grants_path = tmp_path / "grants.toml"
+    engine = PermissionEngine(
+        [
+            RuleSet(
+                rules=[PermissionRule(action="ask", tool="echo_tool")],
+                default="allow",
+            )
+        ],
+        grants_path=grants_path,
+    )
+    provider = FakeProvider([
+        tool_call_turn("calling", ToolName("echo_tool"), {"text": "hi"}),
+        text_turn("done"),
+    ])
+    app = make_app(tmp_path, provider=provider, model=ModelId("fake:echo"), engine=engine)
+    app.kernel.registry.register(EchoTool())
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        await pilot.click("#prompt")
+        await pilot.press(*"run it", "enter")
+        await pilot.pause(0.3)                       # modal up
+        assert isinstance(app.screen, PermissionScreen)
+        await pilot.press("a")
+        await pilot.pause(0.5)
+        lines = "\n".join(str(line) for line in app.query_one(RichLog).lines)
+        assert "done" in lines
+    # grant was persisted
+    assert grants_path.exists()
+    assert "echo_tool" in grants_path.read_text()
