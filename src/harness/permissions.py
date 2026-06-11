@@ -11,6 +11,12 @@ session grant would otherwise shadow) wins before allow/ask is considered.
 Otherwise first match in layer order (session grants, then provided layers)
 wins; otherwise the first layer declaring a default; otherwise "ask".
 Model calls are rule-addressable as pseudo-tool "model:<route>".
+
+Rule-author notes: patterns are fnmatch globs — CASE-SENSITIVE on Linux
+("bash" will not match "BASH"); "[...]" is a character CLASS, not a literal
+bracket (write "model:expensive/*", never "model:[expensive]*"); arg values
+are coerced via str() before matching, so dict/list args match against their
+Python repr.
 """
 
 import fnmatch
@@ -29,6 +35,19 @@ from harness.hooks import (
 )
 
 _ACTIONS = ("allow", "deny", "ask")
+
+
+def _toml_str(value: str) -> str:
+    """A TOML basic string literal — naive interpolation would let a quote or
+    newline in a tool name corrupt the grants file unparseably."""
+    escaped = (
+        value.replace('\\', '\\\\')
+        .replace('"', '\\"')
+        .replace('\n', '\\n')
+        .replace('\r', '\\r')
+        .replace('\t', '\\t')
+    )
+    return f'"{escaped}"'
 
 
 @dataclass(frozen=True)
@@ -54,6 +73,10 @@ class PermissionRule:
 class RuleSet:
     rules: list[PermissionRule] = field(default_factory=list)
     default: str | None = None  # "allow" | "deny" | "ask" | None (no opinion)
+
+    def __post_init__(self) -> None:
+        if self.default is not None and self.default not in _ACTIONS:
+            raise ValueError(f"default must be one of {_ACTIONS} or absent, not {self.default!r}")
 
     @classmethod
     def load(cls, path: Path) -> "RuleSet":
@@ -124,9 +147,9 @@ class PermissionEngine:
 
     def _append_grant(self, rule: PermissionRule) -> None:
         self._grants_path.parent.mkdir(parents=True, exist_ok=True)
-        lines = ["", "[[rules]]", 'action = "allow"', f'tool = "{rule.tool}"']
+        lines = ["", "[[rules]]", 'action = "allow"', f"tool = {_toml_str(rule.tool)}"]
         if rule.match:
-            pairs = ", ".join(f'{k} = "{v}"' for k, v in rule.match.items())
+            pairs = ", ".join(f"{k} = {_toml_str(v)}" for k, v in rule.match.items())
             lines.append(f"match = {{ {pairs} }}")
         with open(self._grants_path, "a", encoding="utf-8") as fh:
             fh.write("\n".join(lines) + "\n")

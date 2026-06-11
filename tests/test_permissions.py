@@ -84,3 +84,19 @@ def test_invalid_action_rejected():
     import pytest
     with pytest.raises(ValueError, match="action"):
         PermissionRule(action="maybe", tool="*")
+
+
+def test_grant_persistence_survives_hostile_strings(tmp_path):
+    grants = tmp_path / "grants.toml"
+    engine = PermissionEngine([], grants_path=grants)
+    hostile = 'we"ird\ntool'
+    engine.grant(hostile, {"arg": 'va"lue'}, persist=True)
+    reloaded = RuleSet.load(grants)  # must parse, not TOMLDecodeError
+    assert reloaded.rules[0].tool == hostile
+    assert reloaded.rules[0].match == {"arg": 'va"lue'}
+
+
+def test_ruleset_rejects_invalid_default():
+    import pytest
+    with pytest.raises(ValueError, match="default"):
+        RuleSet(default="maybe")
