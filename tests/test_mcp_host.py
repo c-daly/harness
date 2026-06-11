@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 import anyio
 import pytest
 from mcp import types
+from mcp.shared.exceptions import McpError
 from mcp.shared.memory import create_client_server_memory_streams
 
 from harness.hooks import HookBus, Inject, LifecyclePoint
@@ -379,7 +380,7 @@ async def test_restart_on_failure_respawns_stdio_server():
     conn = ServerConnection(spec, on_event=lambda name, data: events.append((name, data)))
     await conn.start()
     try:
-        with pytest.raises(Exception):
+        with pytest.raises(McpError):
             await conn.call_tool("die", {})  # kills the child mid-call
         result = await conn.call_tool("add", {"a": 1, "b": 1})  # triggers respawn
         texts = [c.text for c in result.content if isinstance(c, types.TextContent)]
@@ -398,10 +399,33 @@ async def test_restart_never_policy_stays_down():
     conn = ServerConnection(spec)
     await conn.start()
     try:
-        with pytest.raises(Exception):
+        with pytest.raises(McpError):
             await conn.call_tool("die", {})
         with pytest.raises(McpServerError) as exc:
             await conn.call_tool("add", {"a": 1, "b": 1})
         assert "unavailable" in str(exc.value)
+    finally:
+        await conn.stop()
+
+
+async def test_restart_budget_resets_on_success():
+    events: list[tuple[str, dict]] = []
+    spec = McpServerSpec(
+        name="fixture", transport="stdio",
+        command=sys.executable, args=(str(FIXTURE_SERVER_PATH),),
+        restart="on_failure", tool_timeout_s=15.0,
+    )
+    conn = ServerConnection(spec, on_event=lambda name, data: events.append((name, data)))
+    await conn.start()
+    try:
+        for expected_attempt in (1, 1, 1):  # each episode resets: attempt is always 1
+            with pytest.raises(McpError):
+                await conn.call_tool("die", {})
+            result = await conn.call_tool("add", {"a": 1, "b": 1})
+            texts = [c.text for c in result.content if isinstance(c, types.TextContent)]
+            assert texts == ["2"]
+            assert events[-1][0] == "server_restarted"
+            assert events[-1][1]["attempt"] == expected_attempt
+        assert conn._restarts == 0
     finally:
         await conn.stop()

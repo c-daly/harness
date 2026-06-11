@@ -25,7 +25,7 @@ from harness.session import Session
 from harness.tools import ToolRegistry, ToolSpec
 from harness.types import ToolName
 
-_MAX_RESTARTS = 3
+_MAX_RESTARTS = 3  # consecutive failed respawns before a connection is declared dead
 _STOP_TIMEOUT_S = 10.0
 _START_TIMEOUT_S = 30.0
 _MAX_REASON_LEN = 400
@@ -182,6 +182,9 @@ class ServerConnection:
                 "server_restarted",
                 {"server": self.spec.name, "attempt": self._restarts, "reason": reason},
             )
+            self._restarts = 0  # success closes the failure episode: the budget is
+            # 3 CONSECUTIVE failed respawns, not 3 per lifetime (a flaky server that
+            # recovers each time must not go permanently dead hours later)
 
     async def stop(self) -> None:
         await self._teardown()
