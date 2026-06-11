@@ -105,6 +105,7 @@ def _messages_to_openai(messages: Sequence[Message]) -> list[dict[str, Any]]:
                     out.append({
                         "role": "tool",
                         "tool_call_id": str(block.call_id),
+                        # TODO Phase 5: dereference the blob (BlobStore access decision) instead of this placeholder
                         "content": block.text or "(result in blob sidecar)",
                     })
     return out
@@ -142,6 +143,18 @@ def _normalize_chunk(chunk: Any) -> list[Chunk]:
     reasoning = getattr(delta, "reasoning_content", None)
     if reasoning:
         out.append(ThinkingDelta(text=reasoning))
+    # Anthropic-via-litellm may surface structured thinking blocks (carrying the
+    # signature required for round-trip) instead of / alongside reasoning_content.
+    # UNVERIFIED against real streams until Anthropic conformance fixtures exist;
+    # this defensive read captures a signature wherever it appears and avoids
+    # double-counting text mirrored in both fields.
+    for tb in getattr(delta, "thinking_blocks", None) or ():
+        sig = getattr(tb, "signature", None)
+        text = getattr(tb, "thinking", None)
+        if sig and not text:
+            out.append(ThinkingDelta(text="", signature=sig))
+        elif text and not reasoning:
+            out.append(ThinkingDelta(text=text, signature=sig))
     if getattr(delta, "content", None):
         out.append(TextDelta(text=delta.content))
     for tc in getattr(delta, "tool_calls", None) or ():

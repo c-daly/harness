@@ -5,7 +5,7 @@ import pytest
 
 from harness.errors import AuthFailed, RateLimited
 from harness.messages import Message, Role, TextBlock, ThinkingBlock, ToolCallBlock
-from harness.provider import StreamStop, TextDelta, ToolCallDelta, UsageReport
+from harness.provider import StreamStop, TextDelta, ThinkingDelta, ToolCallDelta, UsageReport
 from harness.provider_litellm import (
     LiteLLMProvider,
     _messages_to_openai,
@@ -104,3 +104,18 @@ def test_exception_mapping():
 def test_provider_satisfies_protocol():
     from harness.provider import ModelProvider
     assert isinstance(LiteLLMProvider(), ModelProvider)
+
+
+def test_thinking_blocks_delta_signature_captured():
+    chunk = _chunk(thinking_blocks=[SimpleNamespace(thinking=None, signature="sig42")])
+    [d] = _normalize_chunk(chunk)
+    assert d == ThinkingDelta(text="", signature="sig42")
+
+
+def test_thinking_blocks_mirrored_text_not_duplicated():
+    chunk = _chunk(
+        reasoning_content="step",
+        thinking_blocks=[SimpleNamespace(thinking="step", signature=None)],
+    )
+    deltas = _normalize_chunk(chunk)
+    assert deltas == [ThinkingDelta(text="step")]
