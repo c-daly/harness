@@ -8,7 +8,7 @@ from harness.cli import build_kernel, run_once
 from harness.events import PermissionRequested
 from harness.interaction import ScriptedResolver
 from harness.log import read_session
-from harness.permissions import PermissionEngine, RuleSet, default_engine  # noqa: F401
+from harness.permissions import default_engine
 from harness.provider import FakeProvider, text_turn, tool_call_turn
 from harness.types import ModelId, ToolName
 
