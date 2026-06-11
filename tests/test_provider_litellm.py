@@ -119,3 +119,14 @@ def test_thinking_blocks_mirrored_text_not_duplicated():
     )
     deltas = _normalize_chunk(chunk)
     assert deltas == [ThinkingDelta(text="step")]
+
+
+def test_openai_nested_cached_tokens_mapped():
+    usage = SimpleNamespace(
+        prompt_tokens=100, completion_tokens=5,
+        prompt_tokens_details=SimpleNamespace(cached_tokens=80),
+    )
+    chunk = SimpleNamespace(choices=[], usage=usage)
+    [report] = _normalize_chunk(chunk)
+    assert report.usage.cache_read_tokens == 80
+    assert report.usage.input_tokens == 100

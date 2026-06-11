@@ -130,10 +130,15 @@ def _normalize_chunk(chunk: Any) -> list[Chunk]:
     out: list[Chunk] = []
     usage = getattr(chunk, "usage", None)
     if usage is not None:
+        # Anthropic surfaces cache tokens top-level; OpenAI nests read-cache
+        # under prompt_tokens_details.cached_tokens (empirically verified via
+        # recorded fixtures). Read both; top-level wins when present.
+        details = getattr(usage, "prompt_tokens_details", None)
+        nested_cached = (getattr(details, "cached_tokens", 0) or 0) if details is not None else 0
         out.append(UsageReport(usage=Usage(
             input_tokens=getattr(usage, "prompt_tokens", 0) or 0,
             output_tokens=getattr(usage, "completion_tokens", 0) or 0,
-            cache_read_tokens=getattr(usage, "cache_read_input_tokens", 0) or 0,
+            cache_read_tokens=(getattr(usage, "cache_read_input_tokens", 0) or 0) or nested_cached,
             cache_write_tokens=getattr(usage, "cache_creation_input_tokens", 0) or 0,
         )))
     if not getattr(chunk, "choices", None):
