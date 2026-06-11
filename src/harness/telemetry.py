@@ -13,6 +13,7 @@ carried no pricing. Cache tokens are reported but not separately priced
 """
 
 import json
+import re
 import sqlite3
 from pathlib import Path
 
@@ -260,9 +261,11 @@ def run_rollup(conn: sqlite3.Connection, root: str) -> dict:
         f"SELECT COUNT(*), COALESCE(SUM(is_error),0), COALESCE(SUM(blocked),0),"
         f" COALESCE(SUM(asked),0) FROM tool_calls WHERE session_id IN ({marks})", sids
     ).fetchone()
+    # outcomes are recorded against the run's root via `harness outcome <root-sid>`;
+    # descendants' outcomes are sub-task bookkeeping, not the run verdict
     outcome = conn.execute(
-        f"SELECT status, score FROM outcomes WHERE session_id IN ({marks})"
-        f" ORDER BY seq DESC LIMIT 1", sids
+        "SELECT status, score FROM outcomes WHERE session_id = ?"
+        " ORDER BY seq DESC LIMIT 1", (root,)
     ).fetchone()
     retries = conn.execute(
         f"SELECT COUNT(*) FROM retries WHERE session_id IN ({marks})", sids
@@ -306,6 +309,15 @@ def _money(cost) -> str:
     return f"${cost:.6f}" if cost is not None else "n/a"
 
 
+_ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+
+
+def _safe(text) -> str:
+    """Render-side guard: strip terminal escape sequences from log-derived
+    strings (tool/model names are model- or server-controlled)."""
+    return _ANSI.sub("", str(text))
+
+
 def render_stats(summary: dict) -> str:
     lines = [
         f"sessions: {summary['sessions']}",
@@ -315,13 +327,13 @@ def render_stats(summary: dict) -> str:
     ]
     for model, calls, inp, out, cached, cost in summary["models"]:
         lines.append(
-            f"  {model}: calls={calls} in={inp} out={out} cached={cached} cost={_money(cost)}"
+            f"  {_safe(model)}: calls={calls} in={inp} out={out} cached={cached} cost={_money(cost)}"
         )
     lines.append("")
     lines.append("tools:")
     for tool, calls, errors, blocked, asked in summary["tools"]:
         lines.append(
-            f"  {tool}: calls={calls} errors={errors} blocked={blocked} asked={asked}"
+            f"  {_safe(tool)}: calls={calls} errors={errors} blocked={blocked} asked={asked}"
         )
     return "\n".join(lines)
 
@@ -339,7 +351,7 @@ def render_compare(a: dict, b: dict) -> str:
             return "-"
         if isinstance(value, float):
             return f"{value:.6f}".rstrip("0").rstrip(".") or "0"
-        return str(value)
+        return _safe(value)
 
     width = max(len(f) for f in _COMPARE_FIELDS)
     lines = [f"{'':<{width}}  {a['root'][:12]:>14}  {b['root'][:12]:>14}"]

@@ -305,3 +305,30 @@ def test_subscriber_drains_live_session_into_store(tmp_path):
     assert conn.execute(
         "SELECT COUNT(*) FROM sessions WHERE session_id = 'live1'"
     ).fetchone()[0] == 1
+
+
+def test_run_rollup_outcome_is_roots_only(tmp_path):
+    from harness.telemetry import index_envelopes, open_store, run_rollup
+    conn = open_store(tmp_path / "t.db")
+    index_envelopes(conn, [
+        Envelope(session_id=SessionId("root"), seq=1, ts=1.0, event=SessionStarted()),
+        Envelope(session_id=SessionId("kid"), seq=1, ts=2.0,
+                 event=SessionStarted(parent_session_id=SessionId("root"), parent_seq=1)),
+        Envelope(session_id=SessionId("kid"), seq=99, ts=3.0,
+                 event=SessionOutcome(status="fail", score=0.0, note="subtask")),
+        Envelope(session_id=SessionId("root"), seq=5, ts=4.0,
+                 event=SessionOutcome(status="ok", score=1.0, note="run verdict")),
+    ])
+    rollup = run_rollup(conn, "root")
+    assert rollup["outcome"] == "ok"  # the kid's high-seq fail must not shadow
+
+
+def test_render_strips_ansi_from_names(tmp_path):
+    from harness.telemetry import render_stats
+    text = render_stats({
+        "sessions": 1, "retries": 0,
+        "models": [("\x1b[2Jevil-model", 1, 1, 1, 0, None)],
+        "tools": [("\x1b[31mred-tool", 1, 0, 0, 0)],
+    })
+    assert "\x1b" not in text
+    assert "evil-model" in text and "red-tool" in text
