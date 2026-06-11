@@ -232,3 +232,23 @@ def test_outcome_then_compare_subcommands(tmp_path, capsys, monkeypatch):
     cli_mod.main()
     out = capsys.readouterr().out
     assert "outcome" in out and "ok" in out and "input_tokens" in out
+
+
+def test_outcome_on_live_session_exits_cleanly(tmp_path, capsys, monkeypatch):
+    import pytest
+    import harness.cli as cli_mod
+    from harness.session import Session
+    from harness.types import SessionId
+
+    live = Session(tmp_path, SessionId("running"))
+    live.start()
+    try:
+        monkeypatch.setattr(
+            "sys.argv",
+            ["harness", "outcome", "running", "ok", "--base-dir", str(tmp_path)],
+        )
+        with pytest.raises(SystemExit) as exc:
+            cli_mod.main()
+        assert "still running" in str(exc.value)
+    finally:
+        live.close()

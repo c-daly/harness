@@ -82,12 +82,12 @@ async def run_once(kernel: Kernel, prompt: str) -> str:
     try:
         if not kernel.resumed:
             await kernel.loop.start()
-            for t in kernel.tags:
-                kernel.session.append(CustomEvent(namespace="harness", name="tag", data={"tag": t}))
-        else:
-            # Resumed kernel: append tags unconditionally before the turn
-            for t in kernel.tags:
-                kernel.session.append(CustomEvent(namespace="harness", name="tag", data={"tag": t}))
+        # tags are per-run annotations: emitted after start (new) or before the
+        # turn (resumed) -- i.e., here, unconditionally
+        for t in kernel.tags:
+            kernel.session.append(
+                CustomEvent(namespace="harness", name="tag", data={"tag": t})
+            )
         result = await kernel.loop.run_turn(prompt)
         await kernel.loop.end()
         return result
@@ -145,7 +145,7 @@ def _subcommand(argv: list[str]) -> None:
         try:
             print(render_compare(run_rollup(conn, args.run_a), run_rollup(conn, args.run_b)))
         except KeyError as exc:
-            raise SystemExit(str(exc))
+            raise SystemExit(str(exc).strip("'\"")) from exc
     elif command == "outcome":
         parser.add_argument("session_id")
         parser.add_argument("status", choices=("ok", "fail", "abandoned"))
@@ -153,10 +153,14 @@ def _subcommand(argv: list[str]) -> None:
         parser.add_argument("--note", default="")
         args = parser.parse_args(rest)
         from harness.events import SessionOutcome
+        from harness.log import SessionLockedError
         from harness.types import SessionId
-        append_events(args.base_dir, SessionId(args.session_id), [
-            SessionOutcome(status=args.status, score=args.score, note=args.note)
-        ])
+        try:
+            append_events(args.base_dir, SessionId(args.session_id), [
+                SessionOutcome(status=args.status, score=args.score, note=args.note)
+            ])
+        except SessionLockedError as exc:
+            raise SystemExit(f"session is still running: {exc}") from exc
         print(f"recorded {args.status} for {args.session_id}")
 
 
