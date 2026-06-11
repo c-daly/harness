@@ -85,19 +85,12 @@ async def run_once(kernel: Kernel, prompt: str) -> str:
 
 
 async def _amain(kernel: Kernel, prompt: str) -> str:
-    from harness.events import UserInterrupt
-
     task = asyncio.current_task()
     loop = asyncio.get_running_loop()
     loop.add_signal_handler(signal.SIGINT, task.cancel)
+    # run_once owns the UserInterrupt record; this wrapper only owns the signal handler lifecycle
     try:
         return await run_once(kernel, prompt)
-    except asyncio.CancelledError:
-        try:
-            kernel.session.append(UserInterrupt())
-        except Exception:
-            pass
-        raise
     finally:
         loop.remove_signal_handler(signal.SIGINT)
 
