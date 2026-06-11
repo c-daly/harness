@@ -138,3 +138,88 @@ def test_retries_indexed_for_reliability_queries(tmp_path):
     ])
     rows = conn.execute("SELECT call_id, attempt, reason FROM retries ORDER BY seq").fetchall()
     assert rows == [("mc9", 1, "Overloaded: busy"), ("mc9", 2, "Overloaded: busy")]
+
+
+# --- Task 2: Lenient rebuild + run rollups ---
+
+def _write_log(base, sid, envelopes, torn_tail=''):
+    sessions = base / "sessions"
+    sessions.mkdir(parents=True, exist_ok=True)
+    lines = [e.model_dump_json() for e in envelopes]
+    text = "\n".join(lines) + "\n" + torn_tail
+    (sessions / f"{sid}.jsonl").write_text(text)
+
+
+def test_rebuild_indexes_all_sessions_and_skips_torn_tails(tmp_path):
+    from harness.telemetry import rebuild_index
+    _write_log(tmp_path, "a", [
+        Envelope(session_id=SessionId("a"), seq=1, ts=1.0, event=SessionStarted()),
+    ], torn_tail='{"v": 1, "torn')
+    _write_log(tmp_path, "b", [
+        Envelope(session_id=SessionId("b"), seq=1, ts=1.0,
+                 event=SessionStarted(parent_session_id=SessionId("a"), parent_seq=1)),
+    ])
+    conn, warnings = rebuild_index(tmp_path)
+    assert warnings == []  # torn tail is NORMAL (live session), not a warning
+    sids = sorted(r[0] for r in conn.execute("SELECT session_id FROM sessions"))
+    assert sids == ["a", "b"]
+
+
+def test_rebuild_skips_and_warns_on_corrupt_session(tmp_path):
+    from harness.telemetry import rebuild_index
+    _write_log(tmp_path, "good", [
+        Envelope(session_id=SessionId("good"), seq=1, ts=1.0, event=SessionStarted()),
+    ])
+    sessions = tmp_path / "sessions"
+    (sessions / "bad.jsonl").write_text('{"complete json": "but not an envelope"}\n')
+    conn, warnings = rebuild_index(tmp_path)
+    assert len(warnings) == 1 and "bad.jsonl" in warnings[0]
+    assert [r[0] for r in conn.execute("SELECT session_id FROM sessions")] == ["good"]
+
+
+def test_rebuild_is_destructive(tmp_path):
+    from harness.telemetry import open_store, rebuild_index
+    db = tmp_path / "telemetry.db"
+    conn = open_store(db)
+    conn.execute(
+        "INSERT INTO sessions (session_id, started_ts) VALUES (" + chr(39) + "stale" + chr(39) + ", 0)"
+    )
+    conn.commit()
+    conn.close()
+    conn, _ = rebuild_index(tmp_path)  # no sessions dir -> empty store
+    assert conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0] == 0
+
+
+def test_run_sessions_follows_descendants_recursively(tmp_path):
+    from harness.telemetry import open_store, run_sessions
+    conn = open_store(tmp_path / "t.db")
+    for sid, parent in (("root", None), ("kid", "root"), ("grandkid", "kid"), ("other", None)):
+        conn.execute(
+            "INSERT INTO sessions (session_id, parent_session_id, started_ts) VALUES (?,?,1)",
+            (sid, parent),
+        )
+    assert sorted(run_sessions(conn, "root")) == ["grandkid", "kid", "root"]
+    assert run_sessions(conn, "other") == ["other"]
+
+
+def test_run_rollup_aggregates_across_descendants(tmp_path):
+    from harness.telemetry import open_store, index_envelopes, run_rollup
+    conn = open_store(tmp_path / "t.db")
+    pricing = {"input_cost_per_token": 1e-6, "output_cost_per_token": 1e-6}
+    index_envelopes(conn, [
+        Envelope(session_id=SessionId("root"), seq=1, ts=1.0, event=SessionStarted()),
+        _mcc(2, inp=100, out=10, pricing=pricing).model_copy(
+            update={"session_id": SessionId("root")}),
+        Envelope(session_id=SessionId("kid"), seq=1, ts=2.0,
+                 event=SessionStarted(parent_session_id=SessionId("root"), parent_seq=3)),
+        _mcc(2, inp=50, out=5, pricing=pricing).model_copy(
+            update={"session_id": SessionId("kid")}),
+        Envelope(session_id=SessionId("root"), seq=9, ts=9.0,
+                 event=SessionOutcome(status="ok", score=1.0, note="")),
+    ])
+    rollup = run_rollup(conn, "root")
+    assert rollup["sessions"] == 2
+    assert rollup["input_tokens"] == 150 and rollup["output_tokens"] == 15
+    assert abs(rollup["cost"] - 165e-6) < 1e-12
+    assert rollup["outcome"] == "ok" and rollup["score"] == 1.0
+    assert rollup["retries"] == 0

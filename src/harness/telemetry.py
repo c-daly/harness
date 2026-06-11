@@ -12,7 +12,7 @@ carried no pricing. Cache tokens are reported but not separately priced
 (cache-aware costing waits on fixture-verified Anthropic semantics).
 """
 
-import json  # noqa: F401  (used by rebuild/_read_lenient in Task 2)
+import json
 import sqlite3
 from pathlib import Path
 
@@ -31,7 +31,7 @@ from harness.events import (
     ToolCallCancelled,
     ToolCallCompleted,
     ToolCallProposed,
-    parse_envelope_line,  # noqa: F401  (used by _read_lenient in Task 2)
+    parse_envelope_line,
 )
 
 _SCHEMA = """
@@ -191,3 +191,83 @@ def index_envelopes(conn: sqlite3.Connection, envelopes: list[Envelope]) -> None
                 (sid, env.seq, scope, ev.status, ev.score, ev.note),
             )
     conn.commit()
+
+
+def _read_lenient(path: Path) -> list[Envelope]:
+    '''Complete lines only; a torn tail means a live writer, not corruption.
+    Envelope-level corruption still raises -- rebuild_index handles per-session.'''
+    envelopes: list[Envelope] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        try:
+            json.loads(stripped)
+        except json.JSONDecodeError:
+            continue
+        envelopes.append(parse_envelope_line(stripped))
+    return envelopes
+
+
+def rebuild_index(base: Path) -> tuple[sqlite3.Connection, list[str]]:
+    '''Delete and rebuild the derived store from every session log under base.
+    Returns (connection, warnings) -- a session that cannot be indexed is
+    skipped with a warning, never fatal (one bad log must not hide the rest).'''
+    db = base / "telemetry.db"
+    if db.exists():
+        db.unlink()
+    conn = open_store(db)
+    warnings: list[str] = []
+    sessions_dir = base / "sessions"
+    if not sessions_dir.exists():
+        return conn, warnings
+    for log in sorted(sessions_dir.glob("*.jsonl")):
+        try:
+            index_envelopes(conn, _read_lenient(log))
+        except Exception as exc:
+            warnings.append(f"{log.name}: {type(exc).__name__}: {exc} (skipped)")
+    return conn, warnings
+
+
+def run_sessions(conn: sqlite3.Connection, root: str) -> list[str]:
+    '''root plus all descendants, breadth-first.'''
+    found = [root]
+    frontier = [root]
+    while frontier:
+        marks = ",".join("?" * len(frontier))
+        rows = conn.execute(
+            f"SELECT session_id FROM sessions WHERE parent_session_id IN ({marks})", frontier
+        ).fetchall()
+        frontier = [r[0] for r in rows if r[0] not in found]
+        found.extend(frontier)
+    return found
+
+
+def run_rollup(conn: sqlite3.Connection, root: str) -> dict:
+    sids = run_sessions(conn, root)
+    marks = ",".join("?" * len(sids))
+    mc = conn.execute(
+        f"SELECT COUNT(*), COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0),"
+        f" COALESCE(SUM(cache_read_tokens),0), SUM(cost), COALESCE(SUM(duration_ms),0)"
+        f" FROM model_calls WHERE session_id IN ({marks})", sids
+    ).fetchone()
+    tc = conn.execute(
+        f"SELECT COUNT(*), COALESCE(SUM(is_error),0), COALESCE(SUM(blocked),0),"
+        f" COALESCE(SUM(asked),0) FROM tool_calls WHERE session_id IN ({marks})", sids
+    ).fetchone()
+    outcome = conn.execute(
+        f"SELECT status, score FROM outcomes WHERE session_id IN ({marks})"
+        f" ORDER BY seq DESC LIMIT 1", sids
+    ).fetchone()
+    retries = conn.execute(
+        f"SELECT COUNT(*) FROM retries WHERE session_id IN ({marks})", sids
+    ).fetchone()[0]
+    return {
+        "root": root, "sessions": len(sids),
+        "model_calls": mc[0], "input_tokens": mc[1], "output_tokens": mc[2],
+        "cache_read_tokens": mc[3], "cost": mc[4], "model_ms": mc[5],
+        "tool_calls": tc[0], "tool_errors": tc[1], "blocked": tc[2], "asked": tc[3],
+        "retries": retries,
+        "outcome": outcome[0] if outcome else None,
+        "score": outcome[1] if outcome else None,
+    }
