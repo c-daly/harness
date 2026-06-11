@@ -1,3 +1,4 @@
+import json
 import sys
 
 from harness.cli import Kernel, build_kernel, main, run_once
@@ -404,3 +405,18 @@ def test_mcp_add_rejects_malformed_env_pair(tmp_path):
         run_cli("mcp", "add", "bad", "--command", "x",
             "--env", "NOEQUALS", "--config-home", str(home))
     assert "NAME=ENV_VAR_NAME" in str(exc.value)
+
+
+def test_mcp_import_writes_scope_file_and_warns(tmp_path, capsys):
+    home = tmp_path / "home"
+    sample = tmp_path / ".mcp.json"
+    sample.write_text(json.dumps({"mcpServers": {
+        "clean": {"command": "/bin/clean"},
+        "leaky": {"command": "x", "env": {"TOKEN": "ghp_literal123"}},
+    }}))
+    run_cli("mcp", "import", str(sample), "--write", "--config-home", str(home))
+    captured = capsys.readouterr()
+    assert "leaky" in captured.err and "literal" in captured.err
+    loaded = load_mcp_file(home / "mcp.toml", source="user")
+    assert [s.name for s in loaded] == ["clean"]
+    assert "imported 1 server(s)" in captured.out

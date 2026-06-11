@@ -387,7 +387,30 @@ def _mcp_subcommand(argv: list[str]) -> None:
             write_scope_file(path, tuple(servers.values()))
             print(f"removed {args.name} from {path}")
         elif args.cmd == "import":
-            raise SystemExit("import lands in the next commit")
+            from harness.mcp_import import McpImportError, convert_mcp_json
+
+            try:
+                specs, import_warnings = convert_mcp_json(args.path.read_text())
+            except (OSError, McpImportError) as exc:
+                raise SystemExit(f"import failed: {exc}") from exc
+            for warning in import_warnings:
+                print(f"warning: {warning}", file=sys.stderr)
+            if not args.write:
+                from harness.mcp_config import emit_mcp_toml
+
+                print(emit_mcp_toml(tuple(specs)), end="")
+                return
+            servers = existing()
+            inserted = 0
+            for spec in specs:
+                if spec.name in servers:
+                    print(f"warning: {spec.name} already configured; skipped", file=sys.stderr)
+                    continue
+                servers[spec.name] = spec
+                inserted += 1
+            path = scope_path()
+            write_scope_file(path, tuple(servers.values()))
+            print(f"imported {inserted} server(s) into {path}")
     except McpConfigError as exc:
         raise SystemExit(str(exc)) from exc
 
