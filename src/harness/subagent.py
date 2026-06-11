@@ -4,7 +4,7 @@ import asyncio
 from dataclasses import dataclass
 from pathlib import Path
 
-from harness.events import SubagentFinished, SubagentSpawned
+from harness.events import ErrorRaised, SubagentFinished, SubagentSpawned
 from harness.hooks import HookBus
 from harness.interaction import Resolver
 from harness.loop import AgentLoop
@@ -40,7 +40,15 @@ class SubagentRunner:
         try:
             await loop.start()
             result = await loop.run_turn(prompt)
-            await loop.end()
+            try:
+                await loop.end()
+            except Exception as exc:
+                # the WORK succeeded; teardown failure is logged, never converted
+                # into a false child error
+                parent.append(ErrorRaised(
+                    where="subagent:teardown",
+                    message=f"{type(exc).__name__}: {exc}",
+                ))
             parent.append(SubagentFinished(child_session_id=child_id, status="ok"))
             return result
         except asyncio.CancelledError:

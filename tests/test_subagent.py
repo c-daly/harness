@@ -1,6 +1,6 @@
 import asyncio
 
-from harness.events import SubagentFinished, SubagentSpawned
+from harness.events import ErrorRaised, SubagentFinished, SubagentSpawned
 from harness.hooks import HookBus
 from harness.interaction import HeadlessResolver
 from harness.log import read_session
@@ -75,3 +75,21 @@ async def test_dispatch_agent_tool_wraps_runner(tmp_path):
     result = await tool({"prompt": "do the thing"})
     parent.close()
     assert result == "delegated done"
+
+
+async def test_teardown_failure_still_returns_result(tmp_path, monkeypatch):
+    from harness.loop import AgentLoop
+
+    async def broken_end(self):
+        raise RuntimeError("teardown exploded")
+
+    monkeypatch.setattr(AgentLoop, "end", broken_end)
+    parent = Session(tmp_path, SessionId("parent"))
+    parent.start()
+    runner = _runner(tmp_path, FakeProvider([text_turn("the answer")]))
+    result = await runner.run(prompt="work", model=None, parent=parent)
+    parent.close()
+    assert result == "the answer"
+    events = [e.event for e in read_session(tmp_path, SessionId("parent"))]
+    assert any(isinstance(e, SubagentFinished) and e.status == "ok" for e in events)
+    assert any(isinstance(e, ErrorRaised) and e.where == "subagent:teardown" for e in events)

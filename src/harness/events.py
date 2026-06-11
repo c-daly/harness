@@ -150,6 +150,9 @@ class PermissionResolved(_Event):
 
 class SubagentSpawned(_Event):
     type: Literal["subagent_spawned"] = "subagent_spawned"
+    # the child session is a side effect: the spawn record (causal link) must
+    # survive a crash, so it gets the intent fsync
+    is_intent: ClassVar[bool] = True
     child_session_id: SessionId
     agent: AgentId | None = None
     model: ModelId | None = None
