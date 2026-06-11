@@ -341,3 +341,27 @@ def render_compare(a: dict, b: dict) -> str:
     for field in _COMPARE_FIELDS:
         lines.append(f"{field:<{width}}  {fmt(a[field]):>14}  {fmt(b[field]):>14}")
     return "\n".join(lines)
+
+
+class TelemetrySubscriber:
+    """Live incremental indexing: drain a Session.bus queue into a store.
+
+    Drain-style (caller decides when to pump — the TUI phase owns scheduling).
+    The store stays disposable: rebuild_index() remains the authoritative path;
+    a drop-oldest queue overflow loses LIVE rows only, never logged truth."""
+
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        self._conn = conn
+
+    def drain(self, queue) -> int:
+        import asyncio
+
+        envelopes = []
+        while True:
+            try:
+                envelopes.append(queue.get_nowait())
+            except asyncio.QueueEmpty:
+                break
+        if envelopes:
+            index_envelopes(self._conn, envelopes)
+        return len(envelopes)

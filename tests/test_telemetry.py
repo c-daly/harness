@@ -285,3 +285,22 @@ def test_render_compare_shows_deltas(tmp_path):
     assert "aaa" in text and "bbb" in text
     assert "input_tokens" in text and "300" in text and "100" in text
     assert "outcome" in text and "ok" in text and "-" in text  # absent renders "-"
+
+
+# --- Task 6: TelemetrySubscriber ---
+
+def test_subscriber_drains_live_session_into_store(tmp_path):
+    from harness.session import Session
+    from harness.telemetry import TelemetrySubscriber, open_store
+    from harness.events import UserMessage
+    conn = open_store(tmp_path / "live.db")
+    sub = TelemetrySubscriber(conn)
+    with Session(tmp_path, SessionId("live1")) as session:
+        queue = session.bus.subscribe()
+        session.start()
+        session.append(UserMessage(text="hi"))
+        drained = sub.drain(queue)
+    assert drained == 2
+    assert conn.execute(
+        "SELECT COUNT(*) FROM sessions WHERE session_id = 'live1'"
+    ).fetchone()[0] == 1
