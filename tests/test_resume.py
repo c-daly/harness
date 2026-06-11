@@ -93,3 +93,26 @@ def test_resume_marks_the_run_boundary(tmp_path):
     # old logs (without the event) and folds are unaffected — fold ignores it
     from harness.fold import fold
     assert [m.role.value for m in fold(envs).messages] == ["user"]
+
+
+def test_append_events_adds_outcome_without_run_boundary(tmp_path):
+    from harness.events import SessionOutcome, SessionResumed
+    from harness.resume import append_events
+    with Session(tmp_path, SessionId("s1")) as s:
+        s.start()
+        s.append(UserMessage(text="hi"))
+    append_events(tmp_path, SessionId("s1"), [SessionOutcome(status="ok", score=1.0, note="done")])
+    envs = read_session(tmp_path, SessionId("s1"))
+    assert envs[-1].event.status == "ok"
+    assert not any(isinstance(e.event, SessionResumed) for e in envs)  # bookkeeping, not a run
+    seqs = [e.seq for e in envs]
+    assert seqs == sorted(seqs) and len(set(seqs)) == len(seqs)
+
+
+def test_append_events_refuses_live_lock(tmp_path):
+    from harness.events import SessionOutcome
+    from harness.resume import append_events
+    with Session(tmp_path, SessionId("s1")) as live:
+        live.start()
+        with pytest.raises(SessionLockedError):
+            append_events(tmp_path, SessionId("s1"), [SessionOutcome(status="ok")])
