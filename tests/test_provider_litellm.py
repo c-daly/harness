@@ -130,3 +130,11 @@ def test_openai_nested_cached_tokens_mapped():
     [report] = _normalize_chunk(chunk)
     assert report.usage.cache_read_tokens == 80
     assert report.usage.input_tokens == 100
+
+
+def test_missing_credentials_maps_to_auth_failed():
+    import litellm
+    exc = litellm.InternalServerError(
+        "OpenAIException - Missing credentials. Please set OPENAI_API_KEY", "openai", "gpt"
+    )
+    assert isinstance(map_exception(exc), AuthFailed)

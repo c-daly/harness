@@ -43,6 +43,12 @@ _FINISH_REASON = {"stop": "end_turn", "tool_calls": "tool_use", "length": "max_t
 def map_exception(exc: Exception) -> ProviderError:
     import litellm
 
+    # litellm mis-raises missing-credentials as InternalServerError; sniff the
+    # message so auth failures stay non-retryable (verified empirically via a
+    # keyless --model run)
+    lowered = str(exc).lower()
+    if any(s in lowered for s in ("missing credentials", "api key", "authentication")):
+        return AuthFailed(str(exc))
     mapping = (
         (litellm.RateLimitError, RateLimited),
         (litellm.ContextWindowExceededError, ContextOverflow),
