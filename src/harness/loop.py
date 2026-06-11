@@ -26,6 +26,7 @@ class AgentLoop:
         model: ModelId,
         system_prompt: str,
         max_iterations: int = 20,
+        history: list[Message] | None = None,
     ) -> None:
         self.session = session
         self.provider = provider
@@ -34,7 +35,7 @@ class AgentLoop:
         self.model = model
         self.system_prompt = system_prompt
         self.max_iterations = max_iterations
-        self.history: list[Message] = []
+        self.history: list[Message] = list(history) if history else []
         self.dispatcher = Dispatcher(
             session=session, registry=registry, hooks=hooks, resolver=resolver
         )

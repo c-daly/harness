@@ -39,6 +39,7 @@ class Session:
         *,
         parent: tuple[SessionId, int] | None = None,
         default_model: ModelId | None = None,
+        start_seq: int = 0,
     ) -> None:
         self.id = session_id
         self.base = base
@@ -47,7 +48,7 @@ class Session:
         self._writer = EventLogWriter(base, session_id)
         self.blobs = BlobStore(base / "sessions" / str(session_id) / "blobs")
         self.bus = SubscriberBus()
-        self._seq = 0
+        self._seq = start_seq
 
     def start(self) -> Envelope:
         if self._seq != 0:
