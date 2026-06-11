@@ -22,6 +22,7 @@ class SubagentRunner:
     hooks: HookBus
     resolver: Resolver
     default_model: ModelId
+    pricing: dict[str, float] | None = None
 
     async def run(self, *, prompt: str, model: ModelId | None, parent: Session) -> str:
         child_id = new_session_id()
@@ -36,6 +37,7 @@ class SubagentRunner:
             session=child, provider=self.provider, registry=self.registry,
             hooks=self.hooks, resolver=self.resolver, model=chosen,
             system_prompt="You are a focused subagent. Complete the task and report.",
+            pricing=self.pricing,
         )
         try:
             await loop.start()

@@ -53,14 +53,19 @@ def test_resume_refuses_live_lock(tmp_path):
             resume_session(tmp_path, SessionId("s1"))
 
 
-def test_resume_clean_session_appends_nothing(tmp_path):
+def test_resume_clean_session_appends_only_run_boundary(tmp_path):
+    """resume_session appends only the run boundary (SessionResumed); no repairs."""
+    from harness.events import SessionResumed
     with Session(tmp_path, SessionId("s1")) as s:
         s.start()
         s.append(UserMessage(text="hi"))
     before = len(read_session(tmp_path, SessionId("s1")))
     session, messages = resume_session(tmp_path, SessionId("s1"))
     session.close()
-    assert len(read_session(tmp_path, SessionId("s1"))) == before
+    after = len(read_session(tmp_path, SessionId("s1")))
+    assert after == before + 1
+    last = read_session(tmp_path, SessionId("s1"))[-1]
+    assert isinstance(last.event, SessionResumed)
     assert [m.role for m in messages] == [Role.USER]
 
 
@@ -73,3 +78,18 @@ def test_resumed_session_start_refused(tmp_path):
             session.start()
     finally:
         session.close()
+
+
+def test_resume_marks_the_run_boundary(tmp_path):
+    from harness.events import SessionResumed
+    with Session(tmp_path, SessionId("s1")) as s:
+        s.start()
+        s.append(UserMessage(text="hi"))
+    session, _ = resume_session(tmp_path, SessionId("s1"))
+    session.close()
+    envs = read_session(tmp_path, SessionId("s1"))
+    resumed = [e for e in envs if isinstance(e.event, SessionResumed)]
+    assert len(resumed) == 1
+    # old logs (without the event) and folds are unaffected — fold ignores it
+    from harness.fold import fold
+    assert [m.role.value for m in fold(envs).messages] == ["user"]

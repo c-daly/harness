@@ -43,6 +43,12 @@ class SessionEnded(_Event):
     type: Literal["session_ended"] = "session_ended"
 
 
+class SessionResumed(_Event):
+    """A new process lifetime reopened this session. Timeline renderers pair
+    runs as SessionStarted|SessionResumed ... SessionEnded; the fold ignores it."""
+    type: Literal["session_resumed"] = "session_resumed"
+
+
 class UserMessage(_Event):
     type: Literal["user_message"] = "user_message"
     text: str
@@ -225,7 +231,7 @@ class UnknownEvent(_Event):
 
 Event = Annotated[
     Union[
-        SessionStarted, SessionEnded, UserMessage, UserInterrupt,
+        SessionStarted, SessionEnded, SessionResumed, UserMessage, UserInterrupt,
         ToolCallProposed, ModelCallProposed, HookDecided, DispatchResolved,
         ToolCallCompleted, ToolCallCancelled, ToolCallAborted,
         ModelCallStarted, ModelCallCompleted, ModelCallCancelled,

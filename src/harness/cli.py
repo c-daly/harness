@@ -56,6 +56,7 @@ def build_kernel(
     runner = SubagentRunner(
         base=base_dir, provider=provider, registry=registry,
         hooks=hooks, resolver=resolver, default_model=model,
+        pricing=pricing,
     )
     registry.register(DispatchAgentTool(runner=runner, parent=session))
     loop_kwargs: dict = dict(

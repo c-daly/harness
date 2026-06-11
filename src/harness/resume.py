@@ -8,6 +8,7 @@ the rebuilt transcript into AgentLoop(history=...) and do not call start().
 import os
 from pathlib import Path
 
+from harness.events import SessionResumed
 from harness.fold import fold, resume_repairs
 from harness.log import SessionLockedError, read_session
 from harness.messages import Message
@@ -46,13 +47,15 @@ def resume_session(
     """Reopen a session for continued writing.
 
     Returns (session, transcript). The session's seq continues after the last
-    logged event; ToolCallAborted repairs for dangling intents are appended
-    before return and reflected in the returned transcript."""
+    logged event; a SessionResumed run boundary is always appended first;
+    ToolCallAborted repairs for dangling intents follow and are reflected in
+    the returned transcript."""
     _clear_stale_lock(base, session_id)
     envelopes = read_session(base, session_id, repair=True)
     state = fold(envelopes)
     session = Session(base, session_id, default_model=default_model, start_seq=state.last_seq)
     try:
+        session.append(SessionResumed())
         appended = [session.append(repair) for repair in resume_repairs(state)]
         if appended:
             state = fold(envelopes + appended)

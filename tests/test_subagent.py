@@ -93,3 +93,22 @@ async def test_teardown_failure_still_returns_result(tmp_path, monkeypatch):
     events = [e.event for e in read_session(tmp_path, SessionId("parent"))]
     assert any(isinstance(e, SubagentFinished) and e.status == "ok" for e in events)
     assert any(isinstance(e, ErrorRaised) and e.where == "subagent:teardown" for e in events)
+
+
+async def test_child_model_calls_carry_pricing(tmp_path):
+    from harness.events import ModelCallCompleted
+    parent = Session(tmp_path, SessionId("parent"))
+    parent.start()
+    runner = SubagentRunner(
+        base=tmp_path, provider=FakeProvider([text_turn("done")]), registry=ToolRegistry(),
+        hooks=HookBus(), resolver=HeadlessResolver(), default_model=ModelId("fake"),
+        pricing={"input_cost_per_token": 1e-6, "output_cost_per_token": 2e-6},
+    )
+    await runner.run(prompt="work", model=None, parent=parent)
+    parent.close()
+    envs = read_session(tmp_path, SessionId("parent"))
+    child_id = next(e.event.child_session_id for e in envs
+                    if type(e.event).__name__ == "SubagentSpawned")
+    child = read_session(tmp_path, child_id)
+    completed = [e.event for e in child if isinstance(e.event, ModelCallCompleted)]
+    assert completed[0].pricing["input_cost_per_token"] == 1e-6
