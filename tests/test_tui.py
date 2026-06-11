@@ -12,6 +12,7 @@ from harness.provider import (
     FakeProvider,
     StreamStop,
     TextDelta,
+    ThinkingDelta,
     Usage,
     UsageReport,
 )
@@ -60,30 +61,35 @@ async def test_session_started_exactly_once_and_teardown(tmp_path):
     assert "session_ended" in types
 
 
-class SlowProvider:
-    """Echo with a 1.5s think time -- long enough to probe concurrency."""
+class GatedProvider:
+    """Deterministic in-flight turn: parks until the test releases the gate."""
+
+    def __init__(self) -> None:
+        self.release = asyncio.Event()
 
     async def complete(self, *, model, messages, tools):
-        await asyncio.sleep(1.5)
-        yield TextDelta(text="slow done")
+        await self.release.wait()
+        yield TextDelta(text="gated done")
         yield UsageReport(usage=Usage())
         yield StreamStop(stop_reason="end_turn")
 
 
 async def test_second_submit_while_turn_running_is_rejected(tmp_path):
-    app = make_app(tmp_path, provider=SlowProvider(), model=ModelId("slow"))
+    provider = GatedProvider()
+    app = make_app(tmp_path, provider=provider, model=ModelId("gated"))
     async with app.run_test() as pilot:
         await pilot.pause(0.1)
         await pilot.click("#prompt")
         await pilot.press(*"one", "enter")
-        await pilot.pause(0.1)                  # turn parked in the provider
+        await pilot.pause(0.1)                  # turn parked at the gate
         await pilot.press(*"two", "enter")
         await pilot.pause(0.1)
         lines = "\n".join(str(line) for line in app.query_one(RichLog).lines)
         assert "already running" in lines
-        await pilot.pause(2.0)                  # first turn finishes
+        provider.release.set()                  # let the first turn finish
+        await pilot.pause(0.3)
         lines = "\n".join(str(line) for line in app.query_one(RichLog).lines)
-        assert "slow done" in lines
+        assert "gated done" in lines
     # exactly ONE user_message in the log
     app.kernel.session.close()
     envelopes = read_session(tmp_path, app.kernel.session.id)
@@ -159,3 +165,23 @@ async def test_retry_resets_live_tail_no_duplication(tmp_path):
         assert "full reply" in lines
         assert "parfull" not in lines          # the partial didnt bleed into the final
         assert "retrying" in lines             # the reset was announced
+
+
+async def test_thinking_only_stream_clears_live_tail(tmp_path):
+    provider = FakeProvider([[
+        ThinkingDelta(text="pondering"), TextDelta(text="done thinking"),
+        UsageReport(usage=Usage()), StreamStop(stop_reason="end_turn"),
+    ], [
+        ThinkingDelta(text="only thoughts"),
+        UsageReport(usage=Usage()), StreamStop(stop_reason="end_turn"),
+    ]])
+    app = make_app(tmp_path, provider=provider, model=ModelId("fake:echo"))
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        await pilot.click("#prompt")
+        await pilot.press(*"one", "enter")
+        await pilot.pause(0.3)
+        assert str(app.query_one("#live", Static).content) == ""
+        await pilot.press(*"two", "enter")     # thinking-only turn
+        await pilot.pause(0.3)
+        assert str(app.query_one("#live", Static).content) == ""   # not stuck

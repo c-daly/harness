@@ -76,10 +76,8 @@ class HarnessApp(App[None]):
         self.query_one("#transcript", RichLog).write(line)
 
     def _clear_live(self) -> None:
-        had_content = bool(self._stream_buffer)
         self._stream_buffer = ""
-        if had_content:
-            self.query_one("#live", Static).update("")
+        self.query_one("#live", Static).update("")
 
     def _on_chunk(self, chunk) -> None:
         match chunk:

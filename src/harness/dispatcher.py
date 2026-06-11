@@ -194,7 +194,8 @@ class Dispatcher:
                     call_id=call.call_id, attempt=attempt,
                     reason=f"{type(exc).__name__}: {exc}",
                 ))
-                await asyncio.sleep(delay)
+                await asyncio.sleep(delay)  # yields the loop: the bus pump renders
+                # RetryAttempted (and the TUI resets its tail) before the next attempt streams
         self.session.append(
             ModelCallCompleted(
                 call_id=call.call_id, model=effective.model,
