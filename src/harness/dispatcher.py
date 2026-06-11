@@ -143,6 +143,7 @@ class Dispatcher:
         model: ModelId,
         messages: list[Message],
         tools: tuple[ToolSpec, ...],
+        pricing: dict[str, float] | None = None,
     ) -> tuple[Message, Usage]:
         """Dispatch a model call through hooks, permissions, and the provider.
 
@@ -185,6 +186,7 @@ class Dispatcher:
                 call_id=call.call_id, model=effective.model,
                 message=message.model_dump(), usage=usage.as_dict(),
                 stop_reason=stop_reason,
+                pricing=pricing or {},
                 duration_ms=int((time.monotonic() - started) * 1000),
             )
         )

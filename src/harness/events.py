@@ -122,6 +122,7 @@ class ModelCallCompleted(_Event):
     message: dict[str, Any]  # Message.model_dump(); assistant turn incl. tool-call blocks
     usage: dict[str, int]    # input_tokens / output_tokens / cache_read_tokens / cache_write_tokens
     stop_reason: str = "unknown"  # end_turn | tool_use | max_tokens | unknown (additive, default keeps old logs valid)
+    pricing: dict[str, float] = Field(default_factory=dict)  # cost-per-token at call time; {} when unknown
     duration_ms: int = 0
 
 

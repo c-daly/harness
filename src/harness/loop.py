@@ -27,6 +27,7 @@ class AgentLoop:
         system_prompt: str,
         max_iterations: int = 20,
         history: list[Message] | None = None,
+        pricing: dict[str, float] | None = None,
     ) -> None:
         self.session = session
         self.provider = provider
@@ -39,6 +40,7 @@ class AgentLoop:
         # Never call start() on a resumed loop: the session already started
         # and SESSION_START hooks (memory briefs) must not double-inject.
         self.history: list[Message] = list(history) if history else []
+        self.pricing = pricing
         self.dispatcher = Dispatcher(
             session=session, registry=registry, hooks=hooks, resolver=resolver
         )
@@ -87,6 +89,7 @@ class AgentLoop:
             assistant, _usage = await self.dispatcher.dispatch_model(
                 provider=self.provider, model=self.model,
                 messages=messages, tools=self.registry.specs(),
+                pricing=self.pricing,
             )
             self.history.append(assistant)
             calls = assistant.tool_calls()

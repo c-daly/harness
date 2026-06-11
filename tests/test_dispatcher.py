@@ -291,3 +291,14 @@ async def test_non_retryable_error_raises_immediately(tmp_path):
             provider=DeadProvider(), model=ModelId("fake"), messages=[], tools=()
         )
     session.close()
+
+async def test_pricing_stamped_into_model_call_completed(tmp_path):
+    from harness.events import ModelCallCompleted
+    session, dispatcher = _kernel_bits(tmp_path)
+    await dispatcher.dispatch_model(
+        provider=FakeProvider([text_turn("hi")]), model=ModelId("fake"),
+        messages=[], tools=(), pricing={"input_cost_per_token": 1e-6, "output_cost_per_token": 2e-6},
+    )
+    session.close()
+    completed = [e for e in _events(tmp_path) if isinstance(e, ModelCallCompleted)]
+    assert completed[0].pricing["input_cost_per_token"] == 1e-6
