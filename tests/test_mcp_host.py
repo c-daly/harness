@@ -1,5 +1,6 @@
 """ServerConnection lifecycle over in-memory streams and a real stdio subprocess."""
 
+import asyncio
 import sys
 from contextlib import asynccontextmanager
 
@@ -45,6 +46,12 @@ def memory_spec(**overrides) -> McpServerSpec:
 def memory_factory():
     fastmcp = load_fixture_server()
     return lambda spec: memory_transport(fastmcp)
+
+
+@asynccontextmanager
+async def hanging_transport(spec):
+    await asyncio.sleep(3600)
+    yield (None, None)  # pragma: no cover — never reached
 
 
 async def test_connection_start_captures_instructions_and_tools():
@@ -120,3 +127,39 @@ async def test_stdio_subprocess_roundtrip_and_env_references(monkeypatch):
         assert texts == ["<unset>"]
     finally:
         await conn.stop()
+
+
+async def test_cancelled_start_does_not_orphan_run_task():
+    conn = ServerConnection(memory_spec(), transport_factory=hanging_transport)
+    starter = asyncio.create_task(conn.start())
+    await asyncio.sleep(0.05)
+    starter.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await starter
+    assert conn._task is None
+    assert not conn.is_alive
+
+
+async def test_session_lost_after_restart_is_structured(monkeypatch):
+    conn = ServerConnection(memory_spec(), transport_factory=memory_factory())
+    await conn.start()
+    try:
+        async def noop(gen, *, reason):
+            return None
+
+        monkeypatch.setattr(conn, "_restart_if_allowed", noop)
+        conn.session = None
+        with pytest.raises(McpServerError) as exc:
+            await conn.call_tool("add", {"a": 1, "b": 1})
+        assert "unavailable" in str(exc.value)
+    finally:
+        await conn.stop()
+
+
+async def test_is_alive_reflects_lifecycle():
+    conn = ServerConnection(memory_spec(), transport_factory=memory_factory())
+    assert not conn.is_alive
+    await conn.start()
+    assert conn.is_alive
+    await conn.stop()
+    assert not conn.is_alive

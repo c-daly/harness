@@ -22,6 +22,7 @@ from harness.mcp_config import McpServerSpec, resolve_env
 _MAX_RESTARTS = 3
 _STOP_TIMEOUT_S = 10.0
 _START_TIMEOUT_S = 30.0
+_MAX_REASON_LEN = 400
 
 
 class McpServerError(Exception):
@@ -94,9 +95,18 @@ class ServerConnection:
         self._stop_signal = asyncio.Event()
         self._failure = None
         self._task = asyncio.create_task(self._run(), name=f"mcp:{self.spec.name}")
-        await self._ready.wait()
+        try:
+            await self._ready.wait()
+        except asyncio.CancelledError:
+            task, self._task = self._task, None
+            task.cancel()
+            with contextlib.suppress(BaseException):
+                await task
+            raise
         if self._failure is not None:
             failure, self._task = self._failure, None
+            if not isinstance(failure, Exception):
+                raise failure  # propagate cancellation/interrupt as itself
             raise McpServerError(
                 f"mcp server {self.spec.name!r} failed to start: {failure}"
             ) from failure
@@ -121,8 +131,8 @@ class ServerConnection:
                     await self._stop_signal.wait()
         except BaseException as exc:
             self._failure = exc
-            if isinstance(exc, asyncio.CancelledError):
-                raise
+            if not isinstance(exc, Exception):
+                raise  # CancelledError/KeyboardInterrupt/SystemExit must propagate
         finally:
             self.session = None
             self._ready.set()
@@ -131,13 +141,23 @@ class ServerConnection:
         gen = self._gen
         if self.session is None:
             await self._restart_if_allowed(gen, reason="connection lost")
+        session = self._require_session()
         try:
-            return await self.session.call_tool(tool, args)  # type: ignore[union-attr]
+            return await session.call_tool(tool, args)
         except McpError:
             raise  # protocol-level error (incl. per-call timeout): the server is alive
         except Exception as exc:
-            await self._restart_if_allowed(gen, reason=f"transport failure: {exc!r}")
-            return await self.session.call_tool(tool, args)  # type: ignore[union-attr]
+            reason = f"transport failure: {exc!r}"[:_MAX_REASON_LEN]
+            await self._restart_if_allowed(gen, reason=reason)
+            return await self._require_session().call_tool(tool, args)
+
+    def _require_session(self) -> ClientSession:
+        session = self.session
+        if session is None:
+            raise McpServerError(
+                f"mcp server {self.spec.name!r} unavailable (session lost after restart)"
+            )
+        return session
 
     async def _restart_if_allowed(self, gen: int, *, reason: str) -> None:
         async with self._restart_lock:
@@ -156,6 +176,10 @@ class ServerConnection:
     async def stop(self) -> None:
         await self._teardown()
 
+    @property
+    def is_alive(self) -> bool:
+        return self._task is not None and not self._task.done() and self.session is not None
+
     async def _teardown(self) -> None:
         task, self._task = self._task, None
         if task is None:
@@ -163,7 +187,12 @@ class ServerConnection:
         self._stop_signal.set()
         try:
             await asyncio.wait_for(task, timeout=_STOP_TIMEOUT_S)
-        except (TimeoutError, asyncio.CancelledError):
+        except TimeoutError:
             task.cancel()
             with contextlib.suppress(BaseException):
                 await task
+        except asyncio.CancelledError:
+            task.cancel()
+            with contextlib.suppress(BaseException):
+                await task
+            raise
