@@ -1,6 +1,10 @@
+import sys
+
 from harness.cli import Kernel, build_kernel, run_once
+from harness.mcp_config import McpServerSpec
 from harness.provider import FakeProvider, text_turn
 from harness.types import ModelId
+from tests.conftest import FIXTURE_SERVER_PATH
 
 
 async def test_build_kernel_wires_dispatch_agent_tool(tmp_path):
@@ -93,7 +97,7 @@ async def test_permission_engine_denies_through_kernel(tmp_path):
     events = [e.event for e in read_session(tmp_path, sid)]
     denied = [e for e in events if isinstance(e, HookDecided) and e.hook == "permissions"
               and e.decision["kind"] == "block"]
-    assert denied  # the engine's deny was recorded like any hook decision
+    assert denied  # the engine deny was recorded like any hook decision
 
 
 async def test_permission_ask_resolves_and_grant_silences(tmp_path):
@@ -108,9 +112,9 @@ async def test_permission_ask_resolves_and_grant_silences(tmp_path):
         rules=[PermissionRule(action="ask", tool="dispatch_agent")], default="allow"
     )])
     class GrantingResolver(ScriptedResolver):
-        """Approve once, then grant - the exact shape of the TUI's
-        'always allow' button. One scripted answer: a second ask would
-        IndexError, so asks2==1 is structurally enforced."""
+        """Approve once, then grant.
+        One scripted answer: a second ask would IndexError,
+        so asks2==1 is structurally enforced."""
 
         def __init__(self, engine):
             super().__init__([True])
@@ -125,9 +129,9 @@ async def test_permission_ask_resolves_and_grant_silences(tmp_path):
     kernel = build_kernel(
         provider=FakeProvider([
             tool_call_turn("first", ToolName("dispatch_agent"), {"prompt": "a"}),
-            text_turn("child one done"),   # child's turn
+            text_turn("child one done"),
             tool_call_turn("second", ToolName("dispatch_agent"), {"prompt": "b"}),
-            text_turn("child two done"),   # child's turn
+            text_turn("child two done"),
             text_turn("all delegated"),
         ]),
         base_dir=tmp_path, model=ModelId("fake"), permissions=engine,
@@ -139,7 +143,6 @@ async def test_permission_ask_resolves_and_grant_silences(tmp_path):
     events = [e.event for e in read_session(tmp_path, sid)]
     asks = [e for e in events if isinstance(e, PermissionRequested)]
     assert len(asks) == 1  # second call sailed through on the grant
-
 
 
 def test_main_missing_catalog_is_actionable(tmp_path, capsys, monkeypatch):
@@ -252,3 +255,80 @@ def test_outcome_on_live_session_exits_cleanly(tmp_path, capsys, monkeypatch):
         assert "still running" in str(exc.value)
     finally:
         live.close()
+
+
+def fixture_stdio_spec(**overrides) -> McpServerSpec:
+    defaults = dict(
+        name="fixture", transport="stdio",
+        command=sys.executable, args=(str(FIXTURE_SERVER_PATH),),
+    )
+    defaults.update(overrides)
+    return McpServerSpec(**defaults)
+
+
+async def test_kernel_with_mcp_runs_tool_and_injects_instructions(tmp_path):
+    from harness.log import read_session
+    from harness.provider import tool_call_turn
+    from harness.types import ToolName
+
+    provider = FakeProvider([
+        tool_call_turn("calling add", ToolName("mcp__fixture__add"), {"a": 19, "b": 23}),
+        text_turn("done"),
+    ])
+    kernel = build_kernel(
+        provider=provider, base_dir=tmp_path, model=ModelId("fake:echo"),
+        mcp=[fixture_stdio_spec()],
+    )
+    reply = await run_once(kernel, "add the numbers")
+    assert reply == "done"
+    assert "Fixture server: use `add` for arithmetic." in kernel.loop.system_prompt
+    envelopes = read_session(tmp_path, kernel.session.id)
+    customs = [e.event for e in envelopes if getattr(e.event, "type", "") == "custom"]
+    assert any(c.namespace == "mcp" and c.name == "server_started" for c in customs)
+    assert any(c.namespace == "mcp" and c.name == "server_stopped" for c in customs)
+    completed = [e.event for e in envelopes if getattr(e.event, "type", "") == "tool_call_completed"]
+    assert any(e.result_text == "42" for e in completed)
+
+
+async def test_mcp_events_never_precede_session_started(tmp_path):
+    from harness.log import read_session
+
+    provider = FakeProvider([text_turn("ok")])
+    kernel = build_kernel(
+        provider=provider, base_dir=tmp_path, model=ModelId("fake:echo"),
+        mcp=[fixture_stdio_spec()],
+    )
+    await run_once(kernel, "hi")
+    envelopes = read_session(tmp_path, kernel.session.id)
+    assert envelopes[0].event.type == "session_started"
+
+
+async def test_kernel_without_mcp_unchanged(tmp_path):
+    provider = FakeProvider([text_turn("plain")])
+    kernel = build_kernel(provider=provider, base_dir=tmp_path, model=ModelId("fake:echo"))
+    assert kernel.mcp is None
+    assert await run_once(kernel, "hi") == "plain"
+
+
+def test_mcp_config_flag_bad_path_exits_cleanly(tmp_path, capsys, monkeypatch):
+    import pytest
+    import harness.cli as cli_mod
+    monkeypatch.setattr(
+        "sys.argv",
+        ["harness", "-p", "hi", "--mcp-config", str(tmp_path / "nope.toml"),
+         "--base-dir", str(tmp_path)],
+    )
+    with pytest.raises(SystemExit):
+        cli_mod.main()
+
+
+def test_no_mcp_flag_skips_mcp(tmp_path, capsys, monkeypatch):
+    import harness.cli as cli_mod
+    monkeypatch.setattr(cli_mod, "default_engine", lambda project_dir=None: None)
+    monkeypatch.setattr(
+        "sys.argv",
+        ["harness", "-p", "hi", "--no-mcp", "--base-dir", str(tmp_path)],
+    )
+    cli_mod.main()
+    captured = capsys.readouterr()
+    assert "echo: hi" in captured.out

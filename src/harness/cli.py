@@ -6,10 +6,13 @@ import signal
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Sequence
 
 from harness.hooks import HookBus
 from harness.interaction import HeadlessResolver, Resolver
 from harness.loop import AgentLoop
+from harness.mcp_config import McpConfigError, McpServerSpec, load_mcp_config, load_mcp_file
+from harness.mcp_host import McpHost
 from harness.permissions import PermissionEngine, default_engine
 from harness.provider import FakeProvider, ModelProvider, text_turn
 from harness.session import Session
@@ -27,6 +30,7 @@ class Kernel:
     provider: ModelProvider
     resumed: bool = field(default=False)
     tags: list[str] = field(default_factory=list)
+    mcp: McpHost | None = None
 
 
 def build_kernel(
@@ -41,6 +45,7 @@ def build_kernel(
     resume_session_id: SessionId | None = None,
     permissions: PermissionEngine | None = None,
     tags: list[str] | None = None,
+    mcp: Sequence[McpServerSpec] | None = None,
 ) -> Kernel:
     from harness.resume import resume_session
 
@@ -70,9 +75,12 @@ def build_kernel(
     if transcript is not None:
         loop_kwargs["history"] = transcript
     loop = AgentLoop(**loop_kwargs)
+    mcp_host = None
+    if mcp:
+        mcp_host = McpHost(mcp, registry=registry, hooks=hooks, session=session)
     return Kernel(
         session=session, loop=loop, registry=registry, hooks=hooks, provider=provider,
-        resumed=resumed, tags=tags or [],
+        resumed=resumed, tags=tags or [], mcp=mcp_host,
     )
 
 
@@ -80,6 +88,11 @@ async def run_once(kernel: Kernel, prompt: str) -> str:
     from harness.events import CustomEvent, UserInterrupt
 
     try:
+        # host.start() BEFORE loop.start(): the instructions hook must be registered
+        # before SESSION_START fires so it can inject into the system prompt.
+        if kernel.mcp is not None:
+            for warning in await kernel.mcp.start():
+                print(f"warning: {warning}", file=sys.stderr)
         if not kernel.resumed:
             await kernel.loop.start()
         # tags are per-run annotations: emitted after start (new) or before the
@@ -88,6 +101,9 @@ async def run_once(kernel: Kernel, prompt: str) -> str:
             kernel.session.append(
                 CustomEvent(namespace="harness", name="tag", data={"tag": t})
             )
+        # flush AFTER loop.start()+tags: nothing precedes SessionStarted in the log.
+        if kernel.mcp is not None:
+            kernel.mcp.flush_events()
         result = await kernel.loop.run_turn(prompt)
         await kernel.loop.end()
         return result
@@ -98,6 +114,13 @@ async def run_once(kernel: Kernel, prompt: str) -> str:
             pass
         raise
     finally:
+        # stop() then flush() BEFORE session.close(): server_stopped lands in the log;
+        # closed sessions drop events.
+        if kernel.mcp is not None:
+            await kernel.mcp.stop()
+            # crash path: if flush never ran (loop.start raised), drain the buffered
+            # mcp events now as post-crash diagnostics; no-op on the happy path
+            kernel.mcp.flush_events()
         kernel.session.close()
 
 
@@ -182,6 +205,10 @@ def _run_main() -> None:
     parser.add_argument("--tag", action="append", default=[],
                         metavar="TAG",
                         help="Tag this run (can be repeated).")
+    parser.add_argument("--mcp-config", type=Path, default=None,
+                        help="Explicit mcp.toml; overrides the standard locations.")
+    parser.add_argument("--no-mcp", action="store_true",
+                        help="Skip MCP server startup entirely.")
     args = parser.parse_args()
 
     resume_session_id = SessionId(args.resume_session_id) if args.resume_session_id else None
@@ -214,6 +241,16 @@ def _run_main() -> None:
     if engine and args.allow:
         _apply_allow_flags(engine, args.allow)
 
+    mcp_specs: tuple[McpServerSpec, ...] = ()
+    if not args.no_mcp:
+        try:
+            if args.mcp_config is not None:
+                mcp_specs = load_mcp_file(args.mcp_config, source="adhoc")
+            else:
+                mcp_specs = load_mcp_config(project_dir=Path.cwd())
+        except (McpConfigError, OSError) as exc:
+            raise SystemExit(str(exc)) from exc
+
     kernel = build_kernel(
         provider=provider,
         base_dir=args.base_dir,
@@ -222,6 +259,7 @@ def _run_main() -> None:
         resume_session_id=resume_session_id,
         permissions=engine,
         tags=args.tag,
+        mcp=mcp_specs or None,
     )
     from harness.errors import ProviderError
     try:
