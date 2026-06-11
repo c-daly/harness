@@ -153,6 +153,10 @@ class ServerConnection:
         except McpError:
             raise  # protocol-level error (incl. per-call timeout): the server is alive
         except Exception as exc:
+            # A dead stdio child surfaces here as anyio.ClosedResourceError on the NEXT
+            # call after the death: the die call itself raises McpError (caught above),
+            # leaving a stale but non-None self.session. The subsequent call on that
+            # stale session raises ClosedResourceError (not McpError), taking this path.
             reason = f"transport failure: {exc!r}"[:_MAX_REASON_LEN]
             await self._restart_if_allowed(gen, reason=reason)
             return await self._require_session().call_tool(tool, args)

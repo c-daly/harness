@@ -367,3 +367,41 @@ async def test_host_stop_after_session_close_does_not_raise(tmp_path):
     session.close()
     await host.stop()  # must not raise: server_stopped events drop silently
     assert host.connections == {}
+
+
+async def test_restart_on_failure_respawns_stdio_server():
+    events: list[tuple[str, dict]] = []
+    spec = McpServerSpec(
+        name="fixture", transport="stdio",
+        command=sys.executable, args=(str(FIXTURE_SERVER_PATH),),
+        restart="on_failure", tool_timeout_s=15.0,
+    )
+    conn = ServerConnection(spec, on_event=lambda name, data: events.append((name, data)))
+    await conn.start()
+    try:
+        with pytest.raises(Exception):
+            await conn.call_tool("die", {})  # kills the child mid-call
+        result = await conn.call_tool("add", {"a": 1, "b": 1})  # triggers respawn
+        texts = [c.text for c in result.content if isinstance(c, types.TextContent)]
+        assert texts == ["2"]
+        assert any(name == "server_restarted" for name, _ in events)
+    finally:
+        await conn.stop()
+
+
+async def test_restart_never_policy_stays_down():
+    spec = McpServerSpec(
+        name="fixture", transport="stdio",
+        command=sys.executable, args=(str(FIXTURE_SERVER_PATH),),
+        restart="never", tool_timeout_s=15.0,
+    )
+    conn = ServerConnection(spec)
+    await conn.start()
+    try:
+        with pytest.raises(Exception):
+            await conn.call_tool("die", {})
+        with pytest.raises(McpServerError) as exc:
+            await conn.call_tool("add", {"a": 1, "b": 1})
+        assert "unavailable" in str(exc.value)
+    finally:
+        await conn.stop()
