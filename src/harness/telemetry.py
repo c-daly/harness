@@ -244,6 +244,11 @@ def run_sessions(conn: sqlite3.Connection, root: str) -> list[str]:
 
 
 def run_rollup(conn: sqlite3.Connection, root: str) -> dict:
+    exists = conn.execute(
+        "SELECT 1 FROM sessions WHERE session_id = ?", (root,)
+    ).fetchone()
+    if exists is None:
+        raise KeyError(f"no such session: {root}")
     sids = run_sessions(conn, root)
     marks = ",".join("?" * len(sids))
     mc = conn.execute(

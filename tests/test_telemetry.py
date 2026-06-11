@@ -182,7 +182,7 @@ def test_rebuild_is_destructive(tmp_path):
     db = tmp_path / "telemetry.db"
     conn = open_store(db)
     conn.execute(
-        "INSERT INTO sessions (session_id, started_ts) VALUES (" + chr(39) + "stale" + chr(39) + ", 0)"
+        "INSERT INTO sessions (session_id, started_ts) VALUES ('stale', 0)"
     )
     conn.commit()
     conn.close()
@@ -223,3 +223,11 @@ def test_run_rollup_aggregates_across_descendants(tmp_path):
     assert abs(rollup["cost"] - 165e-6) < 1e-12
     assert rollup["outcome"] == "ok" and rollup["score"] == 1.0
     assert rollup["retries"] == 0
+
+
+def test_run_rollup_unknown_root_raises(tmp_path):
+    import pytest
+    from harness.telemetry import open_store, run_rollup
+    conn = open_store(tmp_path / "t.db")
+    with pytest.raises(KeyError, match="no such session"):
+        run_rollup(conn, "typo-sid")
