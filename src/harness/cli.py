@@ -3,6 +3,7 @@
 import argparse
 import asyncio
 import signal
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -144,6 +145,12 @@ def main() -> None:
         pricing = None
 
     engine = default_engine(project_dir=Path.cwd())
+    if args.allow and engine is None:
+        print(
+            "warning: --allow given but no permission config found; "
+            "flags have no effect (tool calls are not gated)",
+            file=sys.stderr,
+        )
     if engine and args.allow:
         _apply_allow_flags(engine, args.allow)
 

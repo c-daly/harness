@@ -164,3 +164,16 @@ def test_allow_flags_become_session_grants(tmp_path):
     assert engine.decide("bash", {}) == "allow"
     assert engine.decide("read_file", {}) == "allow"
     assert engine.decide("write_file", {}) == "ask"
+
+
+def test_allow_without_config_warns(tmp_path, capsys, monkeypatch):
+    import harness.cli as cli_mod
+    monkeypatch.setattr(cli_mod, "default_engine", lambda project_dir=None: None)
+    monkeypatch.setattr(
+        "sys.argv",
+        ["harness", "-p", "hi", "--allow", "bash", "--base-dir", str(tmp_path)],
+    )
+    cli_mod.main()
+    captured = capsys.readouterr()
+    assert "echo: hi" in captured.out
+    assert "no permission config found" in captured.err
