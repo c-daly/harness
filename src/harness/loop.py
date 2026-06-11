@@ -33,7 +33,7 @@ class AgentLoop:
         self.provider = provider
         self.registry = registry
         self.hooks = hooks
-        self.model = model
+        self.model = model  # mutable by design: reassigning between turns is the /model switch; the dispatcher receives it per call
         self.system_prompt = system_prompt
         self.max_iterations = max_iterations
         # history seeds a RESUMED transcript (resume_session's fold output).
