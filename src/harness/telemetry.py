@@ -110,6 +110,14 @@ def open_store(path: Path) -> sqlite3.Connection:
     return conn
 
 
+def open_store_memory() -> sqlite3.Connection:
+    """In-memory store for live consumers (the TUI stats line). Same schema;
+    rebuild_index over the logs remains the authoritative path."""
+    conn = sqlite3.connect(":memory:")
+    conn.executescript(_SCHEMA)
+    return conn
+
+
 def _origin(tool: str) -> str | None:
     """mcp__<server>__<tool> -> <server>; None for builtin/native tools.
     Server names are validated to never contain '__', so the first split wins."""

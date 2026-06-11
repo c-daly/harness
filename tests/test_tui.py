@@ -541,3 +541,22 @@ async def test_slash_quit_during_running_turn_is_clean(tmp_path):
         await pilot.pause(0.3)
     events = [e.event.type for e in read_session(tmp_path, app.kernel.session.id)]
     assert events.count("session_ended") == 1        # no crash, clean single end
+
+
+async def test_stats_line_updates_after_a_turn(tmp_path):
+    provider = FakeProvider([[
+        TextDelta(text="hi"),
+        UsageReport(usage=Usage(input_tokens=7, output_tokens=3)),
+        StreamStop(stop_reason="end_turn"),
+    ]])
+    app = make_app(tmp_path, provider=provider, model=ModelId("fake:echo"))
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        await pilot.click("#prompt")
+        await pilot.press(*"go", "enter")
+        await pilot.pause(0.3)
+        app.refresh_stats()                            # poke instead of waiting 1s
+        await pilot.pause(0.1)
+        stats = str(app.query_one("#stats", Static).content)
+        assert "in 7" in stats and "out 3" in stats
+        assert "tools 0" in stats

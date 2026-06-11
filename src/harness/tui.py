@@ -22,6 +22,7 @@ from harness.hooks import ProposedToolCall
 from harness.interaction import PermissionRequest
 from harness.messages import Role
 from harness.provider import TextDelta, ThinkingDelta
+from harness.telemetry import TelemetrySubscriber, open_store_memory, run_rollup
 from harness.tui_support import HistoryRing, SlashCommand, expand_file_mentions, parse_slash_command
 
 _SNIPPET_CAP = 200
@@ -115,6 +116,9 @@ class HarnessApp(App[None]):
         self._interrupting = False
         self._ended = False
         self._stream_buffer = ""
+        self._stats_conn = None
+        self._stats_sub = None
+        self._stats_queue = None
         if ask is not None:
             ask.app = self
 
@@ -152,6 +156,12 @@ class HarnessApp(App[None]):
 
     async def _session_driver(self) -> None:
         kernel = self.kernel
+        # Subscribe the stats queue BEFORE loop.start() so SessionStarted is captured;
+        # run_rollup KeyErrors on unknown session ids. On resumed sessions SessionStarted
+        # is past -- refresh_stats guards with try/except KeyError (v1: stats blank).
+        self._stats_conn = open_store_memory()
+        self._stats_sub = TelemetrySubscriber(self._stats_conn)
+        self._stats_queue = self.kernel.session.bus.subscribe()
         if kernel.mcp is not None:
             for warning in await kernel.mcp.start():
                 self.say("! ", warning)
@@ -167,6 +177,7 @@ class HarnessApp(App[None]):
         if kernel.mcp is not None:
             kernel.mcp.flush_events()
         self.run_worker(self._bus_pump(), group="driver", exit_on_error=False)
+        self.set_interval(1.0, self.refresh_stats)
 
     def _render_resumed_history(self) -> None:
         for message in self.kernel.loop.history:
@@ -180,6 +191,24 @@ class HarnessApp(App[None]):
         while True:
             envelope = await queue.get()
             self._render_event(envelope.event)
+
+    def refresh_stats(self) -> None:
+        if self._stats_sub is None:
+            return
+        self._stats_sub.drain(self._stats_queue)
+        try:
+            rollup = run_rollup(self._stats_conn, str(self.kernel.session.id))
+        except KeyError:
+            return  # nothing indexed yet (or resumed session: v1 stats stay blank)
+        cost = rollup["cost"]
+        cost_text = f"${cost:.4f}" if cost is not None else "n/a"
+        inp = rollup["input_tokens"]
+        out = rollup["output_tokens"]
+        tc = rollup["tool_calls"]
+        model = self.kernel.loop.model
+        self.query_one("#stats", Static).update(
+            f"{model} | in {inp} out {out} | cost {cost_text} | tools {tc}"
+        )
 
     def _render_event(self, event) -> None:
         match event:

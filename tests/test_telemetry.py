@@ -12,7 +12,7 @@ from harness.events import (
     ToolCallCompleted,
     ToolCallProposed,
 )
-from harness.telemetry import index_envelopes, open_store
+from harness.telemetry import index_envelopes, open_store, open_store_memory
 from harness.types import CallId, ModelId, SessionId, ToolName
 
 S = SessionId("s1")
@@ -432,3 +432,10 @@ def test_stats_summary_mcp_servers_respects_tag_filter(tmp_path):
     server_names = [row[0] for row in tagged["mcp_servers"]]
     assert server_names == ["alpha"]
     assert "beta" not in server_names
+
+
+# --- Task 9: open_store_memory ---
+
+def test_open_store_memory_has_schema():
+    conn = open_store_memory()
+    conn.execute("SELECT origin FROM tool_calls LIMIT 0")   # schema exists
