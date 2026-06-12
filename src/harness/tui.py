@@ -96,7 +96,11 @@ class PermissionScreen(ModalScreen[str]):
                 if detail:
                     yield Static(_plain(detail))
                 tool, match = grant_pattern(self.request)
-                grant = f"{tool}({list(match.values())[0]})" if match else tool
+                if match:
+                    grant = f"{tool}({list(match.values())[0]})"
+                else:
+                    # honest about breadth: an empty match is allow-all-tool, session-only
+                    grant = f"{tool} (ALL calls -- session only)"
                 yield Static(_plain(f"[a] will allow: {grant}"))
             else:
                 yield Static(_plain(f"Permission: model {action.model}"))

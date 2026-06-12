@@ -39,6 +39,22 @@ class EchoTool:
         return args["text"]
 
 
+class PathEchoTool:
+    # A write_file-named stub: its primary arg is file_path, so grant_pattern yields a
+    # non-empty workspace-scoped match that persists (unlike an empty-match allow-all).
+    spec = ToolSpec(
+        name=ToolName("write_file"),
+        description="Write file stub",
+        parameters={
+            "type": "object",
+            "properties": {"file_path": {"type": "string"}, "content": {"type": "string"}},
+        },
+    )
+
+    async def __call__(self, args: dict) -> str:
+        return args["file_path"]
+
+
 def make_app(tmp_path, catalog_path=None, plugins=None, **kernel_kwargs) -> HarnessApp:
     """Build a HarnessApp for tests.
 
@@ -305,11 +321,14 @@ async def test_permission_modal_deny_blocks_tool(tmp_path):
 
 
 async def test_permission_modal_always_persists_grant(tmp_path):
+    # Uses write_file so grant_pattern yields a non-empty workspace-scoped path match:
+    # only constrained grants persist (C1 -- an empty-match allow-all rule is never
+    # written to grants.toml from a single keystroke).
     grants_path = tmp_path / "grants.toml"
     engine = PermissionEngine(
         [
             RuleSet(
-                rules=[PermissionRule(action="ask", tool="echo_tool")],
+                rules=[PermissionRule(action="ask", tool="write_file")],
                 default="allow",
             )
         ],
@@ -317,12 +336,14 @@ async def test_permission_modal_always_persists_grant(tmp_path):
     )
     provider = FakeProvider(
         [
-            tool_call_turn("calling", ToolName("echo_tool"), {"text": "hi"}),
+            tool_call_turn(
+                "calling", ToolName("write_file"), {"file_path": "/w/proj/a.txt", "content": "hi"}
+            ),
             text_turn("done"),
         ]
     )
     app = make_app(tmp_path, provider=provider, model=ModelId("fake:echo"), engine=engine)
-    app.kernel.registry.register(EchoTool())
+    app.kernel.registry.register(PathEchoTool())
     async with app.run_test() as pilot:
         await pilot.pause(0.1)
         await pilot.click("#prompt")
@@ -333,9 +354,9 @@ async def test_permission_modal_always_persists_grant(tmp_path):
         await pilot.pause(0.5)
         lines = "\n".join(str(line) for line in app.query_one(RichLog).lines)
         assert "done" in lines
-    # grant was persisted
+    # grant was persisted (constrained to the workspace path glob)
     assert grants_path.exists()
-    assert "echo_tool" in grants_path.read_text()
+    assert "write_file" in grants_path.read_text()
 
 
 async def test_escape_interrupts_turn_and_loop_survives(tmp_path):

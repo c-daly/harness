@@ -118,7 +118,9 @@ async def test_tui_resolver_allow_deny_always():
     assert await resolver.resolve(req) is True
     assert await resolver.resolve(req) is False
     assert await resolver.resolve(req) is True
-    assert grants == [("dangerous", True)]
+    # "dangerous" with empty args -> empty match (allow-all-tool); C1 forces persist=False
+    # so a single keystroke never writes an unconstrained rule to grants.toml.
+    assert grants == [("dangerous", False)]
 
 
 async def test_tui_resolver_always_without_engine_is_plain_allow():
@@ -150,3 +152,50 @@ def test_expand_file_mentions_strips_trailing_punctuation(tmp_path):
 def test_expand_file_mentions_directory_is_named_as_such(tmp_path):
     _, _, errors = expand_file_mentions(f"look at @{tmp_path}")
     assert any("is a directory" in e for e in errors)
+
+
+async def test_always_on_empty_command_bash_grants_session_only_allow_all(tmp_path):
+    # An empty bash command yields an empty match -> allow-all bash, but session-only:
+    # never persisted to grants.toml from a single keystroke (C1).
+    from harness.permissions import PermissionEngine
+
+    grants_path = tmp_path / "grants.toml"
+    engine = PermissionEngine([], grants_path=grants_path)
+
+    async def ask(request):
+        return "always"
+
+    resolver = TuiResolver(ask=ask, engine=engine)
+    req = PermissionRequest(
+        call_id=CallId("c1"),
+        action=ProposedToolCall(call_id=CallId("c1"), tool=ToolName("bash"), args={"command": ""}),
+        reason="ask",
+    )
+    assert await resolver.resolve(req) is True
+    # session grant exists and is unconstrained (allow-all bash)
+    assert engine.decide("bash", {"command": "anything"}) == "allow"
+    # but nothing was persisted
+    assert not grants_path.exists()
+
+
+async def test_always_on_flat_path_write_does_not_persist_unconstrained(tmp_path):
+    # A flat (no-slash) file_path has no parent dir -> empty match. The unconstrained
+    # allow-all write_file rule must NOT be persisted (C1).
+    from harness.permissions import PermissionEngine
+
+    grants_path = tmp_path / "grants.toml"
+    engine = PermissionEngine([], grants_path=grants_path)
+
+    async def ask(request):
+        return "always"
+
+    resolver = TuiResolver(ask=ask, engine=engine)
+    req = PermissionRequest(
+        call_id=CallId("c2"),
+        action=ProposedToolCall(
+            call_id=CallId("c2"), tool=ToolName("write_file"), args={"file_path": "notes.txt"}
+        ),
+        reason="ask",
+    )
+    assert await resolver.resolve(req) is True
+    assert not grants_path.exists()

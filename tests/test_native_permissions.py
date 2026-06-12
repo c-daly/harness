@@ -1,5 +1,7 @@
 """Permission addressing of natives: baseline, arg-aware grants, desugar, compound guard."""
 
+import pytest
+
 from harness.hooks import Allow, Ask, ProposedModelCall, ProposedToolCall
 from harness.interaction import PermissionRequest
 from harness.native_tools import CompoundCommandGuard, baseline_ruleset, desugar_pattern
@@ -94,3 +96,23 @@ def test_replace_all_bool_arg_matches_string_true():
     # R-T8: arg coercion - a rule on a bool arg matches its str() form
     rule = PermissionRule(action="ask", tool="edit_file", match={"replace_all": "True"})
     assert rule.matches("edit_file", {"replace_all": True})
+
+
+def test_desugar_malformed_raises():
+    # an unclosed open-paren typo and an empty pattern both raise (never a dead rule)
+    with pytest.raises(ValueError):
+        desugar_pattern("bash(git *")
+    with pytest.raises(ValueError):
+        desugar_pattern("")
+
+
+async def test_compound_guard_asks_on_background_and_redirect():
+    guard = CompoundCommandGuard()
+    backgrounded = ProposedToolCall(
+        call_id=CallId("c6"), tool=ToolName("bash"), args={"command": "evil " + chr(38) + " legit"}
+    )
+    assert isinstance(await guard(backgrounded), Ask)
+    redirect = ProposedToolCall(
+        call_id=CallId("c7"), tool=ToolName("bash"), args={"command": "echo hi > /tmp/x"}
+    )
+    assert isinstance(await guard(redirect), Ask)

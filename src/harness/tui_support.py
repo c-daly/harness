@@ -155,6 +155,10 @@ class TuiResolver:
                 # bash grants are session-scoped unless explicitly opted into persistence (L5);
                 # workspace-qualified path grants are safe to persist.
                 persist = (tool != "bash") or os.environ.get("HARNESS_PERSIST_GRANTS") == "1"
-                self.engine.grant(tool, match or None, persist=persist)
+                if match:
+                    self.engine.grant(tool, match, persist=persist)
+                else:
+                    # empty match = allow-all-tool; never persist that from a single keystroke
+                    self.engine.grant(tool, None, persist=False)
             return True
         return answer == "allow"

@@ -630,7 +630,9 @@ class BashTool:
 # Primary-arg table for the compact-form desugarer (frozen, R-Sa6). Paths come from
 # workspace.PATH_ARG; bash/glob/grep add their own primary arg.
 _PRIMARY_ARG = {**PATH_ARG, "bash": "command", "glob": "pattern", "grep": "pattern"}
-_COMPOUND_TOKENS = (";", "&&", "||", "|", "$(", "`", "\n")
+# Substring-membership tokens (the check is `tok in command`): "&" alone covers "&&"
+# (backgrounding `evil & legit`); ">" catches redirects that can escape confinement.
+_COMPOUND_TOKENS = (";", "&", "||", "|", "$(", "`", "\n", ">")
 
 
 def baseline_ruleset() -> RuleSet:
@@ -654,6 +656,8 @@ def desugar_pattern(pattern: str) -> PermissionRule:
     """Expand Claude-Code-style compact form `tool(argpattern)` into a PermissionRule.
     A bare string with no parens is a tool-name glob (back-compat with todays --allow)."""
     pattern = pattern.strip()
+    if not pattern:
+        raise ValueError("malformed pattern: empty (expected a tool name or tool(argpattern))")
     if pattern.endswith(")") and "(" in pattern:
         tool, inner = pattern[:-1].split("(", 1)
         tool = tool.strip()
@@ -664,13 +668,26 @@ def desugar_pattern(pattern: str) -> PermissionRule:
                 f"use explicit [[rules]] with a match table."
             )
         return PermissionRule(action="allow", tool=tool, match={key: inner})
+    if "(" in pattern:
+        # an open paren that never closes (typo like bash(git *) must not silently
+        # degrade to a dead bare-tool rule that matches nothing.
+        raise ValueError(
+            f"malformed pattern: {pattern!r} has an unclosed open-paren; "
+            f"compact grants are tool(argpattern)."
+        )
     return PermissionRule(action="allow", tool=pattern)
 
 
 class CompoundCommandGuard:
     """Ask hook at priority 950: force a prompt on compound bash commands even when a
     bash(prefix *) allow would match (R-Sa3). Ask survives a later Allow (first-Ask-wins);
-    deny stays absolute. Heuristic, NOT containment -- documented."""
+    deny stays absolute. Heuristic, NOT containment -- documented.
+
+    Accepted false positive: a quoted pipe/redirect inside an argument (e.g. a grep with
+    an alternation pattern) triggers an Ask it neednt -- Ask-only, so it degrades to the
+    engines own decision, never a hard block. Known gap: an inner shell hides compounding
+    from the outer level -- a sh -c with a piped command inside reads as a single token
+    here and is NOT flagged."""
 
     name = "bash-compound-guard"
     priority = 950  # below the engine at 1000, above plugin default 100
