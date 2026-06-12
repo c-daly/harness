@@ -67,7 +67,8 @@ class PermissionScreen(ModalScreen[str]):
     def compose(self) -> ComposeResult:
         action = self.request.action
         what = (
-            f"tool {action.tool}" if isinstance(action, ProposedToolCall)
+            f"tool {action.tool}"
+            if isinstance(action, ProposedToolCall)
             else f"model {action.model}"
         )
         with Vertical(id="permission-box"):
@@ -179,14 +180,38 @@ class HarnessApp(App[None]):
             self._render_resumed_history()
         self.kernel.loop.on_chunk = self._on_chunk
         for tag in kernel.tags:
-            kernel.session.append(
-                CustomEvent(namespace="harness", name="tag", data={"tag": tag})
-            )
+            kernel.session.append(CustomEvent(namespace="harness", name="tag", data={"tag": tag}))
         # Subscribe before flush_events() so MCP lifecycle events (server_started etc)
         # are not missed: flush_events() publishes to the bus synchronously.
         _bus_queue = self.kernel.session.bus.subscribe()
         if kernel.mcp is not None:
             kernel.mcp.flush_events()
+        # Mirror run_once: plugin warnings + plugin_loaded events land here, after
+        # loop.start()/tags/flush, then per-subscriber pumps run as driver workers
+        # (Textual cancels the driver group at app exit -- no explicit teardown).
+        if kernel.plugins is not None:
+            from harness.plugins import _pump
+
+            for warning in kernel.plugin_warnings:
+                self.say("! ", warning)
+            for plugin in kernel.plugins.plugins:
+                kernel.session.append(
+                    CustomEvent(
+                        namespace="plugin",
+                        name="plugin_loaded",
+                        data={"plugin": plugin.name, "version": plugin.version},
+                    )
+                )
+                for sub_def in plugin.subscribers:
+                    fn = plugin.subscriber_callables.get(sub_def.name)
+                    if fn is None:
+                        continue
+                    _sub_queue = kernel.session.bus.subscribe(maxsize=1024)
+                    self.run_worker(
+                        _pump(_sub_queue, fn, sub_def.name, kernel.session),
+                        group="driver",
+                        exit_on_error=False,
+                    )
         self.run_worker(self._bus_pump(_bus_queue), group="driver", exit_on_error=False)
         self.set_interval(1.0, self.refresh_stats)
 
@@ -274,7 +299,7 @@ class HarnessApp(App[None]):
             raise  # _after_interrupt owns cleanup; keep _stream_buffer for it to preserve
         except Exception as exc:
             self._clear_live()
-            self.kernel.loop.repair_turn()      # orphaned user msg is benign;
+            self.kernel.loop.repair_turn()  # orphaned user msg is benign;
             self.say("! ", f"turn failed: {exc}")  # unpaired tool calls are not
             return
         self._clear_live()
@@ -292,9 +317,7 @@ class HarnessApp(App[None]):
         elif command.name == "model":
             # catalog.resolve lazily imports litellm (seconds) -- never block the
             # message handler; the switch applies on the next dispatch anyway
-            self.run_worker(
-                self._switch_model(command.arg), group="driver", exit_on_error=False
-            )
+            self.run_worker(self._switch_model(command.arg), group="driver", exit_on_error=False)
         else:
             self.say("! ", f"unknown command: /{command.name}")
 
@@ -351,7 +374,7 @@ class HarnessApp(App[None]):
                 pass
             self.kernel.loop.interrupt_turn()
             if self._stream_buffer:
-                self.say("~ ", self._stream_buffer)   # keep the partial visible
+                self.say("~ ", self._stream_buffer)  # keep the partial visible
             self._clear_live()
             self.say("! ", "interrupted")
         finally:
@@ -366,7 +389,7 @@ class HarnessApp(App[None]):
         try:
             await self.kernel.loop.end()
         except RuntimeError:
-            pass                                    # already ended elsewhere
+            pass  # already ended elsewhere
         except Exception as exc:
             self.say("! ", f"end failed: {exc}")
 
@@ -374,9 +397,7 @@ class HarnessApp(App[None]):
         await self._finish()
 
 
-async def run_tui(
-    kernel: Kernel, *, catalog_path=None, ask: "AppBoundAsk | None" = None
-) -> None:
+async def run_tui(kernel: Kernel, *, catalog_path=None, ask: "AppBoundAsk | None" = None) -> None:
     app = HarnessApp(kernel, catalog_path=catalog_path, ask=ask)
     try:
         await app.run_async()

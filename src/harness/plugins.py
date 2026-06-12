@@ -480,10 +480,10 @@ def load_plugins(dirs: Sequence[Path]) -> LoadedPlugins:
 def apply_plugins(loaded: LoadedPlugins, *, registry, hooks, agents_sink: dict) -> list[str]:
     """Register everything register-able at kernel-build time. Returns warnings.
     Raises PluginError on tool-name collisions (loud, the tools.py promise)."""
-    from harness.skills import InvokeSkillTool, SkillSet, skills_inventory_hook
-
     taken = {str(s.name) for s in registry.specs()}
     if loaded.skills:
+        from harness.skills import InvokeSkillTool, SkillSet, skills_inventory_hook
+
         skill_set = SkillSet(tuple(loaded.skills))
         tool = InvokeSkillTool(skill_set)
         if str(tool.spec.name) in taken:

@@ -36,6 +36,7 @@ class Kernel:
     mcp: McpHost | None = None
     plugins: "LoadedPlugins | None" = None
     plugin_warnings: list[str] = field(default_factory=list)
+    _plugin_pumps: list = field(default_factory=list)
 
 
 def build_kernel(
@@ -137,6 +138,8 @@ async def run_once(kernel: Kernel, prompt: str) -> str:
         if kernel.mcp is not None:
             kernel.mcp.flush_events()
         if kernel.plugins is not None:
+            for warning in kernel.plugin_warnings:
+                print(f"warning: {warning}", file=sys.stderr)
             for _plugin in kernel.plugins.plugins:
                 kernel.session.append(
                     CustomEvent(
@@ -145,7 +148,8 @@ async def run_once(kernel: Kernel, prompt: str) -> str:
                         data={"plugin": _plugin.name, "version": _plugin.version},
                     )
                 )
-        pump_tasks = start_subscriber_pumps(kernel)
+            kernel._plugin_pumps = start_subscriber_pumps(kernel)
+            pump_tasks = kernel._plugin_pumps
         result = await kernel.loop.run_turn(prompt)
         await kernel.loop.end()
         return result
@@ -156,8 +160,10 @@ async def run_once(kernel: Kernel, prompt: str) -> str:
             pass
         raise
     finally:
-        for _task in pump_tasks:
-            _task.cancel()
+        if pump_tasks:
+            for _task in pump_tasks:
+                _task.cancel()
+            await asyncio.gather(*pump_tasks, return_exceptions=True)
         # stop() then flush() BEFORE session.close(): server_stopped lands in the log;
         # closed sessions drop events.
         # server teardown is post-session: session_ended is NOT the final envelope when
@@ -342,7 +348,7 @@ def _run_main() -> None:
 
     loaded_plugins = None
     if not args.no_plugins:
-        from harness.plugins import load_plugins
+        from harness.plugins import PluginError, load_plugins
 
         config_home = Path.home() / ".config" / "harness"
         plugin_dirs = []
@@ -352,9 +358,10 @@ def _run_main() -> None:
                 plugin_dirs.append(_d)
         plugin_dirs.extend(args.plugin_dir)
         if plugin_dirs:
-            loaded_plugins = load_plugins(plugin_dirs)
-            for warning in loaded_plugins.warnings:
-                print(f"warning: {warning}", file=__import__("sys").stderr)
+            try:
+                loaded_plugins = load_plugins(plugin_dirs)
+            except PluginError as exc:
+                raise SystemExit(f"plugin error: {exc}") from exc
             if loaded_plugins.mcp_servers:
                 plugin_specs = {s.name: s for s in loaded_plugins.mcp_servers}
                 config_specs = {s.name: s for s in mcp_specs}
