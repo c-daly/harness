@@ -6,6 +6,8 @@ asyncio.to_thread; bash uses an async subprocess (see BashTool, Task 5).
 """
 
 import asyncio
+import fnmatch as _fnmatch
+import re
 import weakref
 from pathlib import Path
 from typing import Any
@@ -293,3 +295,169 @@ class EditFileTool:
         lo = max(0, idx - _EDIT_SNIPPET_CONTEXT)
         hi = min(len(lines), idx + _EDIT_SNIPPET_CONTEXT + 1)
         return _format_numbered(lines[lo:hi], lo + 1)
+
+
+_IGNORE_DIRS = frozenset({".git", "node_modules", "__pycache__", ".venv"})
+_GLOB_CAP = 100
+_GREP_FILE_CAP = 100
+_GREP_LINE_CAP = 100
+_GREP_LINE_MAX = 250
+
+
+def _walk_workspace(base: Path):
+    """Yield files under base, skipping the shared ignore set. The ONE walk glob and
+    grep share so their world-views never diverge (R-C6)."""
+    stack = [base]
+    while stack:
+        d = stack.pop()
+        try:
+            entries = list(d.iterdir())
+        except OSError:
+            continue
+        for entry in entries:
+            if entry.is_dir():
+                if entry.name not in _IGNORE_DIRS:
+                    stack.append(entry)
+            elif entry.is_file():
+                yield entry
+
+
+class GlobTool:
+    def __init__(self, *, workspace_root: Path) -> None:
+        self._root = workspace_root
+        self.spec = ToolSpec(
+            name=ToolName("glob"),
+            description=(
+                "Find files by glob pattern (*, ?, **, [..]), newest first. Searches the "
+                "workspace root (or path). Skips .git, node_modules, __pycache__, .venv. "
+                "Returns absolute paths."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "pattern": {"type": "string"},
+                    "path": {"type": "string"},
+                },
+                "required": ["pattern"],
+            },
+        )
+
+    async def __call__(self, args: dict[str, Any]) -> str:
+        base = _resolve(self._root, args["path"]) if args.get("path") else self._root.resolve()
+        return await asyncio.to_thread(self._glob, base, str(args["pattern"]))
+
+    def _glob(self, base: Path, pattern: str) -> str:
+        if not base.exists():
+            raise ToolError(f"search path does not exist: {base}")
+        matched = [
+            p
+            for p in _walk_workspace(base)
+            if _fnmatch.fnmatch(str(p.relative_to(base)), pattern)
+            or _fnmatch.fnmatch(p.name, pattern)
+        ]
+        matched.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+        if not matched:
+            return f"No files matched {pattern!r} under {base}."
+        shown = matched[:_GLOB_CAP]
+        body = "\n".join(str(p) for p in shown)
+        if len(matched) > _GLOB_CAP:
+            body += (
+                f"\n\nShowing {_GLOB_CAP} of {len(matched)} matches (newest first). "
+                f"Narrow the pattern or path."
+            )
+        return body
+
+
+class GrepTool:
+    def __init__(self, *, workspace_root: Path) -> None:
+        self._root = workspace_root
+        self.spec = ToolSpec(
+            name=ToolName("grep"),
+            description=(
+                "Search file contents by regular expression (Python re syntax: no lookbehind/"
+                "backreferences). output_mode files_with_matches (default) or content. Optional "
+                "glob filter. Skips the same ignore set as glob. Returns absolute paths."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "pattern": {"type": "string"},
+                    "path": {"type": "string"},
+                    "glob": {"type": "string"},
+                    "output_mode": {
+                        "type": "string",
+                        "enum": ["files_with_matches", "content"],
+                    },
+                    "case_insensitive": {"type": "boolean", "default": False},
+                },
+                "required": ["pattern"],
+            },
+        )
+
+    async def __call__(self, args: dict[str, Any]) -> str:
+        base = _resolve(self._root, args["path"]) if args.get("path") else self._root.resolve()
+        return await asyncio.to_thread(self._grep, base, args)
+
+    def _grep(self, base: Path, args: dict[str, Any]) -> str:
+        if not base.exists():
+            raise ToolError(f"search path does not exist: {base}")
+        flags = re.IGNORECASE if args.get("case_insensitive") else 0
+        pattern = str(args["pattern"])
+        try:
+            rx = re.compile(pattern, flags)
+        except re.error as exc:
+            raise ToolError(
+                f"invalid regex: {pattern!r} — {exc}. Python re syntax does not support "
+                f"lookbehind or backreferences; restructure the pattern."
+            ) from exc
+        file_glob = args.get("glob")
+        mode = args.get("output_mode", "files_with_matches")
+        if base.is_dir():
+            files = list(_walk_workspace(base))
+        else:
+            files = [base]
+        if file_glob:
+            files = [p for p in files if _fnmatch.fnmatch(p.name, file_glob)]
+        if mode == "content":
+            return self._grep_content(rx, files, pattern, base)
+        return self._grep_files(rx, files, pattern, base)
+
+    def _grep_files(self, rx, files, pattern, base) -> str:
+        hits = []
+        for p in files:
+            try:
+                if rx.search(p.read_text(encoding="utf-8", errors="replace")):
+                    hits.append(str(p))
+            except OSError:
+                continue
+            if len(hits) >= _GREP_FILE_CAP:
+                break
+        if not hits:
+            return f"No matches found for {pattern!r} in {base} (respecting the ignore set)."
+        return "\n".join(hits)
+
+    def _grep_content(self, rx, files, pattern, base) -> str:
+        out, total = [], 0
+        for p in files:
+            try:
+                lines = p.read_text(encoding="utf-8", errors="replace").split("\n")
+            except OSError:
+                continue
+            for n, line in enumerate(lines, 1):
+                if rx.search(line):
+                    shown = line if len(line) <= _GREP_LINE_MAX else line[:_GREP_LINE_MAX] + "…"
+                    out.append(f"{p}:{n}:{shown}")
+                    total += 1
+                    if total >= _GREP_LINE_CAP:
+                        break
+            if total >= _GREP_LINE_CAP:
+                break
+        if not out:
+            return f"No matches found for {pattern!r} in {base} (respecting the ignore set)."
+        body = "\n".join(out)
+        if total >= _GREP_LINE_CAP:
+            body += (
+                f"\n\nShowing {_GREP_LINE_CAP} matching lines (cap). Refine the pattern, add a "
+                f"glob filter, or search a subdirectory."
+            )
+        return body
