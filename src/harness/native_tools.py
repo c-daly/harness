@@ -7,7 +7,9 @@ asyncio.to_thread; bash uses an async subprocess (see BashTool, Task 5).
 
 import asyncio
 import fnmatch as _fnmatch
+import os
 import re
+import signal
 import weakref
 from pathlib import Path
 from typing import Any
@@ -484,3 +486,122 @@ class GrepTool:
                 f"glob filter, or search a subdirectory."
             )
         return body
+
+
+# ---------------------------------------------------------------------------
+# BashTool
+# ---------------------------------------------------------------------------
+
+_BASH_DEFAULT_TIMEOUT_MS = 120_000
+_BASH_MAX_TIMEOUT_MS = 600_000
+_BASH_OUTPUT_CAP = 30_000  # chars; head ~10k + tail ~20k (L3)
+_BASH_HEAD = 10_000
+_SCRUB_SUFFIX = "_API_KEY"  # never-literals: we name the SHAPE, not specific secrets
+
+
+def _scrubbed_env() -> dict[str, str]:
+    """Inherit the harness env minus any *_API_KEY the provider layer holds (R-C12), plus
+    non-interactive defaults. Names the shape of secret vars, never embeds a literal."""
+    env = {k: v for k, v in os.environ.items() if not k.endswith(_SCRUB_SUFFIX)}
+    env.update(
+        {
+            "NO_COLOR": "1",
+            "PAGER": "cat",
+            "GIT_PAGER": "cat",
+            "GIT_TERMINAL_PROMPT": "0",
+            "CI": "true",
+        }
+    )
+    return env
+
+
+def _truncate_output(text: str) -> str:
+    if len(text) <= _BASH_OUTPUT_CAP:
+        return text
+    omitted = len(text) - _BASH_OUTPUT_CAP
+    head = text[:_BASH_HEAD]
+    tail = text[-(_BASH_OUTPUT_CAP - _BASH_HEAD) :]
+    return (
+        f"{head}\n[... output truncated: {omitted} chars omitted. Re-run with a filter "
+        f"(grep/head/tail) for the omitted middle ...]\n{tail}"
+    )
+
+
+class BashTool:
+    def __init__(self, *, workspace_root: Path) -> None:
+        self._root = workspace_root
+        self.spec = ToolSpec(
+            name=ToolName("bash"),
+            description=(
+                "Run a shell command via bash -c at the workspace root. The working directory "
+                "resets each call (stateless) \u2014 use absolute paths or cd dir && your-command "
+                "compounds. stderr is merged into stdout. Default timeout 120s, max 600s."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "command": {"type": "string"},
+                    "timeout_ms": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": _BASH_MAX_TIMEOUT_MS,
+                    },
+                    "description": {"type": "string"},
+                },
+                "required": ["command"],
+            },
+        )
+
+    async def __call__(self, args: dict[str, Any]) -> str:
+        command = str(args.get("command", "")).strip()
+        if not command:
+            raise ToolError("command is empty.")
+        timeout_ms = min(
+            int(args.get("timeout_ms") or _BASH_DEFAULT_TIMEOUT_MS), _BASH_MAX_TIMEOUT_MS
+        )
+        tokens = command.split()
+        bare_cd = bool(tokens) and tokens[0] == "cd" and "&&" not in command
+        proc = await asyncio.create_subprocess_exec(
+            "bash",
+            "-c",
+            command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+            stdin=asyncio.subprocess.DEVNULL,
+            cwd=str(self._root.resolve()),
+            env=_scrubbed_env(),
+            start_new_session=True,
+        )
+        try:
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout_ms / 1000)
+        except asyncio.TimeoutError:
+            self._kill_group(proc)
+            await proc.wait()
+            raise ToolError(
+                f"command timed out after {timeout_ms}ms (timeout_ms can be raised to "
+                f"{_BASH_MAX_TIMEOUT_MS}). The process group was killed."
+            ) from None
+        except asyncio.CancelledError:
+            self._kill_group(proc)
+            await proc.wait()
+            raise
+        text = _truncate_output(stdout.decode("utf-8", errors="replace"))
+        rc = proc.returncode or 0
+        if bare_cd:
+            note = (
+                "Note: cd has no effect across calls \u2014 the working directory resets each call. "
+                "Combine it: cd dir && your-command."
+            )
+            text = (text + "\n" + note) if text else note
+        elif not text:
+            text = "(no output)"
+        if rc != 0:
+            text += f"\nExit code: {rc}"
+        return text
+
+    @staticmethod
+    def _kill_group(proc) -> None:
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
