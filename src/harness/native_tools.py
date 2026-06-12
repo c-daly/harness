@@ -560,19 +560,31 @@ class BashTool:
             int(args.get("timeout_ms") or _BASH_DEFAULT_TIMEOUT_MS), _BASH_MAX_TIMEOUT_MS
         )
         tokens = command.split()
-        bare_cd = bool(tokens) and tokens[0] == "cd" and "&&" not in command
-        proc = await asyncio.create_subprocess_exec(
-            "bash",
-            "-c",
-            command,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-            stdin=asyncio.subprocess.DEVNULL,
-            cwd=str(self._root.resolve()),
-            env=_scrubbed_env(),
-            start_new_session=True,
+        # heuristic: best-effort; compound forms suppress the teachback
+        bare_cd = (
+            bool(tokens)
+            and tokens[0] == "cd"
+            and not any(op in command for op in ("&&", ";", "||", "\n"))
         )
         try:
+            proc = await asyncio.create_subprocess_exec(
+                "bash",
+                "-c",
+                command,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+                stdin=asyncio.subprocess.DEVNULL,
+                cwd=str(self._root.resolve()),
+                env=_scrubbed_env(),
+                start_new_session=True,
+            )
+        except OSError as exc:
+            raise ToolError(
+                f"could not start bash: {exc}. Check that /bin/bash exists and is executable."
+            ) from exc
+        try:
+            # communicate() buffers the full output in memory before truncation
+            # (accepted v1 trade per the plan's resolved risks).
             stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout_ms / 1000)
         except asyncio.TimeoutError:
             self._kill_group(proc)
@@ -583,10 +595,12 @@ class BashTool:
             ) from None
         except asyncio.CancelledError:
             self._kill_group(proc)
-            await proc.wait()
+            # shield the reap: a second cancellation during the (near-instant,
+            # post-SIGKILL) wait must not skip it and leave a zombie.
+            await asyncio.shield(proc.wait())
             raise
         text = _truncate_output(stdout.decode("utf-8", errors="replace"))
-        rc = proc.returncode or 0
+        rc = int(proc.returncode)
         if bare_cd:
             note = (
                 "Note: cd has no effect across calls \u2014 the working directory resets each call. "

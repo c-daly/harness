@@ -49,13 +49,17 @@ async def test_timeout_raises_and_kills_process(tmp_path):
 
 
 async def test_timeout_kills_whole_group(tmp_path):
-    # a child that outlives its parent shell: if only the shell is killed, the
-    # grandchild keeps running and creates the marker after the timeout window.
+    # Load-bearing kill test. The grandchild sleeps 0.2s (just past the 0.1s
+    # timeout) and would touch the marker at ~0.3s; we wait 0.5s (>> 0.2s) and
+    # assert it never did. KEEP the trailing `wait`: without it the parent bash
+    # exits immediately and the timeout would only fire via inherited-pipe
+    # blocking (fragile). If killpg were a no-op the orphaned grandchild would
+    # survive and create the marker.
     marker = tmp_path / "grandchild"
-    cmd = f"(sleep 5 && touch {marker}) & wait"
+    cmd = f"(sleep 0.2 && touch {marker}) & wait"
     with pytest.raises(ToolError):
-        await _tool(tmp_path)({"command": cmd, "timeout_ms": 150})
-    await asyncio.sleep(0.4)  # past the grandchild sleep; killpg must have prevented the touch
+        await _tool(tmp_path)({"command": cmd, "timeout_ms": 100})
+    await asyncio.sleep(0.5)  # well past the 0.2s grandchild sleep
     assert not marker.exists()
 
 
@@ -63,6 +67,16 @@ async def test_env_scrub_hides_provider_key(tmp_path, monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-secret")
     out = await _tool(tmp_path)({"command": 'printf %s "${ANTHROPIC_API_KEY:-MISSING}"'})
     assert out == "MISSING"
+
+
+async def test_spawn_failure_raises_toolerror(tmp_path, monkeypatch):
+    async def _boom(*a, **k):
+        raise FileNotFoundError("bash")
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _boom)
+    with pytest.raises(ToolError) as exc:
+        await _tool(tmp_path)({"command": "printf hi"})
+    assert "could not start" in str(exc.value)
 
 
 async def test_bare_cd_teachback(tmp_path):
