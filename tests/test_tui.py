@@ -574,11 +574,13 @@ async def test_tui_pipes_mcp_child_stderr_to_file(tmp_path):
         await pilot.click("#prompt")
         await pilot.press(*"hi", "enter")
         await pilot.pause(0.3)
-    errlog_path = tmp_path / "sessions" / str(kernel.session.id) / "mcp-stderr.log"
-    assert errlog_path.exists()
-    assert "ListToolsRequest" in errlog_path.read_text()
-    # close what run_tui would close in its finally (run_test does not run run_tui)
-    if app._mcp_errlog is not None:
-        app._mcp_errlog.close()
-    await kernel.mcp.stop()
-    kernel.session.close()
+    try:
+        errlog_path = tmp_path / "sessions" / str(kernel.session.id) / "mcp-stderr.log"
+        assert errlog_path.exists()
+        assert "ListToolsRequest" in errlog_path.read_text()
+    finally:
+        # close what run_tui would close in its finally (run_test does not run run_tui)
+        if app._mcp_errlog is not None:
+            app._mcp_errlog.close()
+        await kernel.mcp.stop()
+        kernel.session.close()

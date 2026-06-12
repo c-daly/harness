@@ -262,7 +262,10 @@ class McpHost:
     Single-use: one McpHost per HookBus/registry per process (start() guards
     re-entry; a second host on the same bus would duplicate the instructions
     hook). A dead connection keeps its last instructions: subagent sessions
-    started after a server died still inject them (harmless; tools fail fast)."""
+    started after a server died still inject them (harmless; tools fail fast).
+
+    errlog may be given at construction or assigned to the public attribute
+    any time before start(); None = children inherit stderr."""
 
     def __init__(
         self,
