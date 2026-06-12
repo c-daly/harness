@@ -206,18 +206,19 @@ def test_lifecycle_hook_invalid_point_is_loud(tmp_path):
 
 
 @pytest.mark.parametrize(
-    "extra,fragment",
+    "manifest,fragment",
     [
-        ("mcp = 42\n", "[mcp] must be a table"),
-        ("emitters = [1]\n", "[emitters] must be a table"),
-        ("subscribers = 42\n", "array of tables"),
-        ('[hooks]\nmodule = "h.py"\ndispatch = 42\n', "array of tables"),
-        ('[hooks]\nmodule = "h.py"\nlifecycle = 42\n', "array of tables"),
-        ('[hooks]\nmodule = "h.py"\nbogus = 1\n', "unknown [hooks] keys"),
+        # top-level scalars must come BEFORE [plugin] or TOML scopes them inside it
+        ("mcp = 42\n" + MINIMAL_MANIFEST, "[mcp] must be a table"),
+        ("emitters = [1]\n" + MINIMAL_MANIFEST, "[emitters] must be a table"),
+        ("subscribers = 42\n" + MINIMAL_MANIFEST, "array of tables"),
+        (MINIMAL_MANIFEST + '[hooks]\nmodule = "h.py"\ndispatch = 42\n', "array of tables"),
+        (MINIMAL_MANIFEST + '[hooks]\nmodule = "h.py"\nlifecycle = 42\n', "array of tables"),
+        (MINIMAL_MANIFEST + '[hooks]\nmodule = "h.py"\nbogus = 1\n', "unknown [hooks] keys"),
     ],
 )
-def test_wrong_typed_sections_are_plugin_errors(tmp_path, extra, fragment):
-    write_plugin(tmp_path, manifest=MINIMAL_MANIFEST + extra)
+def test_wrong_typed_sections_are_plugin_errors(tmp_path, manifest, fragment):
+    write_plugin(tmp_path, manifest=manifest)
     with pytest.raises(PluginError) as exc:
         load_plugins([tmp_path])
     assert fragment in str(exc.value)
