@@ -1,6 +1,7 @@
 """CC plugin reader: structure-only walk into a typed CcPlugin (no conversion yet)."""
 
 import json
+import os
 
 import pytest
 
@@ -164,3 +165,53 @@ def test_binary_skill_body_does_not_crash_the_walk(tmp_path):
     cc = read_cc_plugin(root)
     assert cc.skills == ()
     assert any(s.category == "malformed" for s in cc.skips)
+
+
+def test_symlinked_asset_outside_root_not_collected(tmp_path):
+    # A skill-dir asset that symlinks outside the root must not be collected (it would
+    # exfiltrate external content when read downstream).
+    secret = tmp_path / "secret.txt"
+    secret.write_text("TOP SECRET\n")
+    root = write_cc(tmp_path / "p", files={"skills/remembering/SKILL.md": SKILL_MD})
+    (root / "skills" / "remembering" / "data.md").symlink_to(secret)
+    cc = read_cc_plugin(root)
+    (skill,) = cc.skills
+    assert "data.md" not in skill.assets
+    # the legitimate SKILL.md still parsed; no external path leaked into assets
+    assert all("secret" not in str(p) for p in skill.assets.values())
+
+
+def test_symlinked_dir_outside_root_not_traversed(tmp_path):
+    # A top-level symlinked dir pointing outside the root must not be traversed; the
+    # symlink itself may appear as a single skip, but no external file is enumerated.
+    external = tmp_path / "external"
+    external.mkdir()
+    (external / "leak.txt").write_text("LEAK\n")
+    root = write_cc(tmp_path / "p")
+    (root / "linked").symlink_to(external, target_is_directory=True)
+    cc = read_cc_plugin(root)
+    # the symlink was never traversed: no enumerated child of the external tree appears
+    assert not any("leak.txt" in s.relpath for s in cc.skips)
+    assert not any(s.relpath.startswith("linked/") for s in cc.skips)
+    # the symlink itself is recorded as exactly one skip under its own name
+    linked_skips = [s for s in cc.skips if s.relpath == "linked"]
+    assert len(linked_skips) == 1
+
+
+def test_oversize_def_skipped_without_reading(tmp_path):
+    # A def larger than the cap is recorded as oversize and never read into memory.
+    root = write_cc(tmp_path / "p", files={"skills/big/SKILL.md": "placeholder\n"})
+    big = root / "skills" / "big" / "SKILL.md"
+    os.truncate(big, 1 * 1024 * 1024 + 1)
+    cc = read_cc_plugin(root)
+    assert cc.skills == ()
+    assert any(s.category == "oversize" and "big" in s.relpath for s in cc.skips)
+
+
+def test_bom_skill_parses(tmp_path):
+    # A SKILL.md with a UTF-8 BOM parses (utf-8-sig) instead of skipping as malformed.
+    root = write_cc(tmp_path / "p", files={"skills/bom/SKILL.md": ("\ufeff" + SKILL_MD)})
+    cc = read_cc_plugin(root)
+    (skill,) = cc.skills
+    assert skill.name == "bom"
+    assert skill.meta["description"] == "When to write memories"

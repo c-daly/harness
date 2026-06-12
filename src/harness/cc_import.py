@@ -14,6 +14,7 @@ from disk; the converters (added in later tasks) are pure functions over that mo
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Literal
 
 from harness.frontmatter import FrontmatterError, split_frontmatter
 
@@ -24,6 +25,19 @@ _BUILD_DIRS = {"tests", "test", "logs", "bin", "node_modules", "__pycache__", ".
 _BUILD_FILES = {"pyproject.toml", "poetry.lock", "package-lock.json", "uv.lock", "err.txt"}
 _TEXT_EXTS = {".md", ".txt", ".json", ".toml", ".yaml", ".yml", ".cfg", ".rst"}
 _BINARY_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico", ".pdf", ".zip", ".so", ".bin"}
+# Oversize guard: a def larger than this is recorded, never read into memory (DoS guard).
+_MAX_DEF_BYTES = 1 * 1024 * 1024
+
+# The skip taxonomy; the seven converters (later tasks) filter on these strings.
+SkipCategory = Literal[
+    "foreign-harness",
+    "housekeeping",
+    "build",
+    "binary",
+    "malformed",
+    "oversize",
+    "unknown",
+]
 
 
 class CcImportError(Exception):
@@ -47,7 +61,7 @@ class Skip:
     """A file/dir the importer will not convert, recorded by category for the report."""
 
     relpath: str
-    category: str  # foreign-harness | housekeeping | build | binary | malformed | unknown
+    category: SkipCategory
 
 
 @dataclass
@@ -64,6 +78,8 @@ class CcPlugin:
     skills: tuple[RawDef, ...] = ()
     commands: tuple[RawDef, ...] = ()
     agents: tuple[RawDef, ...] = ()
+    # None = file absent; "" = present but empty. Converters must check
+    # `is not None`, not truthiness, to tell the two cases apart.
     mcp_json_text: str | None = None
     hooks_json_text: str | None = None
     skips: tuple[Skip, ...] = ()
@@ -86,9 +102,19 @@ def _read_meta(root: Path) -> dict:
 
 
 def _parse_def(path: Path, *, name: str, skips: list[Skip], root: Path) -> RawDef | None:
-    """Split frontmatter; record a malformed skip instead of raising on bad files."""
+    """Split frontmatter; record a malformed/oversize skip instead of raising on bad files."""
     try:
-        text = path.read_text(encoding="utf-8")
+        size = path.stat().st_size
+    except OSError:
+        skips.append(Skip(relpath=str(path.relative_to(root)), category="malformed"))
+        return None
+    if size > _MAX_DEF_BYTES:
+        # Record without reading: a multi-megabyte def is never pulled into memory (DoS guard).
+        skips.append(Skip(relpath=str(path.relative_to(root)), category="oversize"))
+        return None
+    try:
+        # utf-8-sig strips a leading BOM so a Windows-authored def parses instead of skipping.
+        text = path.read_text(encoding="utf-8-sig")
     except (OSError, UnicodeDecodeError):
         skips.append(Skip(relpath=str(path.relative_to(root)), category="malformed"))
         return None
@@ -115,7 +141,9 @@ def _read_skills(root: Path, skips: list[Skip]) -> tuple[RawDef, ...]:
             continue
         assets: dict[str, Path] = {}
         for asset in sorted(sub.rglob("*")):
-            if asset.is_file() and asset != skill_md:
+            # Never follow symlinks (Phase 8 walk law, file links included): a link
+            # like data.md -> /etc/passwd would exfiltrate external content downstream.
+            if asset.is_file() and asset != skill_md and not asset.is_symlink():
                 assets[str(asset.relative_to(sub))] = asset
         out.append(
             RawDef(
@@ -141,7 +169,7 @@ def _read_flat(root: Path, subdir: str, skips: list[Skip]) -> tuple[RawDef, ...]
     return tuple(out)
 
 
-def _categorize_skip(rel: str, path: Path) -> str:
+def _categorize_skip(rel: str, path: Path) -> SkipCategory:
     parts = Path(rel).parts
     top = parts[0]
     if top in _FOREIGN_HARNESS:
@@ -175,9 +203,12 @@ def _read_skips(root: Path) -> tuple[Skip, ...]:
         rel = entry.name
         if rel in _RECOGNIZED_TOP:
             continue
-        if entry.is_dir():
+        # Never follow symlinks (Phase 8 walk law, file links included): a symlinked
+        # top-level dir is recorded as one Skip, never traversed, so rglob cannot
+        # enumerate (and _looks_binary cannot read) an external tree it points at.
+        if entry.is_dir() and not entry.is_symlink():
             for child in sorted(entry.rglob("*")):
-                if child.is_file():
+                if child.is_file() and not child.is_symlink():
                     crel = str(child.relative_to(root))
                     skips.append(Skip(relpath=crel, category=_categorize_skip(crel, child)))
         else:
