@@ -13,6 +13,7 @@ from harness.provider import (
     StreamStop,
     TextDelta,
     ThinkingDelta,
+    ToolCallDelta,
     Usage,
     UsageReport,
     tool_call_turn,
@@ -21,7 +22,7 @@ from harness.provider import (
 from harness.tools import ToolSpec
 from harness.tui import AppBoundAsk, HarnessApp, PermissionScreen
 from harness.tui_support import TuiResolver
-from harness.types import ModelId, ToolName
+from harness.types import CallId, ModelId, ToolName
 from tests.conftest import fixture_stdio_spec
 
 
@@ -584,3 +585,54 @@ async def test_tui_pipes_mcp_child_stderr_to_file(tmp_path):
             app._mcp_errlog.close()
         await kernel.mcp.stop()
         kernel.session.close()
+
+
+async def test_hostile_tool_name_renders_neutralized(tmp_path):
+    """Transcript rendering strips control bytes and never interprets markup
+    from tool-controlled strings (the \u2699 line renders str(tool) via _plain)."""
+    hostile = "ev\x1b[31mil\x07[bold red]X[/]\rZZ"
+
+    class HostileTool:
+        spec = ToolSpec(name=ToolName(hostile), description="", parameters={})
+
+        async def __call__(self, args):
+            return "ok"
+
+    provider = FakeProvider([
+        tool_call_turn("", ToolName(hostile), {}),
+        text_turn("done"),
+    ])
+    app = make_app(tmp_path, provider=provider, model=ModelId("fake:echo"))
+    app.kernel.registry.register(HostileTool())
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        await pilot.click("#prompt")
+        await pilot.press(*"go", "enter")
+        await pilot.pause(0.3)
+        rendered = "\n".join(str(line) for line in app.query_one(RichLog).lines)
+        assert "\x1b" not in rendered and "\x07" not in rendered and "\r" not in rendered
+        assert "done" in rendered
+
+
+async def test_malformed_stream_fails_turn_and_loop_survives(tmp_path):
+    """A provider yielding garbage tool-call JSON raises MalformedStreamError
+    (non-retryable): the TUI renders the failure, repairs, and the next turn works."""
+    provider = FakeProvider([[
+        ToolCallDelta(index=0, call_id=CallId("x1"), tool=ToolName("echo_tool"),
+                      args_json="{not json"),
+        UsageReport(usage=Usage()), StreamStop(stop_reason="tool_use"),
+    ]])
+    app = make_app(tmp_path, provider=provider, model=ModelId("fake:echo"))
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        await pilot.click("#prompt")
+        await pilot.press(*"go", "enter")
+        await pilot.pause(0.3)
+        lines = "\n".join(str(line) for line in app.query_one(RichLog).lines)
+        assert "turn failed" in lines
+        app.kernel.loop.provider = EchoProvider()
+        await pilot.click("#prompt")
+        await pilot.press(*"again", "enter")
+        await pilot.pause(0.3)
+        lines = "\n".join(str(line) for line in app.query_one(RichLog).lines)
+        assert "echo: again" in lines
