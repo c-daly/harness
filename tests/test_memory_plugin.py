@@ -286,6 +286,24 @@ def test_session_brief_kill_switch(tmp_path, monkeypatch):
     assert result == []
 
 
+def test_session_brief_fail_open_broken_dir(tmp_path, monkeypatch):
+    # HARNESS_MEMORY_DIR pointing at a FILE, not a dir: session start must survive
+    from harness.plugins import load_plugins
+
+    not_a_dir = tmp_path / "not-a-dir"
+    not_a_dir.write_text("I am a file", encoding="utf-8")
+    monkeypatch.setenv("HARNESS_MEMORY_DIR", str(not_a_dir))
+
+    plugins_dir = Path(__file__).parent.parent / "plugins"
+    loaded = load_plugins([plugins_dir])
+    mem = next(p for p in loaded.plugins if p.name == "memory")
+    fn = mem.lifecycle_callables["brief"]
+    result = fn({})
+    assert isinstance(result, list)
+    if result:  # empty-store brief is acceptable; raising is not
+        assert "# Memory" in result[0].text
+
+
 # ---------------------------------------------------------------------------
 # MCP server in-memory test (mirrors test_mcp_host.py memory_transport pattern)
 # ---------------------------------------------------------------------------
