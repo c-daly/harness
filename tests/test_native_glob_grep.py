@@ -134,3 +134,20 @@ async def test_grep_files_cap_notice(tmp_path):
         (root / f"m{i}.txt").write_text("needle\n")
     out = await GrepTool(workspace_root=root)({"pattern": "needle"})
     assert f"Showing first {_GREP_FILE_CAP} files with matches" in out
+
+
+async def test_glob_toctou_deleted_file_does_not_crash(tmp_path, monkeypatch):
+    # a file vanishing between the walk and the mtime sort must degrade order, not raise
+    import harness.native_tools as nt
+
+    real = tmp_path / "real.py"
+    real.write_text("x\n")
+    phantom = tmp_path / "gone.py"  # never created -> p.stat() raises FileNotFoundError
+
+    def fake_walk(base):
+        yield phantom
+        yield real
+
+    monkeypatch.setattr(nt, "_walk_workspace", fake_walk)
+    out = await GlobTool(workspace_root=tmp_path)({"pattern": "*.py"})
+    assert str(real) in out

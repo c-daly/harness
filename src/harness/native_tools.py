@@ -304,6 +304,16 @@ _GREP_LINE_CAP = 100
 _GREP_LINE_MAX = 250
 
 
+def _safe_mtime(p: Path) -> float:
+    """mtime for sort ordering, TOCTOU-tolerant: a file deleted between the walk and
+    the sort (another process, a temp cleaner, test teardown) sorts to the bottom
+    instead of raising FileNotFoundError (an OSError) past the tool boundary."""
+    try:
+        return p.stat().st_mtime
+    except OSError:
+        return 0.0
+
+
 def _walk_workspace(base: Path):
     """Yield files under base, skipping the shared ignore set. The ONE walk glob and
     grep share so their world-views never diverge (R-C6)."""
@@ -333,9 +343,11 @@ class GlobTool:
         self.spec = ToolSpec(
             name=ToolName("glob"),
             description=(
-                "Find files by glob pattern (*, ?, **, [..]), newest first. Searches the "
-                "workspace root (or path). Skips .git, node_modules, __pycache__, .venv. "
-                "Returns absolute paths."
+                "Find files by glob pattern, newest first. Patterns: *, ?, [..] match "
+                "within a path component; a bare name pattern like *.py matches files "
+                "by name at any depth; **/ matches one or more leading directories (not "
+                "zero). Searches the workspace root (or path). Skips .git, node_modules, "
+                "__pycache__, .venv. Returns absolute paths."
             ),
             parameters={
                 "type": "object",
@@ -360,7 +372,7 @@ class GlobTool:
             if _fnmatch.fnmatch(str(p.relative_to(base)), pattern)
             or _fnmatch.fnmatch(p.name, pattern)
         ]
-        matched.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+        matched.sort(key=_safe_mtime, reverse=True)
         if not matched:
             return f"No files matched {pattern!r} under {base}."
         shown = matched[:_GLOB_CAP]
