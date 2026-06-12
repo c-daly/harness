@@ -356,7 +356,9 @@ def _check_cross_plugin_collisions(plugins: list[Plugin]) -> None:
                 seen[name] = plugin.name
 
 
-def _load_module(plugin: str, root: Path, relative: str):
+def _load_module(
+    plugin: str, root: Path, relative: str, loaded_module_names: list[str]
+):
     """Import a hook module from *root/relative* with a unique synthetic name.
 
     Using unique names (harness_plugin_<plugin>_<relpath>) prevents importlib
@@ -378,6 +380,7 @@ def _load_module(plugin: str, root: Path, relative: str):
         raise PluginError(
             f"plugin {plugin!r}: error importing hook module {relative!r}: {exc}"
         ) from exc
+    loaded_module_names.append(module_name)
     return module
 
 
@@ -400,31 +403,36 @@ def _resolve(plugin: str, module, function: str, *, kind: str):
     return fn
 
 
-def _load_plugin_callables(plugin: Plugin) -> Plugin:
+def _load_plugin_callables(plugin: Plugin, loaded_module_names: list[str]) -> Plugin:
     """Import hook modules and resolve all callables.
 
     Modules are loaded once per distinct relative path (keyed by relpath).
-    Any failure raises PluginError BEFORE anything has been registered.
+    Each successfully-registered synthetic module name is appended to
+    *loaded_module_names* so the caller can roll back sys.modules if a
+    LATER plugin fails (all-or-nothing across the whole load).
+    Any failure raises PluginError BEFORE this plugin registers anything.
     """
     modules: dict[str, object] = {}
 
     def _get_module(relative: str) -> object:
         if relative not in modules:
-            modules[relative] = _load_module(plugin.name, plugin.root, relative)
+            modules[relative] = _load_module(
+                plugin.name, plugin.root, relative, loaded_module_names
+            )
         return modules[relative]
 
     dispatch_callables: dict[str, object] = {}
     for hook in plugin.dispatch_hooks:
-        mod_rel = plugin.hooks_module  # guaranteed non-None when dispatch_hooks exist
-        module = _get_module(mod_rel)
+        assert plugin.hooks_module is not None  # structurally enforced by _parse_manifest
+        module = _get_module(plugin.hooks_module)
         dispatch_callables[hook.name] = _resolve(
             plugin.name, module, hook.function, kind="dispatch hook"
         )
 
     lifecycle_callables: dict[str, object] = {}
     for hook in plugin.lifecycle_hooks:
-        mod_rel = plugin.hooks_module
-        module = _get_module(mod_rel)
+        assert plugin.hooks_module is not None  # structurally enforced by _parse_manifest
+        module = _get_module(plugin.hooks_module)
         lifecycle_callables[hook.name] = _resolve(
             plugin.name, module, hook.function, kind="lifecycle hook"
         )
@@ -441,10 +449,15 @@ def _load_plugin_callables(plugin: Plugin) -> Plugin:
     plugin.subscriber_callables.update(subscriber_callables)
     return plugin
 
+
 def load_plugins(dirs: Sequence[Path]) -> LoadedPlugins:
     """Discover and validate plugins under each dir (a plugin is a CHILD
     directory containing plugin.toml; anything else is silently skipped).
-    Everything that can fail, fails here — loudly."""
+    Everything that can fail, fails here — loudly.
+
+    If ANY plugin fails, the entire load fails — nothing registers
+    (all-or-nothing; per-plugin isolation is a possible later refinement).
+    """
     plugins: list[Plugin] = []
     warnings: list[str] = []
     for directory in dirs:
@@ -458,7 +471,15 @@ def load_plugins(dirs: Sequence[Path]) -> LoadedPlugins:
             warnings.extend(plugin_warnings)
     _check_cross_plugin_collisions(plugins)
     ordered = _order_by_depends(plugins)
-    # Load hook modules and resolve callables after all structural validation
-    for plugin in ordered:
-        _load_plugin_callables(plugin)
+    # Load hook modules and resolve callables after all structural validation.
+    # On any failure, roll back every synthetic module we registered so a
+    # partially-loaded set never leaks into sys.modules (all-or-nothing).
+    loaded_module_names: list[str] = []
+    try:
+        for plugin in ordered:
+            _load_plugin_callables(plugin, loaded_module_names)
+    except PluginError:
+        for module_name in loaded_module_names:
+            sys.modules.pop(module_name, None)
+        raise
     return LoadedPlugins(plugins=ordered, warnings=warnings)

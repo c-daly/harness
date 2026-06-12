@@ -362,3 +362,21 @@ def audit(envelope):
     with pytest.raises(PluginError) as exc:
         load_plugins([tmp_path])
     assert "async" in str(exc.value)
+
+
+def test_multi_plugin_failure_leaves_no_module_residue(tmp_path):
+    import sys
+
+    before = {k for k in sys.modules if k.startswith("harness_plugin_")}
+    ok_manifest = MINIMAL_MANIFEST.replace('name = "demo"', 'name = "alpha"') + (
+        '\n[hooks]\nmodule = "hooks.py"\n[[hooks.dispatch]]\nname = "g"\nfunction = "g"\n')
+    write_plugin(tmp_path, name="alpha", manifest=ok_manifest,
+                 files={"hooks.py": "def g(a):\n    return None\n"})
+    bad_manifest = MINIMAL_MANIFEST.replace('name = "demo"', 'name = "beta"') + (
+        '\n[hooks]\nmodule = "hooks.py"\n[[hooks.dispatch]]\nname = "g"\nfunction = "g"\n')
+    write_plugin(tmp_path, name="beta", manifest=bad_manifest,
+                 files={"hooks.py": "import nonexistent_module_xyz\n"})
+    with pytest.raises(PluginError):
+        load_plugins([tmp_path])
+    after = {k for k in sys.modules if k.startswith("harness_plugin_")}
+    assert after == before
