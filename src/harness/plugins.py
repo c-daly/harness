@@ -519,6 +519,14 @@ async def _pump(queue, fn, name, session) -> None:
 
     while True:
         envelope = await queue.get()
+        # Never re-deliver a subscriber-pump error report to a subscriber: its own
+        # fail-open ErrorRaised re-entering the queue creates unbounded feedback
+        # amplification (self- or mutual-, across two always-raising subscribers).
+        # Discovered empirically: an always-raising subscriber filled tmpfs. Match
+        # the exact where-prefix _pump itself emits below.
+        event = envelope.event
+        if isinstance(event, ErrorRaised) and event.where.startswith("subscriber:"):
+            continue
         try:
             await fn(envelope)
         except Exception as exc:  # fail-open per event

@@ -643,3 +643,50 @@ async def test_crashing_subscriber_does_not_kill_session(tmp_path):
     assert any(e.where == "subscriber:boom" and e.message == "crash" for e in errors), (
         "fail-open ErrorRaised not recorded for crashing subscriber"
     )
+
+
+async def test_pump_never_delivers_subscriber_error_events(tmp_path):
+    import asyncio
+
+    from harness.events import Envelope, ErrorRaised, UserMessage
+    from harness.plugins import _pump
+    from harness.session import Session
+    from harness.types import new_session_id
+
+    session = Session(tmp_path / "base", new_session_id())
+    sid = session.id
+    # (a) a subscriber-pump-originated error report -- must be filtered out
+    err_env = Envelope(
+        session_id=sid,
+        seq=1,
+        ts=0.0,
+        event=ErrorRaised(where="subscriber:other", message="boom"),
+    )
+    # (b) a normal event -- must be delivered
+    msg_env = Envelope(
+        session_id=sid,
+        seq=2,
+        ts=0.0,
+        event=UserMessage(text="hi"),
+    )
+
+    seen = []
+
+    async def fn(envelope):
+        seen.append(envelope)
+
+    queue: asyncio.Queue = asyncio.Queue()
+    queue.put_nowait(err_env)
+    queue.put_nowait(msg_env)
+    task = asyncio.create_task(_pump(queue, fn, "spy", session))
+    for _ in range(10):
+        await asyncio.sleep(0)
+        if queue.empty():
+            break
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+    session.close()
+
+    # fn invoked exactly once, for the normal envelope only
+    assert len(seen) == 1
+    assert seen[0] is msg_env
