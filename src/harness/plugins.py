@@ -116,7 +116,9 @@ def _substitute_root(value: str, root: Path) -> str:
     return value.replace("${PLUGIN_ROOT}", str(root))
 
 
-def _parse_mcp_servers(plugin: str, root: Path, table: dict) -> tuple[McpServerSpec, ...]:
+def _parse_mcp_servers(plugin: str, root: Path, table: object) -> tuple[McpServerSpec, ...]:
+    if not isinstance(table, dict):
+        raise PluginError(f"plugin {plugin!r}: [mcp] must be a table")
     servers = table.get("servers", {})
     if not isinstance(servers, dict):
         raise PluginError(f"plugin {plugin!r}: [mcp.servers] must be a table")
@@ -140,7 +142,11 @@ def _parse_mcp_servers(plugin: str, root: Path, table: dict) -> tuple[McpServerS
     return tuple(specs)
 
 
-def _parse_dispatch_hooks(plugin: str, entries: list) -> tuple[DispatchHookDef, ...]:
+def _parse_dispatch_hooks(plugin: str, entries: object) -> tuple[DispatchHookDef, ...]:
+    if not isinstance(entries, list):
+        raise PluginError(
+            f"plugin {plugin!r}: [hooks].dispatch must be an array of tables ([[hooks.dispatch]])"
+        )
     defs = []
     for entry in entries:
         name = _require_hook_field(plugin, entry, "name", kind="dispatch hook")
@@ -148,16 +154,21 @@ def _parse_dispatch_hooks(plugin: str, entries: list) -> tuple[DispatchHookDef, 
         priority = entry.get("priority", 100)
         if not isinstance(priority, int) or not (0 <= priority < 1000):
             raise PluginError(
-                f"plugin {plugin!r}: dispatch hook {name!r} priority must be an int < 1000"
-                " (1000 is the permission engine, innermost)"
+                f"plugin {plugin!r}: dispatch hook {name!r} priority must be an int in"
+                " [0, 1000) — 1000 is the permission engine, innermost"
             )
         defs.append(DispatchHookDef(name=name, function=function, priority=priority))
     return tuple(defs)
 
 
 def _parse_lifecycle_hooks(
-    plugin: str, entries: list, warnings: list[str]
+    plugin: str, entries: object, warnings: list[str]
 ) -> tuple[LifecycleHookDef, ...]:
+    if not isinstance(entries, list):
+        raise PluginError(
+            f"plugin {plugin!r}: [hooks].lifecycle must be an array of tables"
+            " ([[hooks.lifecycle]])"
+        )
     defs = []
     for entry in entries:
         name = _require_hook_field(plugin, entry, "name", kind="lifecycle hook")
@@ -189,7 +200,9 @@ def _require_hook_field(plugin: str, entry: dict, key: str, *, kind: str) -> str
     return value
 
 
-def _parse_subscribers(plugin: str, entries: list) -> tuple[SubscriberDef, ...]:
+def _parse_subscribers(plugin: str, entries: object) -> tuple[SubscriberDef, ...]:
+    if not isinstance(entries, list):
+        raise PluginError(f"plugin {plugin!r}: [[subscribers]] must be an array of tables")
     defs = []
     for entry in entries:
         name = _require_hook_field(plugin, entry, "name", kind="subscriber")
@@ -199,7 +212,9 @@ def _parse_subscribers(plugin: str, entries: list) -> tuple[SubscriberDef, ...]:
     return tuple(defs)
 
 
-def _parse_namespaces(plugin: str, table: dict) -> tuple[str, ...]:
+def _parse_namespaces(plugin: str, table: object) -> tuple[str, ...]:
+    if not isinstance(table, dict):
+        raise PluginError(f"plugin {plugin!r}: [emitters] must be a table")
     namespaces = table.get("namespaces", [])
     if not isinstance(namespaces, list) or not all(isinstance(n, str) for n in namespaces):
         raise PluginError(f"plugin {plugin!r}: [emitters].namespaces must be a string array")
@@ -265,6 +280,9 @@ def _parse_manifest(plugin_dir: Path) -> tuple[Plugin, list[str]]:
     hooks_table = data.get("hooks", {})
     if not isinstance(hooks_table, dict):
         raise PluginError(f"plugin {name!r}: [hooks] must be a table")
+    unknown_hooks = sorted(set(hooks_table) - {"module", "dispatch", "lifecycle"})
+    if unknown_hooks:
+        raise PluginError(f"plugin {name!r}: unknown [hooks] keys: {', '.join(unknown_hooks)}")
     hooks_module = hooks_table.get("module")
     dispatch_hooks = _parse_dispatch_hooks(name, hooks_table.get("dispatch", []))
     lifecycle_hooks = _parse_lifecycle_hooks(name, hooks_table.get("lifecycle", []), warnings)

@@ -205,6 +205,24 @@ def test_lifecycle_hook_invalid_point_is_loud(tmp_path):
     assert "nope" in str(exc.value)
 
 
+@pytest.mark.parametrize(
+    "extra,fragment",
+    [
+        ("mcp = 42\n", "[mcp] must be a table"),
+        ("emitters = [1]\n", "[emitters] must be a table"),
+        ("subscribers = 42\n", "array of tables"),
+        ('[hooks]\nmodule = "h.py"\ndispatch = 42\n', "array of tables"),
+        ('[hooks]\nmodule = "h.py"\nlifecycle = 42\n', "array of tables"),
+        ('[hooks]\nmodule = "h.py"\nbogus = 1\n', "unknown [hooks] keys"),
+    ],
+)
+def test_wrong_typed_sections_are_plugin_errors(tmp_path, extra, fragment):
+    write_plugin(tmp_path, manifest=MINIMAL_MANIFEST + extra)
+    with pytest.raises(PluginError) as exc:
+        load_plugins([tmp_path])
+    assert fragment in str(exc.value)
+
+
 def test_hooks_declared_without_module_is_loud(tmp_path):
     manifest = MINIMAL_MANIFEST + (
         '\n[[hooks.dispatch]]\nname = "g"\nfunction = "g"\n'
