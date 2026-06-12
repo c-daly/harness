@@ -410,3 +410,25 @@ def test_mcp_import_writes_scope_file_and_warns(tmp_path, capsys):
     loaded = load_mcp_file(home / "mcp.toml", source="user")
     assert [s.name for s in loaded] == ["clean"]
     assert "imported 1 server(s)" in captured.out
+
+
+def test_no_prompt_routes_to_tui(tmp_path, monkeypatch):
+    launched: dict = {}
+
+    async def fake_run_tui(kernel, *, catalog_path=None, ask=None):
+        launched["kernel"] = kernel
+        launched["catalog_path"] = catalog_path
+        launched["ask"] = ask
+
+    monkeypatch.setattr("harness.tui.run_tui", fake_run_tui)
+    run_cli("--base-dir", str(tmp_path))               # no -p
+    kernel = launched["kernel"]
+    assert kernel.loop.dispatcher.resolver.name == "tui"
+    assert type(kernel.provider).__name__ == "EchoProvider"
+    assert launched["ask"] is not None                 # AppBoundAsk threaded through
+    kernel.session.close()                             # fake_run_tui skipped teardown
+
+
+def test_prompt_mode_unchanged(tmp_path, capsys):
+    run_cli("-p", "hello", "--base-dir", str(tmp_path))
+    assert "echo: hello" in capsys.readouterr().out

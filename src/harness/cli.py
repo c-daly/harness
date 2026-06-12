@@ -192,7 +192,7 @@ def _subcommand(argv: list[str]) -> None:
 
 def _run_main() -> None:
     parser = argparse.ArgumentParser(prog="harness")
-    parser.add_argument("-p", "--prompt", required=True)
+    parser.add_argument("-p", "--prompt", default=None)
     parser.add_argument("--base-dir", type=Path,
                         default=Path.home() / ".local" / "share" / "harness")
     parser.add_argument("--model", default=None,
@@ -229,9 +229,15 @@ def _run_main() -> None:
         provider: ModelProvider = LiteLLMProvider(api_base=resolved.api_base)
         model = resolved.route
         pricing = resolved.pricing_dict() or None
-    else:
+    elif args.prompt is not None:
         provider = FakeProvider([text_turn(f"echo: {args.prompt}")])
         model = ModelId("fake:echo")
+        pricing = None
+    else:
+        from harness.provider import EchoProvider
+
+        provider = EchoProvider()
+        model = ModelId("echo")
         pricing = None
 
     engine = default_engine(project_dir=Path.cwd())
@@ -254,6 +260,26 @@ def _run_main() -> None:
         except (McpConfigError, OSError) as exc:
             raise SystemExit(str(exc)) from exc
 
+    if args.prompt is None:
+        from harness.tui import AppBoundAsk, run_tui
+        from harness.tui_support import TuiResolver
+
+        ask = AppBoundAsk()
+        resolver = TuiResolver(ask=ask, engine=engine)
+        kernel = build_kernel(
+            provider=provider,
+            base_dir=args.base_dir,
+            model=model,
+            pricing=pricing,
+            resume_session_id=resume_session_id,
+            permissions=engine,
+            tags=args.tag,
+            mcp=mcp_specs or None,
+            resolver=resolver,
+        )
+        # Textual owns the terminal: no SIGINT handler here (Esc interrupts; Ctrl+C quits)
+        asyncio.run(run_tui(kernel, catalog_path=args.catalog, ask=ask))
+        return
     kernel = build_kernel(
         provider=provider,
         base_dir=args.base_dir,
