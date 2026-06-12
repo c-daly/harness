@@ -232,3 +232,133 @@ def test_hooks_declared_without_module_is_loud(tmp_path):
     with pytest.raises(PluginError) as exc:
         load_plugins([tmp_path])
     assert "module" in str(exc.value)
+
+
+# ---------------------------------------------------------------------------
+# Task 3: hook-module loading -- callables validated at load, never broken at runtime
+# ---------------------------------------------------------------------------
+
+HOOKS_MANIFEST = MINIMAL_MANIFEST + """
+[hooks]
+module = "hooks.py"
+
+[[hooks.dispatch]]
+name = "guard"
+function = "guard"
+
+[[hooks.lifecycle]]
+name = "brief"
+function = "session_brief"
+point = "session_start"
+
+[[subscribers]]
+name = "audit"
+module = "hooks.py"
+function = "audit"
+"""
+
+HOOKS_PY = """
+from harness.hooks import Allow, Inject
+
+
+def guard(action):
+    return Allow()
+
+
+def session_brief(ctx):
+    return [Inject(text="brief!")]
+
+
+async def audit(envelope):
+    pass
+"""
+
+
+def test_hook_module_loads_and_resolves_callables(tmp_path):
+    write_plugin(tmp_path, manifest=HOOKS_MANIFEST, files={"hooks.py": HOOKS_PY})
+    loaded = load_plugins([tmp_path])
+    (plugin,) = loaded.plugins
+    assert callable(plugin.dispatch_callables["guard"])
+    assert callable(plugin.lifecycle_callables["brief"])
+    assert callable(plugin.subscriber_callables["audit"])
+
+
+def test_hook_module_import_error_fails_load(tmp_path):
+    write_plugin(tmp_path, manifest=HOOKS_MANIFEST,
+                 files={"hooks.py": "import nonexistent_module_xyz\n"})
+    with pytest.raises(PluginError) as exc:
+        load_plugins([tmp_path])
+    assert "hooks.py" in str(exc.value)
+
+
+def test_missing_function_fails_load(tmp_path):
+    write_plugin(tmp_path, manifest=HOOKS_MANIFEST,
+                 files={"hooks.py": "def guard(action):\n    return None\n"})
+    with pytest.raises(PluginError) as exc:
+        load_plugins([tmp_path])
+    assert "session_brief" in str(exc.value)
+
+
+def test_non_callable_attribute_fails_load(tmp_path):
+    bad = HOOKS_PY + "\nsession_brief = 42\n"
+    write_plugin(tmp_path, manifest=HOOKS_MANIFEST, files={"hooks.py": bad})
+    with pytest.raises(PluginError) as exc:
+        load_plugins([tmp_path])
+    assert "callable" in str(exc.value)
+
+
+def test_two_plugins_same_module_filename_are_isolated(tmp_path):
+    # both plugins ship hooks.py -- importlib must not cross-wire them
+    p1 = MINIMAL_MANIFEST.replace('name = "demo"', 'name = "p1"') + (
+        '''
+[hooks]
+module = "hooks.py"
+[[hooks.dispatch]]
+name = "g"
+function = "g"
+''')
+    p2 = MINIMAL_MANIFEST.replace('name = "demo"', 'name = "p2"') + (
+        '''
+[hooks]
+module = "hooks.py"
+[[hooks.dispatch]]
+name = "g"
+function = "g"
+''')
+    write_plugin(tmp_path, name="p1", manifest=p1,
+                 files={"hooks.py": '''MARK='p1'
+def g(a):
+    return MARK
+'''})
+    write_plugin(tmp_path, name="p2", manifest=p2,
+                 files={"hooks.py": '''MARK='p2'
+def g(a):
+    return MARK
+'''})
+    loaded = load_plugins([tmp_path])
+    fns = {p.name: p.dispatch_callables["g"] for p in loaded.plugins}
+    assert fns["p1"](None) == "p1"
+    assert fns["p2"](None) == "p2"
+
+
+def test_subscriber_must_be_async(tmp_path):
+    # A sync subscriber function must be rejected at load time
+    sync_subscriber_py = """
+from harness.hooks import Allow, Inject
+
+
+def guard(action):
+    return Allow()
+
+
+def session_brief(ctx):
+    return [Inject(text="brief!")]
+
+
+def audit(envelope):
+    pass
+"""
+    write_plugin(tmp_path, manifest=HOOKS_MANIFEST, files={"hooks.py": sync_subscriber_py})
+    with pytest.raises(PluginError) as exc:
+        load_plugins([tmp_path])
+    assert "async" in str(exc.value)

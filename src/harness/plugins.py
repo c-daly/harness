@@ -11,9 +11,12 @@ closed with timeouts, lifecycle hooks fail open, tool exceptions become
 results), but load = execute.
 """
 
+import importlib.util
 import re
+import sys
 import tomllib
 from dataclasses import dataclass, field
+from inspect import iscoroutinefunction
 from pathlib import Path
 from typing import Sequence
 
@@ -353,6 +356,91 @@ def _check_cross_plugin_collisions(plugins: list[Plugin]) -> None:
                 seen[name] = plugin.name
 
 
+def _load_module(plugin: str, root: Path, relative: str):
+    """Import a hook module from *root/relative* with a unique synthetic name.
+
+    Using unique names (harness_plugin_<plugin>_<relpath>) prevents importlib
+    from re-using an already-loaded module when two plugins ship a file with
+    the same basename (e.g. both have hooks.py).
+    """
+    path = root / relative
+    if not path.is_file():
+        raise PluginError(f"plugin {plugin!r}: hook module {relative!r} not found")
+    safe_rel = relative.replace("/", "_").replace(".", "_")
+    module_name = f"harness_plugin_{plugin}_{safe_rel}"
+    spec = importlib.util.spec_from_file_location(module_name, path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    try:
+        spec.loader.exec_module(module)
+    except Exception as exc:
+        del sys.modules[module_name]
+        raise PluginError(
+            f"plugin {plugin!r}: error importing hook module {relative!r}: {exc}"
+        ) from exc
+    return module
+
+
+def _resolve(plugin: str, module, function: str, *, kind: str):
+    """Resolve *function* from *module*; validate existence and callability.
+
+    For subscriber functions, additionally require async (coroutine function).
+    """
+    fn = getattr(module, function, None)
+    if fn is None:
+        raise PluginError(f"plugin {plugin!r}: {kind} function {function!r} not found")
+    if not callable(fn):
+        raise PluginError(
+            f"plugin {plugin!r}: {kind} attribute {function!r} is not callable"
+        )
+    if kind == "subscriber" and not iscoroutinefunction(fn):
+        raise PluginError(
+            f"plugin {plugin!r}: subscriber {function!r} must be an async function"
+        )
+    return fn
+
+
+def _load_plugin_callables(plugin: Plugin) -> Plugin:
+    """Import hook modules and resolve all callables.
+
+    Modules are loaded once per distinct relative path (keyed by relpath).
+    Any failure raises PluginError BEFORE anything has been registered.
+    """
+    modules: dict[str, object] = {}
+
+    def _get_module(relative: str) -> object:
+        if relative not in modules:
+            modules[relative] = _load_module(plugin.name, plugin.root, relative)
+        return modules[relative]
+
+    dispatch_callables: dict[str, object] = {}
+    for hook in plugin.dispatch_hooks:
+        mod_rel = plugin.hooks_module  # guaranteed non-None when dispatch_hooks exist
+        module = _get_module(mod_rel)
+        dispatch_callables[hook.name] = _resolve(
+            plugin.name, module, hook.function, kind="dispatch hook"
+        )
+
+    lifecycle_callables: dict[str, object] = {}
+    for hook in plugin.lifecycle_hooks:
+        mod_rel = plugin.hooks_module
+        module = _get_module(mod_rel)
+        lifecycle_callables[hook.name] = _resolve(
+            plugin.name, module, hook.function, kind="lifecycle hook"
+        )
+
+    subscriber_callables: dict[str, object] = {}
+    for sub in plugin.subscribers:
+        module = _get_module(sub.module)
+        subscriber_callables[sub.name] = _resolve(
+            plugin.name, module, sub.function, kind="subscriber"
+        )
+
+    plugin.dispatch_callables.update(dispatch_callables)
+    plugin.lifecycle_callables.update(lifecycle_callables)
+    plugin.subscriber_callables.update(subscriber_callables)
+    return plugin
+
 def load_plugins(dirs: Sequence[Path]) -> LoadedPlugins:
     """Discover and validate plugins under each dir (a plugin is a CHILD
     directory containing plugin.toml; anything else is silently skipped).
@@ -370,4 +458,7 @@ def load_plugins(dirs: Sequence[Path]) -> LoadedPlugins:
             warnings.extend(plugin_warnings)
     _check_cross_plugin_collisions(plugins)
     ordered = _order_by_depends(plugins)
+    # Load hook modules and resolve callables after all structural validation
+    for plugin in ordered:
+        _load_plugin_callables(plugin)
     return LoadedPlugins(plugins=ordered, warnings=warnings)
