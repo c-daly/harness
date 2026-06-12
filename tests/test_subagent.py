@@ -1,20 +1,26 @@
 import asyncio
 
 from harness.events import ErrorRaised, SubagentFinished, SubagentSpawned
+from harness.frontmatter import AgentDef
 from harness.hooks import HookBus
 from harness.interaction import HeadlessResolver
 from harness.log import read_session
-from harness.provider import FakeProvider, text_turn
+from harness.messages import ToolResultBlock
+from harness.provider import FakeProvider, text_turn, tool_call_turn
 from harness.session import Session
 from harness.subagent import DispatchAgentTool, SubagentRunner
-from harness.tools import ToolRegistry
-from harness.types import ModelId, SessionId
+from harness.tools import ToolRegistry, ToolSpec
+from harness.types import ModelId, SessionId, ToolName
 
 
 def _runner(tmp_path, provider):
     return SubagentRunner(
-        base=tmp_path, provider=provider, registry=ToolRegistry(),
-        hooks=HookBus(), resolver=HeadlessResolver(), default_model=ModelId("fake"),
+        base=tmp_path,
+        provider=provider,
+        registry=ToolRegistry(),
+        hooks=HookBus(),
+        resolver=HeadlessResolver(),
+        default_model=ModelId("fake"),
     )
 
 
@@ -97,18 +103,118 @@ async def test_teardown_failure_still_returns_result(tmp_path, monkeypatch):
 
 async def test_child_model_calls_carry_pricing(tmp_path):
     from harness.events import ModelCallCompleted
+
     parent = Session(tmp_path, SessionId("parent"))
     parent.start()
     runner = SubagentRunner(
-        base=tmp_path, provider=FakeProvider([text_turn("done")]), registry=ToolRegistry(),
-        hooks=HookBus(), resolver=HeadlessResolver(), default_model=ModelId("fake"),
+        base=tmp_path,
+        provider=FakeProvider([text_turn("done")]),
+        registry=ToolRegistry(),
+        hooks=HookBus(),
+        resolver=HeadlessResolver(),
+        default_model=ModelId("fake"),
         pricing={"input_cost_per_token": 1e-6, "output_cost_per_token": 2e-6},
     )
     await runner.run(prompt="work", model=None, parent=parent)
     parent.close()
     envs = read_session(tmp_path, SessionId("parent"))
-    child_id = next(e.event.child_session_id for e in envs
-                    if type(e.event).__name__ == "SubagentSpawned")
+    child_id = next(
+        e.event.child_session_id for e in envs if type(e.event).__name__ == "SubagentSpawned"
+    )
     child = read_session(tmp_path, child_id)
     completed = [e.event for e in child if isinstance(e.event, ModelCallCompleted)]
     assert completed[0].pricing["input_cost_per_token"] == 1e-6
+
+
+async def test_agent_definition_parametrizes_subagent(tmp_path):
+    """Curator AgentDef narrows registry to echo only; calling forbidden tool yields error result."""
+
+    class EchoTool:
+        spec = ToolSpec(
+            name=ToolName("echo"),
+            description="Echo back",
+            parameters={"type": "object", "properties": {"text": {"type": "string"}}},
+        )
+
+        async def __call__(self, args: dict) -> str:
+            return args["text"]
+
+    class ForbiddenTool:
+        spec = ToolSpec(
+            name=ToolName("forbidden"),
+            description="Forbidden",
+            parameters={"type": "object", "properties": {}},
+        )
+
+        async def __call__(self, args: dict) -> str:  # pragma: no cover
+            return "should not reach here"
+
+    registry = ToolRegistry()
+    registry.register(EchoTool())
+    registry.register(ForbiddenTool())
+
+    curator = AgentDef(
+        name="curator",
+        description="d",
+        body="You are the curator.",
+        tools=("echo",),
+        model=None,
+    )
+    provider = FakeProvider(
+        [
+            # turn 1: child calls the forbidden tool
+            tool_call_turn("thinking", ToolName("forbidden"), {}),
+            # turn 2: child returns final answer after seeing the error result
+            text_turn("curator done"),
+        ]
+    )
+    runner = SubagentRunner(
+        base=tmp_path,
+        provider=provider,
+        registry=registry,
+        hooks=HookBus(),
+        resolver=HeadlessResolver(),
+        default_model=ModelId("fake"),
+        agents={"curator": curator},
+    )
+    parent = Session(tmp_path, SessionId("parent"))
+    parent.start()
+    result = await runner.run(prompt="go", model=None, parent=parent, agent="curator")
+    parent.close()
+    assert result == "curator done"
+
+    # First call messages[0] is the system message — assert curator prompt used
+    first_call_messages = provider.calls[0]
+    assert "You are the curator." in first_call_messages[0].text()
+
+    # Second call messages must include a tool-result with is_error=True (forbidden call failed)
+    second_call_messages = provider.calls[1]
+    error_results = [
+        block
+        for msg in second_call_messages
+        for block in msg.blocks
+        if isinstance(block, ToolResultBlock) and block.is_error
+    ]
+    assert error_results, "expected an is_error tool result for the forbidden tool call"
+
+
+async def test_unknown_agent_is_error_result(tmp_path):
+    """Dispatching with an unknown agent name returns an error string; no SubagentSpawned."""
+    parent = Session(tmp_path, SessionId("parent"))
+    parent.start()
+    runner = SubagentRunner(
+        base=tmp_path,
+        provider=FakeProvider([]),
+        registry=ToolRegistry(),
+        hooks=HookBus(),
+        resolver=HeadlessResolver(),
+        default_model=ModelId("fake"),
+        agents={"curator": AgentDef(name="curator", description="d", body="x")},
+    )
+    result = await runner.run(prompt="go", model=None, parent=parent, agent="nope")
+    parent.close()
+    assert "[subagent error]" in result
+    assert "nope" in result
+    assert "curator" in result  # available agents listed
+    events = [e.event for e in read_session(tmp_path, SessionId("parent"))]
+    assert not any(isinstance(e, SubagentSpawned) for e in events)

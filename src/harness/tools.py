@@ -42,3 +42,21 @@ class ToolRegistry:
 
     def specs(self) -> tuple[ToolSpec, ...]:
         return tuple(t.spec for t in self._tools.values())
+
+
+class FilteredRegistry:
+    """Read-only narrowed view for agent definitions: restricts advertisement
+    (specs) AND execution (get) without touching the parent registry. Narrows
+    only — the shared HookBus enforcement still applies to children."""
+
+    def __init__(self, parent: ToolRegistry, *, allowed: tuple[str, ...]) -> None:
+        self._parent = parent
+        self._allowed = frozenset(allowed)
+
+    def get(self, name: ToolName) -> Tool:
+        if str(name) not in self._allowed:
+            raise UnknownToolError(str(name))
+        return self._parent.get(name)
+
+    def specs(self) -> tuple[ToolSpec, ...]:
+        return tuple(s for s in self._parent.specs() if str(s.name) in self._allowed)
