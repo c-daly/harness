@@ -75,6 +75,9 @@ async def test_memory_plugin_full_session_in_tui(tmp_path, monkeypatch):
         async with app.run_test() as pilot:
             await pilot.pause(0.8)
             assert "# Memory" in app.kernel.loop.system_prompt
+            # The skills-inventory lifecycle hook injects this header; assert it
+            # directly so a broken hook cannot pass on tool registration alone.
+            assert "## Skills" in app.kernel.loop.system_prompt
             assert "invoke_skill" in {str(s.name) for s in app.kernel.registry.specs()}
             lines_out = "\n".join(str(line) for line in app.query_one(RichLog).lines)
             assert "server_started" in lines_out
@@ -86,6 +89,11 @@ async def test_memory_plugin_full_session_in_tui(tmp_path, monkeypatch):
             await pilot.click("#prompt")
             await pilot.press(*"/brief", "enter")
             await pilot.pause(0.4)
+            # /brief expands to the command body and runs it as a turn; the
+            # EchoProvider echoes the expanded body back, proving the command
+            # body (not just the name) was dispatched.
+            lines_out = "\n".join(str(line) for line in app.query_one(RichLog).lines)
+            assert "echo: Summarize what you remember about me and my projects." in lines_out
             await pilot.press(*"/quit", "enter")
             await pilot.pause(0.3)
     finally:
@@ -125,6 +133,9 @@ async def test_memory_write_via_dispatch(tmp_path, monkeypatch):
     monkeypatch.setenv("HARNESS_MEMORY_DIR", str(mem_dir))
     loaded = load_plugins([_PLUGINS_DIR])
     mcp_specs = [
+        # values are env-var NAMES, dereferenced by resolve_env at connect time
+        # (never-literals law); the stdio subprocess otherwise sees only the
+        # six-var default environment, never HARNESS_MEMORY_DIR.
         dataclasses.replace(
             s, command=sys.executable, env={"HARNESS_MEMORY_DIR": "HARNESS_MEMORY_DIR"}
         )
