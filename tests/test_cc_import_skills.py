@@ -1,8 +1,15 @@
 """Skill/command conversion: dir->flat, asset rewrite, the high-precision prose rewriter."""
 
+import time
 from pathlib import Path
 
-from harness.cc_import import RawDef, convert_command, convert_skill, rewrite_prose
+from harness.cc_import import (
+    RawDef,
+    convert_command,
+    convert_skill,
+    detect_relpath_collisions,
+    rewrite_prose,
+)
 from harness.frontmatter import split_frontmatter
 
 
@@ -145,3 +152,58 @@ def test_converted_skill_loads_as_native_skilldef(tmp_path):
     out.write_text(conv.text)
     sk = load_skill(out)  # must not raise (unknown `model` key was stripped)
     assert sk.name == "remembering"
+
+
+def test_rewrite_prose_long_line_completes():
+    # A single 100k-char line of bare `Read ` words. The naive O(n^2) scan never finished;
+    # the linear fix runs in milliseconds. Bound is generous (< 2s) so it is not flaky.
+    body = "Read " * 100_000 + "\n"
+    start = time.monotonic()
+    out, entries = rewrite_prose(body, source="skills/s.md")
+    elapsed = time.monotonic() - start
+    assert elapsed < 2.0
+    assert out == body  # bare words are never rewritten
+    assert all(e.kind == "mention" for e in entries)
+
+
+def test_broken_relative_link_reported():
+    # A relative link whose target is not in the asset plan is flagged as possibly broken.
+    body = "See [the missing ref](does-not-exist.md) for details.\n"
+    conv = convert_skill(_skill(body, name="s"))
+    _, out_body = split_frontmatter(conv.text)
+    assert "does-not-exist.md" in out_body  # text left unchanged
+    assert any(
+        e.kind == "refused" and "does-not-exist.md" in e.detail and "broken" in e.detail
+        for e in conv.report
+    )
+
+
+def test_asset_rel_traversal_refused():
+    # A hand-crafted RawDef with a traversal rel must be refused, never planned for copy.
+    raw = RawDef(
+        name="s",
+        meta={"name": "s", "description": "d"},
+        body="# body\n",
+        source_path=Path("/x/skills/s/SKILL.md"),
+        assets={"../../x": Path("/x/skills/s/x")},
+    )
+    conv = convert_skill(raw)
+    assert conv.assets == ()  # nothing planned
+    assert any(
+        e.kind == "refused" and "escapes" in e.detail and "../../x" in e.detail for e in conv.report
+    )
+
+
+def test_relpath_collision_detected():
+    # `a.b` and `a-b` both sanitize to `a-b`, so both emit skills/a-b.md. One drop entry.
+    one = convert_skill(_skill("# x\n", name="a.b", meta={"name": "a.b", "description": "d"}))
+    two = convert_skill(_skill("# y\n", name="a-b", meta={"name": "a-b", "description": "d"}))
+    assert one.relpath == two.relpath == "skills/a-b.md"
+    drops = detect_relpath_collisions([one, two])
+    assert len(drops) == 1
+    assert drops[0].kind == "drop"
+    assert drops[0].artifact == "skills/a-b.md"
+    assert "skills/a-b.md" in drops[0].detail
+    # deterministic: no collision for a single def, and order-stable
+    assert detect_relpath_collisions([one]) == []
+    assert detect_relpath_collisions([two, one]) == drops

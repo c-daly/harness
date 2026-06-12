@@ -278,12 +278,26 @@ _MD_LINK = re.compile(r"(!?\[[^\]]*\])\(([^)]+)\)")
 _POSITIONAL = re.compile(r"\$(\d+)\b")
 _ALL_CC_NAMES = set(CC_TOOL_MAP) | set(NO_NATIVE_PARITY)
 
+# The report-kind taxonomy. Tasks 6-7 filter on these strings; keep the set closed.
+ReportEntryKind = Literal[
+    "rewrite",
+    "mention",
+    "drop",
+    "degraded",
+    "asset",
+    "refused",
+    "skip",
+    "hook",
+    "mcp",
+    "meta",
+]
+
 
 @dataclass(frozen=True)
 class ReportEntry:
     """One line of the import report. kind drives the section and the summary counts."""
 
-    kind: str  # rewrite | mention | drop | degraded | asset | refused | skip | hook | mcp | meta
+    kind: ReportEntryKind
     artifact: str  # emitted relpath or source relpath; sorts the report deterministically
     detail: str
     line: int | None = None
@@ -311,7 +325,12 @@ def rewrite_prose(body: str, *, source: str) -> tuple[str, list[ReportEntry]]:
     """L4b: rewrite ONLY backticked exact tool names; count bare-word mentions; flag
     NO_NATIVE_PARITY references. Deterministic and idempotent (native text is unchanged).
     Returns (new_body, report_entries). Degraded flagging is the callers job (any entry
-    with kind==degraded means the artifact is degraded)."""
+    with kind==degraded means the artifact is degraded).
+
+    Fenced code blocks are NOT excluded: backticked tool names inside examples are
+    intentionally rewritten, and double-backtick verbatim spans are also matched (the
+    regex does not track fence state). This is the high-precision policy: anything in
+    backticks is treated as an exact reference, fenced or not."""
     entries: list[ReportEntry] = []
     out_lines: list[str] = []
     for lineno, line in enumerate(body.splitlines(), start=1):
@@ -342,9 +361,13 @@ def rewrite_prose(body: str, *, source: str) -> tuple[str, list[ReportEntry]]:
             return match.group(0)
 
         new_line = _BACKTICKED.sub(_sub, line)
-        # bare-word mentions (unbackticked exact CC names) are only counted, never rewritten
+        # bare-word mentions (unbackticked exact CC names) are only counted, never rewritten.
+        # Precompute the set of backticked names on this line once (O(line)); the per-word
+        # membership check is then O(1). A naive `f"`{word}`" not in line` rescans the whole
+        # line per word -> O(n^2), which never completes on a megabyte-wide line.
+        backticked_on_line = {m.group(1) for m in _BACKTICKED.finditer(line)}
         for word in re.findall(r"\b([A-Za-z][A-Za-z0-9_]*)\b", line):
-            if word in _ALL_CC_NAMES and f"`{word}`" not in line:
+            if word in _ALL_CC_NAMES and word not in backticked_on_line:
                 entries.append(
                     ReportEntry(
                         kind="mention",
@@ -370,6 +393,19 @@ def _plan_assets(
     report: list[ReportEntry] = []
     base = f"{kind}/{raw.name}.assets"
     for rel, src in sorted(raw.assets.items()):
+        # Path-traversal guard runs first: a non-normalized rel (e.g. ../../etc/passwd) would
+        # plan a write outside the .assets dir. Refuse on the structural rel, before any stat
+        # (a traversal rel is rejected whether or not the file it names exists).
+        dest_path = Path(base) / rel
+        if ".." in dest_path.parts:
+            report.append(
+                ReportEntry(
+                    kind="refused",
+                    artifact=f"{kind}/{raw.name}.md",
+                    detail=f"asset {rel} escapes the assets dir; refused",
+                )
+            )
+            continue
         try:
             size = src.stat().st_size
         except OSError:
@@ -403,7 +439,8 @@ def _rewrite_links(
     body: str, link_map: dict[str, str], *, source: str
 ) -> tuple[str, list[ReportEntry]]:
     """Rewrite markdown link/image targets that point at copied assets to the new path.
-    A link to an asset that was refused (not in link_map) is flagged broken."""
+    A relative-looking link to a target that is not in the asset plan is flagged broken
+    (it may point at a refused or absent asset); the body text is left unchanged."""
     report: list[ReportEntry] = []
     if not link_map and "](" not in body:
         return body, report
@@ -413,6 +450,16 @@ def _rewrite_links(
         bare = target.split("#", 1)[0]
         if bare in link_map:
             return f"{label}({link_map[bare]})"
+        # An unmatched, relative-looking target may be a broken link (refused/absent asset).
+        # Absolute URLs and pure in-page anchors are never assets, so they are not flagged.
+        if bare and "://" not in bare and not bare.startswith(("#", "/", "mailto:")):
+            report.append(
+                ReportEntry(
+                    kind="refused",
+                    artifact=source,
+                    detail=f"link to {bare!r} not in asset plan; may be broken",
+                )
+            )
         return match.group(0)
 
     return _MD_LINK.sub(_sub, body), report
@@ -543,3 +590,30 @@ def convert_command(raw: "RawDef") -> ConvertedDef:
         report=tuple(report),
         degraded=degraded,
     )
+
+
+def detect_relpath_collisions(defs: list[ConvertedDef]) -> list[ReportEntry]:
+    """Two source defs can sanitize to the same emitted relpath (e.g. `a.b` and `a-b` both
+    become `a-b`). Publishing both would clobber one file. Group by relpath; for each set of
+    two or more, the first in input order wins and the rest are reported as dropped. Pure and
+    deterministic: input order decides the winner, output is sorted by relpath. The orchestrator
+    (Task 7) wires this in and drops the loser defs from the publish plan."""
+    by_relpath: dict[str, list[ConvertedDef]] = {}
+    for d in defs:
+        by_relpath.setdefault(d.relpath, []).append(d)
+    out: list[ReportEntry] = []
+    for relpath in sorted(by_relpath):
+        group = by_relpath[relpath]
+        if len(group) < 2:
+            continue
+        out.append(
+            ReportEntry(
+                kind="drop",
+                artifact=relpath,
+                detail=(
+                    f"{len(group)} defs both sanitize to {relpath!r}; keeping the first,"
+                    f" dropping the remaining {len(group) - 1}"
+                ),
+            )
+        )
+    return out
