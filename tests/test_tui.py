@@ -22,6 +22,7 @@ from harness.tools import ToolSpec
 from harness.tui import AppBoundAsk, HarnessApp, PermissionScreen
 from harness.tui_support import TuiResolver
 from harness.types import ModelId, ToolName
+from tests.conftest import fixture_stdio_spec
 
 
 class EchoTool:
@@ -560,3 +561,24 @@ async def test_stats_line_updates_after_a_turn(tmp_path):
         stats = str(app.query_one("#stats", Static).content)
         assert "in 7" in stats and "out 3" in stats
         assert "tools 0" in stats
+
+
+async def test_tui_pipes_mcp_child_stderr_to_file(tmp_path):
+    kernel = build_kernel(
+        provider=EchoProvider(), base_dir=tmp_path, model=ModelId("echo"),
+        mcp=[fixture_stdio_spec()],
+    )
+    app = HarnessApp(kernel)
+    async with app.run_test() as pilot:
+        await pilot.pause(0.5)                        # mcp start + session driver
+        await pilot.click("#prompt")
+        await pilot.press(*"hi", "enter")
+        await pilot.pause(0.3)
+    errlog_path = tmp_path / "sessions" / str(kernel.session.id) / "mcp-stderr.log"
+    assert errlog_path.exists()
+    assert "ListToolsRequest" in errlog_path.read_text()
+    # close what run_tui would close in its finally (run_test does not run run_tui)
+    if app._mcp_errlog is not None:
+        app._mcp_errlog.close()
+    await kernel.mcp.stop()
+    kernel.session.close()

@@ -119,6 +119,7 @@ class HarnessApp(App[None]):
         self._stats_conn = None
         self._stats_sub = None
         self._stats_queue = None
+        self._mcp_errlog = None
         if ask is not None:
             ask.app = self
 
@@ -164,6 +165,12 @@ class HarnessApp(App[None]):
         self._stats_sub = TelemetrySubscriber(self._stats_conn)
         self._stats_queue = self.kernel.session.bus.subscribe(maxsize=4096)
         if kernel.mcp is not None:
+            errlog_path = (
+                kernel.session.base / "sessions" / str(kernel.session.id) / "mcp-stderr.log"
+            )
+            errlog_path.parent.mkdir(parents=True, exist_ok=True)
+            self._mcp_errlog = errlog_path.open("a")
+            kernel.mcp.errlog = self._mcp_errlog
             for warning in await kernel.mcp.start():
                 self.say("! ", warning)
         if not kernel.resumed:
@@ -375,4 +382,6 @@ async def run_tui(
         if kernel.mcp is not None:
             await kernel.mcp.stop()
             kernel.mcp.flush_events()
+        if app._mcp_errlog is not None:
+            app._mcp_errlog.close()
         kernel.session.close()

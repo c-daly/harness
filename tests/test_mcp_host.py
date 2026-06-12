@@ -441,3 +441,20 @@ async def test_restart_budget_resets_on_success():
         assert conn._restarts == 0
     finally:
         await conn.stop()
+
+
+async def test_stdio_child_stderr_goes_to_errlog(tmp_path):
+    errlog_path = tmp_path / "mcp-stderr.log"
+    with errlog_path.open("w") as errlog:
+        spec = McpServerSpec(
+            name="fixture", transport="stdio",
+            command=sys.executable, args=(str(FIXTURE_SERVER_PATH),),
+        )
+        conn = ServerConnection(spec, errlog=errlog)
+        await conn.start()
+        try:
+            await conn.call_tool("add", {"a": 1, "b": 1})
+        finally:
+            await conn.stop()
+    # FastMCP logs request processing to stderr -- it must land in the file
+    assert "ListToolsRequest" in errlog_path.read_text()

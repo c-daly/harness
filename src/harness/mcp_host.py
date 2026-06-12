@@ -39,7 +39,7 @@ class McpToolError(Exception):
     """A tool result with isError=True; the dispatcher renders it as a tool error."""
 
 
-def _default_transport(spec: McpServerSpec):
+def _default_transport(spec: McpServerSpec, errlog=None):
     if spec.transport == "stdio":
         params = StdioServerParameters(
             command=spec.command,
@@ -47,6 +47,8 @@ def _default_transport(spec: McpServerSpec):
             env=resolve_env(spec.env) or None,
             cwd=spec.cwd,
         )
+        if errlog is not None:
+            return stdio_client(params, errlog=errlog)
         return stdio_client(params)
     headers = resolve_env(spec.headers)
     http_client = None
@@ -78,13 +80,18 @@ class ServerConnection:
         *,
         transport_factory: Callable[[McpServerSpec], Any] | None = None,
         on_event: Callable[[str, dict], None] | None = None,
+        errlog=None,
     ) -> None:
         self.spec = spec
         self.session: ClientSession | None = None
         self.instructions: str | None = None
         self.server_info: types.Implementation | None = None
         self.tools: list[types.Tool] = []
-        self._transport_factory = transport_factory or _default_transport
+        self._errlog = errlog
+        if transport_factory is not None:
+            self._transport_factory = transport_factory
+        else:
+            self._transport_factory = lambda spec: _default_transport(spec, errlog=errlog)
         self._on_event = on_event or (lambda name, data: None)
         self._ready: asyncio.Event = asyncio.Event()
         self._stop_signal: asyncio.Event = asyncio.Event()
@@ -265,6 +272,7 @@ class McpHost:
         hooks: HookBus,
         session: Session,
         transport_factory: Callable[[McpServerSpec], Any] | None = None,
+        errlog=None,
     ) -> None:
         self.connections: dict[str, ServerConnection] = {}
         self._specs = tuple(specs)
@@ -272,6 +280,7 @@ class McpHost:
         self._hooks = hooks
         self._session = session
         self._transport_factory = transport_factory
+        self.errlog = errlog  # set before start(); None = children inherit stderr
         self._pending: list[CustomEvent] | None = []  # None once flushed
         self._started = False  # single-use latch; survives stop() clearing connections
 
@@ -299,7 +308,10 @@ class McpHost:
         warnings: list[str] = []
         conns = [
             ServerConnection(
-                spec, transport_factory=self._transport_factory, on_event=self._emit
+                spec,
+                transport_factory=self._transport_factory,
+                on_event=self._emit,
+                errlog=self.errlog,
             )
             for spec in self._specs
         ]
