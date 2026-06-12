@@ -644,6 +644,12 @@ def baseline_ruleset() -> RuleSet:
             PermissionRule(action="allow", tool="model:*"),
             PermissionRule(action="allow", tool="dispatch_agent"),
             PermissionRule(action="allow", tool="todo"),
+            # configuring an MCP server / installing a plugin is the consent act
+            # (load = execute trust model); the baseline gates the dangerous core
+            # (write/edit/bash), and user/project rules still shadow these allows
+            # via layer order.
+            PermissionRule(action="allow", tool="mcp__*"),
+            PermissionRule(action="allow", tool="invoke_skill"),
             PermissionRule(action="allow", tool="read_file"),
             PermissionRule(action="allow", tool="glob"),
             PermissionRule(action="allow", tool="grep"),

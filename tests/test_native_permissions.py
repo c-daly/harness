@@ -20,6 +20,15 @@ def test_baseline_allows_reads_asks_writes_and_bash():
     assert engine.decide("bash", {"command": "ls"}) == "ask"
 
 
+def test_baseline_allows_mcp_and_skill():
+    # configuring an MCP server / installing a plugin is the consent act; the
+    # baseline lets those tools run while the dangerous core (bash) stays gated.
+    engine = PermissionEngine([baseline_ruleset()])
+    assert engine.decide("mcp__memory__memory_write", {}) == "allow"
+    assert engine.decide("invoke_skill", {}) == "allow"
+    assert engine.decide("bash", {"command": "ls"}) == "ask"  # the gate stays
+
+
 def test_user_rule_overrides_baseline_when_layered_first():
     user = PermissionRule(action="allow", tool="bash", match={"command": "git *"})
     from harness.permissions import RuleSet
