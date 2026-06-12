@@ -81,3 +81,15 @@ def test_spec_name_and_required_param(tmp_path):
     spec = _tool(tmp_path).spec
     assert spec.name == ToolName("read_file")
     assert spec.parameters["required"] == ["file_path"]
+
+
+async def test_permission_error_becomes_tool_error(tmp_path):
+    secret = tmp_path / "secret.txt"
+    secret.write_text("top secret\n")
+    secret.chmod(0o000)
+    try:
+        with pytest.raises(ToolError) as exc:
+            await _tool(tmp_path)({"file_path": "secret.txt"})
+        assert "permission" in str(exc.value).lower()
+    finally:
+        secret.chmod(0o644)

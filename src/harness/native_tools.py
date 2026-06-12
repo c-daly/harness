@@ -68,23 +68,29 @@ class ReadFileTool:
         path = _resolve(self._root, args.get("file_path", ""))
         offset = int(args["offset"]) if args.get("offset") else 1
         limit = int(args["limit"]) if args.get("limit") else _READ_DEFAULT_LIMIT
-        return await asyncio.to_thread(self._read, path, offset, limit, args)
+        windowed = bool(args.get("offset") or args.get("limit"))
+        return await asyncio.to_thread(self._read, path, offset, limit, windowed)
 
-    def _read(self, path: Path, offset: int, limit: int, args: dict[str, Any]) -> str:
+    def _read(self, path: Path, offset: int, limit: int, windowed: bool) -> str:
         if not path.exists():
             raise ToolError(
                 f"file does not exist: {path}. Check the path, or use glob/grep to find it."
             )
         if path.is_dir():
             raise ToolError(f"{path} is a directory. Use glob to list files in it.")
-        size = path.stat().st_size
-        windowed = args.get("offset") or args.get("limit")
-        if not windowed and size > _READ_MAX_FILE_BYTES:
+        try:
+            size = path.stat().st_size
+            if not windowed and size > _READ_MAX_FILE_BYTES:
+                raise ToolError(
+                    f"file is {size} bytes, too large to read at once. Pass offset and limit to "
+                    f"read a range (e.g. offset: 1, limit: 500), or use grep to find the section."
+                )
+            data = path.read_bytes()
+        except OSError as exc:
             raise ToolError(
-                f"file is {size} bytes, too large to read at once. Pass offset and limit to "
-                f"read a range (e.g. offset: 1, limit: 500), or use grep to find the section."
-            )
-        data = path.read_bytes()
+                f"could not read {path}: {exc.strerror or exc}. The file may have restrictive "
+                f"permissions or be unreadable. Check access, or use bash (e.g. ls -l) to inspect it."
+            ) from exc
         text = data.decode("utf-8", errors="replace")
         if text == "":
             return "File exists but is empty."
@@ -93,7 +99,10 @@ class ReadFileTool:
             all_lines = all_lines[:-1]  # drop trailing-newline artifact
         total = len(all_lines)
         if offset > total:
-            raise ToolError(f"offset {offset} is beyond the end of the file ({total} lines).")
+            raise ToolError(
+                f"offset {offset} is beyond the end of the file ({total} lines). "
+                f"Use a smaller offset or omit it to read from the start."
+            )
         window = all_lines[offset - 1 : offset - 1 + limit]
         body = _format_numbered(window, offset)
         if len(body.encode()) > _READ_MAX_BYTES:
