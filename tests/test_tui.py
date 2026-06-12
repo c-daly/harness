@@ -25,6 +25,8 @@ from harness.tui_support import TuiResolver
 from harness.types import CallId, ModelId, ToolName
 from tests.conftest import fixture_stdio_spec
 
+from harness.plugins import load_plugins
+
 
 class EchoTool:
     spec = ToolSpec(
@@ -37,12 +39,13 @@ class EchoTool:
         return args["text"]
 
 
-def make_app(tmp_path, catalog_path=None, **kernel_kwargs) -> HarnessApp:
+def make_app(tmp_path, catalog_path=None, plugins=None, **kernel_kwargs) -> HarnessApp:
     """Build a HarnessApp for tests.
 
     Special kwargs (consumed here, not forwarded to build_kernel):
       engine: PermissionEngine -- when given, wires up AppBoundAsk + TuiResolver.
       catalog_path: Path -- when given, forwarded to HarnessApp for /model.
+      plugins: LoadedPlugins -- when given, forwarded to build_kernel.
     """
     engine = kernel_kwargs.pop("engine", None)
     ask: AppBoundAsk | None = None
@@ -59,6 +62,8 @@ def make_app(tmp_path, catalog_path=None, **kernel_kwargs) -> HarnessApp:
         build_kwargs["resolver"] = resolver
     if engine is not None and "permissions" not in kernel_kwargs:
         build_kwargs["permissions"] = engine
+    if plugins is not None:
+        build_kwargs["plugins"] = plugins
     build_kwargs.update(kernel_kwargs)
     kernel = build_kernel(**build_kwargs)
     return HarnessApp(kernel, catalog_path=catalog_path, ask=ask)
@@ -115,12 +120,12 @@ async def test_second_submit_while_turn_running_is_rejected(tmp_path):
         await pilot.pause(0.1)
         await pilot.click("#prompt")
         await pilot.press(*"one", "enter")
-        await pilot.pause(0.1)                  # turn parked at the gate
+        await pilot.pause(0.1)  # turn parked at the gate
         await pilot.press(*"two", "enter")
         await pilot.pause(0.1)
         lines = "\n".join(str(line) for line in app.query_one(RichLog).lines)
         assert "already running" in lines
-        provider.release.set()                  # let the first turn finish
+        provider.release.set()  # let the first turn finish
         await pilot.pause(0.3)
         lines = "\n".join(str(line) for line in app.query_one(RichLog).lines)
         assert "gated done" in lines
@@ -133,9 +138,9 @@ async def test_second_submit_while_turn_running_is_rejected(tmp_path):
 async def test_turn_failure_renders_and_loop_survives(tmp_path):
     # engine denying model:* (tests/test_permissions.py construction); every
     # turn raises ModelDispatchBlocked, so the loop must survive repeat failures.
-    engine = PermissionEngine([
-        RuleSet(rules=[PermissionRule(action="deny", tool="model:*")], default="allow")
-    ])
+    engine = PermissionEngine(
+        [RuleSet(rules=[PermissionRule(action="deny", tool="model:*")], default="allow")]
+    )
     app = make_app(tmp_path, permissions=engine)
     async with app.run_test() as pilot:
         await pilot.pause(0.1)
@@ -144,17 +149,23 @@ async def test_turn_failure_renders_and_loop_survives(tmp_path):
         await pilot.pause(0.3)
         lines = "\n".join(str(line) for line in app.query_one(RichLog).lines)
         assert "turn failed" in lines
-        await pilot.press(*"again", "enter")    # loop still accepts turns
+        await pilot.press(*"again", "enter")  # loop still accepts turns
         await pilot.pause(0.3)
         lines = "\n".join(str(line) for line in app.query_one(RichLog).lines)
         assert lines.count("turn failed") == 2
 
 
 async def test_streaming_tokens_appear_in_live_tail_then_finalize(tmp_path):
-    provider = FakeProvider([[
-        TextDelta(text="str"), TextDelta(text="eam"),
-        UsageReport(usage=Usage()), StreamStop(stop_reason="end_turn"),
-    ]])
+    provider = FakeProvider(
+        [
+            [
+                TextDelta(text="str"),
+                TextDelta(text="eam"),
+                UsageReport(usage=Usage()),
+                StreamStop(stop_reason="end_turn"),
+            ]
+        ]
+    )
     app = make_app(tmp_path, provider=provider, model=ModelId("fake:echo"))
     async with app.run_test() as pilot:
         await pilot.pause(0.1)
@@ -162,8 +173,8 @@ async def test_streaming_tokens_appear_in_live_tail_then_finalize(tmp_path):
         await pilot.press(*"go", "enter")
         await pilot.pause(0.3)
         lines = "\n".join(str(line) for line in app.query_one(RichLog).lines)
-        assert "stream" in lines                                   # finalized
-        assert app.query_one("#live", Static).content == ""       # tail cleared
+        assert "stream" in lines  # finalized
+        assert app.query_one("#live", Static).content == ""  # tail cleared
 
 
 class _FlakyStreamProvider:
@@ -180,8 +191,10 @@ class _FlakyStreamProvider:
             yield TextDelta(text="par")
             raise Overloaded("busy")
         for chunk in [
-            TextDelta(text="full"), TextDelta(text=" reply"),
-            UsageReport(usage=Usage()), StreamStop(stop_reason="end_turn"),
+            TextDelta(text="full"),
+            TextDelta(text=" reply"),
+            UsageReport(usage=Usage()),
+            StreamStop(stop_reason="end_turn"),
         ]:
             yield chunk
 
@@ -197,18 +210,26 @@ async def test_retry_resets_live_tail_no_duplication(tmp_path):
         await pilot.pause(0.4)
         lines = "\n".join(str(line) for line in app.query_one(RichLog).lines)
         assert "full reply" in lines
-        assert "parfull" not in lines          # the partial didnt bleed into the final
-        assert "retrying" in lines             # the reset was announced
+        assert "parfull" not in lines  # the partial didnt bleed into the final
+        assert "retrying" in lines  # the reset was announced
 
 
 async def test_thinking_only_stream_clears_live_tail(tmp_path):
-    provider = FakeProvider([[
-        ThinkingDelta(text="pondering"), TextDelta(text="done thinking"),
-        UsageReport(usage=Usage()), StreamStop(stop_reason="end_turn"),
-    ], [
-        ThinkingDelta(text="only thoughts"),
-        UsageReport(usage=Usage()), StreamStop(stop_reason="end_turn"),
-    ]])
+    provider = FakeProvider(
+        [
+            [
+                ThinkingDelta(text="pondering"),
+                TextDelta(text="done thinking"),
+                UsageReport(usage=Usage()),
+                StreamStop(stop_reason="end_turn"),
+            ],
+            [
+                ThinkingDelta(text="only thoughts"),
+                UsageReport(usage=Usage()),
+                StreamStop(stop_reason="end_turn"),
+            ],
+        ]
+    )
     app = make_app(tmp_path, provider=provider, model=ModelId("fake:echo"))
     async with app.run_test() as pilot:
         await pilot.pause(0.1)
@@ -216,29 +237,33 @@ async def test_thinking_only_stream_clears_live_tail(tmp_path):
         await pilot.press(*"one", "enter")
         await pilot.pause(0.3)
         assert str(app.query_one("#live", Static).content) == ""
-        await pilot.press(*"two", "enter")     # thinking-only turn
+        await pilot.press(*"two", "enter")  # thinking-only turn
         await pilot.pause(0.3)
-        assert str(app.query_one("#live", Static).content) == ""   # not stuck
+        assert str(app.query_one("#live", Static).content) == ""  # not stuck
 
 
 async def test_permission_modal_allow_completes_turn(tmp_path):
-    engine = PermissionEngine([
-        RuleSet(
-            rules=[PermissionRule(action="ask", tool="echo_tool")],
-            default="allow",
-        )
-    ])
-    provider = FakeProvider([
-        tool_call_turn("calling", ToolName("echo_tool"), {"text": "hi"}),
-        text_turn("done"),
-    ])
+    engine = PermissionEngine(
+        [
+            RuleSet(
+                rules=[PermissionRule(action="ask", tool="echo_tool")],
+                default="allow",
+            )
+        ]
+    )
+    provider = FakeProvider(
+        [
+            tool_call_turn("calling", ToolName("echo_tool"), {"text": "hi"}),
+            text_turn("done"),
+        ]
+    )
     app = make_app(tmp_path, provider=provider, model=ModelId("fake:echo"), engine=engine)
     app.kernel.registry.register(EchoTool())
     async with app.run_test() as pilot:
         await pilot.pause(0.1)
         await pilot.click("#prompt")
         await pilot.press(*"run it", "enter")
-        await pilot.pause(0.3)                       # modal up; dispatch parked
+        await pilot.pause(0.3)  # modal up; dispatch parked
         assert isinstance(app.screen, PermissionScreen)
         await pilot.press("y")
         await pilot.pause(0.5)
@@ -251,23 +276,27 @@ async def test_permission_modal_allow_completes_turn(tmp_path):
 
 
 async def test_permission_modal_deny_blocks_tool(tmp_path):
-    engine = PermissionEngine([
-        RuleSet(
-            rules=[PermissionRule(action="ask", tool="echo_tool")],
-            default="allow",
-        )
-    ])
-    provider = FakeProvider([
-        tool_call_turn("calling", ToolName("echo_tool"), {"text": "hi"}),
-        text_turn("done"),
-    ])
+    engine = PermissionEngine(
+        [
+            RuleSet(
+                rules=[PermissionRule(action="ask", tool="echo_tool")],
+                default="allow",
+            )
+        ]
+    )
+    provider = FakeProvider(
+        [
+            tool_call_turn("calling", ToolName("echo_tool"), {"text": "hi"}),
+            text_turn("done"),
+        ]
+    )
     app = make_app(tmp_path, provider=provider, model=ModelId("fake:echo"), engine=engine)
     app.kernel.registry.register(EchoTool())
     async with app.run_test() as pilot:
         await pilot.pause(0.1)
         await pilot.click("#prompt")
         await pilot.press(*"run it", "enter")
-        await pilot.pause(0.3)                       # modal up
+        await pilot.pause(0.3)  # modal up
         assert isinstance(app.screen, PermissionScreen)
         await pilot.press("n")
         await pilot.pause(0.5)
@@ -286,17 +315,19 @@ async def test_permission_modal_always_persists_grant(tmp_path):
         ],
         grants_path=grants_path,
     )
-    provider = FakeProvider([
-        tool_call_turn("calling", ToolName("echo_tool"), {"text": "hi"}),
-        text_turn("done"),
-    ])
+    provider = FakeProvider(
+        [
+            tool_call_turn("calling", ToolName("echo_tool"), {"text": "hi"}),
+            text_turn("done"),
+        ]
+    )
     app = make_app(tmp_path, provider=provider, model=ModelId("fake:echo"), engine=engine)
     app.kernel.registry.register(EchoTool())
     async with app.run_test() as pilot:
         await pilot.pause(0.1)
         await pilot.click("#prompt")
         await pilot.press(*"run it", "enter")
-        await pilot.pause(0.3)                       # modal up
+        await pilot.pause(0.3)  # modal up
         assert isinstance(app.screen, PermissionScreen)
         await pilot.press("a")
         await pilot.pause(0.5)
@@ -343,16 +374,20 @@ async def test_escape_with_no_turn_running_is_a_noop(tmp_path):
 async def test_escape_on_permission_modal_denies_it(tmp_path):
     # The app-level priority Esc binding preempts the modal own escape binding;
     # action_interrupt must DELEGATE to the modal -- this test pins that behaviour.
-    engine = PermissionEngine([
-        RuleSet(
-            rules=[PermissionRule(action="ask", tool="echo_tool")],
-            default="allow",
-        )
-    ])
-    provider = FakeProvider([
-        tool_call_turn("calling", ToolName("echo_tool"), {"text": "hi"}),
-        text_turn("done"),
-    ])
+    engine = PermissionEngine(
+        [
+            RuleSet(
+                rules=[PermissionRule(action="ask", tool="echo_tool")],
+                default="allow",
+            )
+        ]
+    )
+    provider = FakeProvider(
+        [
+            tool_call_turn("calling", ToolName("echo_tool"), {"text": "hi"}),
+            text_turn("done"),
+        ]
+    )
     app = make_app(tmp_path, provider=provider, model=ModelId("fake:echo"), engine=engine)
     app.kernel.registry.register(EchoTool())
     async with app.run_test() as pilot:
@@ -396,15 +431,15 @@ async def test_escape_after_modal_close_interrupts_running_turn(tmp_path):
     # Esc #1 denies the modal (turn keeps running); the turn proceeds to model call
     # #2, which parks; Esc #2 interrupts the genuinely-running turn. Exactly one
     # user_interrupt is recorded -- the modal-deny Esc must NOT count as an interrupt.
-    engine = PermissionEngine([
-        RuleSet(
-            rules=[PermissionRule(action="ask", tool="echo_tool")],
-            default="allow",
-        )
-    ])
-    provider = ParkingProvider(
-        tool_call_turn("calling", ToolName("echo_tool"), {"text": "hi"})
+    engine = PermissionEngine(
+        [
+            RuleSet(
+                rules=[PermissionRule(action="ask", tool="echo_tool")],
+                default="allow",
+            )
+        ]
     )
+    provider = ParkingProvider(tool_call_turn("calling", ToolName("echo_tool"), {"text": "hi"}))
     app = make_app(tmp_path, provider=provider, model=ModelId("parking"), engine=engine)
     app.kernel.registry.register(EchoTool())
     async with app.run_test() as pilot:
@@ -459,7 +494,6 @@ async def test_escape_preserves_partial_streamed_output(tmp_path):
     assert events.count("user_interrupt") == 1
 
 
-
 MODELS_TOML_TWO_ALIASES = (
     "[models.alias-a]\n"
     "route = 'local/model-a'\n"
@@ -483,8 +517,8 @@ async def test_slash_help_and_tools_and_unknown(tmp_path):
         await pilot.press(*"/nope", "enter")
         await pilot.pause(0.2)
         lines = "\n".join(str(line) for line in app.query_one(RichLog).lines)
-        assert "/model" in lines                     # help lists commands
-        assert "dispatch_agent" in lines             # tools lists the builtin
+        assert "/model" in lines  # help lists commands
+        assert "dispatch_agent" in lines  # tools lists the builtin
         assert "unknown command" in lines
 
 
@@ -495,7 +529,7 @@ async def test_slash_model_switches_via_catalog(tmp_path):
     async with app.run_test() as pilot:
         await pilot.pause(0.1)
         await pilot.click("#prompt")
-        await pilot.press(*"/model", "enter")         # no arg: list aliases
+        await pilot.press(*"/model", "enter")  # no arg: list aliases
         await pilot.pause(0.2)
         lines = "\n".join(str(line) for line in app.query_one(RichLog).lines)
         assert "alias-a" in lines and "alias-b" in lines
@@ -509,7 +543,7 @@ async def test_slash_model_switches_via_catalog(tmp_path):
 
 
 async def test_slash_model_without_catalog_says_so(tmp_path):
-    app = make_app(tmp_path)                          # no catalog_path
+    app = make_app(tmp_path)  # no catalog_path
     async with app.run_test() as pilot:
         await pilot.pause(0.1)
         await pilot.click("#prompt")
@@ -532,32 +566,36 @@ async def test_slash_quit_exits_cleanly(tmp_path):
 
 
 async def test_slash_quit_during_running_turn_is_clean(tmp_path):
-    provider = GatedProvider()                       # never released
+    provider = GatedProvider()  # never released
     app = make_app(tmp_path, provider=provider, model=ModelId("gated"))
     async with app.run_test() as pilot:
         await pilot.pause(0.1)
         await pilot.click("#prompt")
         await pilot.press(*"stuck", "enter")
-        await pilot.pause(0.2)                       # turn parked
+        await pilot.pause(0.2)  # turn parked
         await pilot.press(*"/quit", "enter")
         await pilot.pause(0.3)
     events = [e.event.type for e in read_session(tmp_path, app.kernel.session.id)]
-    assert events.count("session_ended") == 1        # no crash, clean single end
+    assert events.count("session_ended") == 1  # no crash, clean single end
 
 
 async def test_stats_line_updates_after_a_turn(tmp_path):
-    provider = FakeProvider([[
-        TextDelta(text="hi"),
-        UsageReport(usage=Usage(input_tokens=7, output_tokens=3)),
-        StreamStop(stop_reason="end_turn"),
-    ]])
+    provider = FakeProvider(
+        [
+            [
+                TextDelta(text="hi"),
+                UsageReport(usage=Usage(input_tokens=7, output_tokens=3)),
+                StreamStop(stop_reason="end_turn"),
+            ]
+        ]
+    )
     app = make_app(tmp_path, provider=provider, model=ModelId("fake:echo"))
     async with app.run_test() as pilot:
         await pilot.pause(0.1)
         await pilot.click("#prompt")
         await pilot.press(*"go", "enter")
         await pilot.pause(0.3)
-        app.refresh_stats()                            # poke instead of waiting 1s
+        app.refresh_stats()  # poke instead of waiting 1s
         await pilot.pause(0.1)
         stats = str(app.query_one("#stats", Static).content)
         assert "in 7" in stats and "out 3" in stats
@@ -566,12 +604,14 @@ async def test_stats_line_updates_after_a_turn(tmp_path):
 
 async def test_tui_pipes_mcp_child_stderr_to_file(tmp_path):
     kernel = build_kernel(
-        provider=EchoProvider(), base_dir=tmp_path, model=ModelId("echo"),
+        provider=EchoProvider(),
+        base_dir=tmp_path,
+        model=ModelId("echo"),
         mcp=[fixture_stdio_spec()],
     )
     app = HarnessApp(kernel)
     async with app.run_test() as pilot:
-        await pilot.pause(0.5)                        # mcp start + session driver
+        await pilot.pause(0.5)  # mcp start + session driver
         await pilot.click("#prompt")
         await pilot.press(*"hi", "enter")
         await pilot.pause(0.3)
@@ -598,10 +638,12 @@ async def test_hostile_tool_name_renders_neutralized(tmp_path):
         async def __call__(self, args):
             return "ok"
 
-    provider = FakeProvider([
-        tool_call_turn("", ToolName(hostile), {}),
-        text_turn("done"),
-    ])
+    provider = FakeProvider(
+        [
+            tool_call_turn("", ToolName(hostile), {}),
+            text_turn("done"),
+        ]
+    )
     app = make_app(tmp_path, provider=provider, model=ModelId("fake:echo"))
     app.kernel.registry.register(HostileTool())
     async with app.run_test() as pilot:
@@ -617,11 +659,17 @@ async def test_hostile_tool_name_renders_neutralized(tmp_path):
 async def test_malformed_stream_fails_turn_and_loop_survives(tmp_path):
     """A provider yielding garbage tool-call JSON raises MalformedStreamError
     (non-retryable): the TUI renders the failure, repairs, and the next turn works."""
-    provider = FakeProvider([[
-        ToolCallDelta(index=0, call_id=CallId("x1"), tool=ToolName("echo_tool"),
-                      args_json="{not json"),
-        UsageReport(usage=Usage()), StreamStop(stop_reason="tool_use"),
-    ]])
+    provider = FakeProvider(
+        [
+            [
+                ToolCallDelta(
+                    index=0, call_id=CallId("x1"), tool=ToolName("echo_tool"), args_json="{not json"
+                ),
+                UsageReport(usage=Usage()),
+                StreamStop(stop_reason="tool_use"),
+            ]
+        ]
+    )
     app = make_app(tmp_path, provider=provider, model=ModelId("fake:echo"))
     async with app.run_test() as pilot:
         await pilot.pause(0.1)
@@ -636,3 +684,77 @@ async def test_malformed_stream_fails_turn_and_loop_survives(tmp_path):
         await pilot.pause(0.3)
         lines = "\n".join(str(line) for line in app.query_one(RichLog).lines)
         assert "echo: again" in lines
+
+
+# ---------------------------------------------------------------------------
+# Task 7: TUI plugin commands
+# ---------------------------------------------------------------------------
+
+MINIMAL_PLUGIN_MANIFEST = """
+[plugin]
+name = "echo-plugin"
+version = "0.1.0"
+description = "Plugin for TUI command tests"
+"""
+
+_ECHO_COMMAND_CONTENT = (
+    "---\nname: echo-args\ndescription: Echo the arguments\n---\nPlease echo: $ARGUMENTS"
+)
+
+
+def _make_echo_plugin(tmp_path):
+    """Create a plugin with commands/echo-args.md in tmp_path; return LoadedPlugins."""
+    plugin_dir = tmp_path / "echo-plugin"
+    plugin_dir.mkdir(parents=True)
+    (plugin_dir / "plugin.toml").write_text(MINIMAL_PLUGIN_MANIFEST)
+    commands_dir = plugin_dir / "commands"
+    commands_dir.mkdir()
+    (commands_dir / "echo-args.md").write_text(_ECHO_COMMAND_CONTENT)
+    return load_plugins([tmp_path])
+
+
+async def test_plugin_command_submits_its_body_as_a_turn(tmp_path):
+    """Invoking /echo-args expands $ARGUMENTS and submits the body as a normal turn."""
+    loaded = _make_echo_plugin(tmp_path / "plugins")
+    app = make_app(tmp_path, plugins=loaded)
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        await pilot.click("#prompt")
+        await pilot.press(*"/echo-args hello world", "enter")
+        await pilot.pause(0.3)
+        lines = "\n".join(str(line) for line in app.query_one(RichLog).lines)
+        assert "Please echo: hello world" in lines  # the expanded body was submitted
+        assert "echo: Please echo: hello world" in lines  # EchoProvider replied
+
+
+async def test_plugin_command_listed_in_help_and_unknown_still_unknown(tmp_path):
+    """Plugin commands appear in /help output; unknown commands remain unknown."""
+    loaded = _make_echo_plugin(tmp_path / "plugins")
+    app = make_app(tmp_path, plugins=loaded)
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        await pilot.click("#prompt")
+        await pilot.press(*"/help", "enter")
+        await pilot.pause(0.1)
+        lines = "\n".join(str(line) for line in app.query_one(RichLog).lines)
+        assert "/echo-args" in lines
+        await pilot.press(*"/nope", "enter")
+        await pilot.pause(0.1)
+        lines = "\n".join(str(line) for line in app.query_one(RichLog).lines)
+        assert "unknown command" in lines
+
+
+async def test_plugin_command_respects_turn_guard(tmp_path):
+    """Invoking a plugin command mid-turn renders the \"already running\" message."""
+    loaded = _make_echo_plugin(tmp_path / "plugins")
+    provider = GatedProvider()  # parks until released -- never released here
+    app = make_app(tmp_path, plugins=loaded, provider=provider, model=ModelId("gated"))
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        await pilot.click("#prompt")
+        await pilot.press(*"go", "enter")  # start a turn; parks at gate
+        await pilot.pause(0.1)
+        await pilot.press(*"/echo-args hi", "enter")  # plugin command mid-turn
+        await pilot.pause(0.1)
+        lines = "\n".join(str(line) for line in app.query_one(RichLog).lines)
+        assert "already running" in lines

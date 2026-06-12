@@ -17,6 +17,7 @@ from textual.widgets import Input, RichLog, Static
 from textual.worker import WorkerCancelled, WorkerFailed
 
 from harness.cli import Kernel
+from harness.frontmatter import CommandDef
 from harness.events import CustomEvent, RetryAttempted, ToolCallCompleted, ToolCallProposed
 from harness.hooks import ProposedToolCall
 from harness.interaction import PermissionRequest
@@ -123,6 +124,11 @@ class HarnessApp(App[None]):
         self._mcp_errlog = None
         if ask is not None:
             ask.app = self
+        # Build plugin command lookup: name -> CommandDef (from all loaded plugins).
+        self._plugin_commands: dict[str, CommandDef] = {}
+        if kernel.plugins is not None:
+            for cmd in kernel.plugins.commands:
+                self._plugin_commands[cmd.name] = cmd
 
     def compose(self) -> ComposeResult:
         with Vertical():
@@ -308,6 +314,11 @@ class HarnessApp(App[None]):
     async def _run_command(self, command: SlashCommand) -> None:
         if command.name == "help":
             self.say("", "/help  /model [alias]  /tools  /quit  — @/path attaches a file")
+            if self._plugin_commands:
+                self.say(
+                    "",
+                    "plugin commands: " + "  ".join(f"/{n}" for n in sorted(self._plugin_commands)),
+                )
         elif command.name == "tools":
             for spec in self.kernel.registry.specs():
                 self.say("  ", str(spec.name))
@@ -318,6 +329,19 @@ class HarnessApp(App[None]):
             # catalog.resolve lazily imports litellm (seconds) -- never block the
             # message handler; the switch applies on the next dispatch anyway
             self.run_worker(self._switch_model(command.arg), group="driver", exit_on_error=False)
+        elif command.name in self._plugin_commands:
+            body = self._plugin_commands[command.name].body
+            prompt = body.replace("$ARGUMENTS", command.arg)
+            # A plugin command IS a turn: route through the same guard as plain input.
+            # (@file mentions deliberately do NOT expand inside command bodies v1 --
+            # the body is the plugin author's text.)
+            if self._turn_worker is not None and self._turn_worker.is_running:
+                self.say("! ", "a turn is already running — Esc to interrupt it first")
+                return
+            self.say("> ", prompt)
+            self._turn_worker = self.run_worker(
+                self._run_turn(prompt), group="agent", exit_on_error=False
+            )
         else:
             self.say("! ", f"unknown command: /{command.name}")
 
