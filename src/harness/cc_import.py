@@ -949,7 +949,7 @@ def build_report(entries, *, plugin_name: str, source: str) -> str:
     _section("Hooks", ("hook",))
     _section("MCP", ("mcp",))
     _section("Skipped", ("skip",))
-    return chr(10).join(lines).rstrip(chr(10)) + chr(10)
+    return "\n".join(lines).rstrip("\n") + "\n"
 
 
 def emit_plugin_toml(
@@ -988,9 +988,9 @@ def emit_plugin_toml(
         f"version = {_toml_str(version)}",
         f"description = {_toml_str(description)}",
     ]
-    out = chr(10).join(head + body) + chr(10)
+    out = "\n".join(head + body) + "\n"
     if mcp_toml.strip():
-        out += chr(10) + mcp_toml
+        out += "\n" + mcp_toml
     return out
 
 
@@ -1005,4 +1005,4 @@ def eject_marker(plugin_toml: Path) -> None:
     """Flip a generated plugin to owned: drop the generated marker line, keep source comment."""
     text = plugin_toml.read_text(encoding="utf-8")
     kept = [ln for ln in text.splitlines() if ln.strip() != _GENERATED_MARKER]
-    plugin_toml.write_text(chr(10).join(kept) + chr(10), encoding="utf-8")
+    plugin_toml.write_text("\n".join(kept) + "\n", encoding="utf-8")
