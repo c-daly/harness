@@ -43,7 +43,8 @@ async def test_model_drives_write_edit_bash_todo_through_permissions(tmp_path):
     assert result == "done"
     assert (ws / "hi.txt").read_text() == "hi\n"
     events = [e.event for e in read_session(data, kernel.session.id)]
-    assert any(isinstance(e, PermissionRequested) for e in events)
+    # write, edit, and bash each ask; todo is baseline-allowed and asks none
+    assert sum(isinstance(e, PermissionRequested) for e in events) == 3
     assert any(isinstance(e, TodoListUpdated) for e in events)
     bash_done = [e for e in events if isinstance(e, ToolCallCompleted)][-1]
     assert "hi" in (bash_done.result_text or "")
@@ -99,3 +100,7 @@ async def test_deny_write_prevents_side_effect(tmp_path):
     )
     await run_once(kernel, "try to write")
     assert not (ws / "blocked.txt").exists()  # the SAFETY property: deny => no side effect
+    # the durable evidence the denial happened: exactly one error-flagged completion record
+    events = [e.event for e in read_session(data, kernel.session.id)]
+    denied = [e for e in events if isinstance(e, ToolCallCompleted) and e.is_error]
+    assert len(denied) == 1
