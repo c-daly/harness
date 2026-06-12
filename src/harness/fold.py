@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 
 from harness.events import (
     CompactionApplied,
+    DispatchResolved,
     Envelope,
     ModelCallCompleted,
     ToolCallAborted,
@@ -32,6 +33,10 @@ class FoldedState:
     last_seq: int = 0
     # seq -> index range bookkeeping for compaction
     _msg_seqs: list[int] = field(default_factory=list)
+    # canonical paths read or written successfully this session (read-before-edit gate, R-C1)
+    read_paths: set[str] = field(default_factory=set)
+    # call_id -> file_path for in-flight read_file/write_file proposals
+    _read_intents: dict[CallId, str] = field(default_factory=dict)
 
     def _append(self, seq: int, message: Message) -> None:
         self.messages.append(message)
@@ -49,7 +54,19 @@ def fold(envelopes: list[Envelope]) -> FoldedState:
             state._append(env.seq, Message.model_validate(ev.message))
         elif isinstance(ev, ToolCallProposed):
             state.open_intents[ev.call_id] = env.seq
+            if str(ev.tool) in ("read_file", "write_file"):
+                fp = ev.args.get("file_path")
+                if fp is not None:
+                    state._read_intents[ev.call_id] = str(fp)
+        elif isinstance(ev, DispatchResolved):
+            if ev.kind == "tool" and str(ev.tool) in ("read_file", "write_file"):
+                fp = (ev.args or {}).get("file_path")
+                if fp is not None:
+                    state._read_intents[ev.call_id] = str(fp)
         elif isinstance(ev, ToolCallCompleted):
+            path = state._read_intents.pop(ev.call_id, None)
+            if path is not None and not ev.is_error:
+                state.read_paths.add(path)
             state.open_intents.pop(ev.call_id, None)
             state._append(
                 env.seq,
