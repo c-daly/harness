@@ -88,3 +88,49 @@ async def test_glob_and_grep_share_ignore_set(tmp_path):
     r = await GrepTool(workspace_root=root)({"pattern": "foo", "glob": "x.py"})
     assert "node_modules" not in g and "No files matched" in g
     assert "node_modules" not in r and "No matches found" in r
+
+
+async def test_walk_skips_symlinked_dir_outside(tmp_path):
+    # a symlinked DIRECTORY inside the workspace pointing outside must not be traversed
+    root = tmp_path / "ws"
+    root.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.py").write_text("secret_token\n")
+    (root / "link").symlink_to(outside, target_is_directory=True)
+    g = await GlobTool(workspace_root=root)({"pattern": "**/*.py"})
+    assert str(outside / "secret.py") not in g
+    assert "No files matched" in g
+    r = await GrepTool(workspace_root=root)({"pattern": "secret_token"})
+    # grep never reached the symlinked dir: the out-of-root file is not a hit
+    assert str(outside / "secret.py") not in r
+    assert "No matches found" in r
+
+
+async def test_walk_skips_symlinked_file_outside(tmp_path):
+    # a symlinked FILE inside the workspace pointing outside must not be read or listed
+    root = tmp_path / "ws"
+    root.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    target = outside / "secret.txt"
+    target.write_text("secret_token\n")
+    (root / "secret.txt").symlink_to(target)
+    g = await GlobTool(workspace_root=root)({"pattern": "**/*.txt"})
+    assert "secret.txt" not in g
+    assert "No files matched" in g
+    r = await GrepTool(workspace_root=root)({"pattern": "secret_token"})
+    # grep never read the symlinked file: its path is not listed as a hit
+    assert str(root / "secret.txt") not in r
+    assert "No matches found" in r
+
+
+async def test_grep_files_cap_notice(tmp_path):
+    # more than the file cap of matching files -> files_with_matches output carries a notice
+    from harness.native_tools import _GREP_FILE_CAP
+
+    root = tmp_path
+    for i in range(_GREP_FILE_CAP + 1):
+        (root / f"m{i}.txt").write_text("needle\n")
+    out = await GrepTool(workspace_root=root)({"pattern": "needle"})
+    assert f"Showing first {_GREP_FILE_CAP} files with matches" in out

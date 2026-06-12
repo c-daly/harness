@@ -315,6 +315,11 @@ def _walk_workspace(base: Path):
         except OSError:
             continue
         for entry in entries:
+            # the walk never follows symlinks — a link pointing outside the root would
+            # leak content past the L2 confinement (file links included: grep reads what
+            # the walk yields).
+            if entry.is_symlink():
+                continue
             if entry.is_dir():
                 if entry.name not in _IGNORE_DIRS:
                     stack.append(entry)
@@ -434,7 +439,13 @@ class GrepTool:
                 break
         if not hits:
             return f"No matches found for {pattern!r} in {base} (respecting the ignore set)."
-        return "\n".join(hits)
+        body = "\n".join(hits)
+        if len(hits) >= _GREP_FILE_CAP:
+            body += (
+                f"\n\nShowing first {_GREP_FILE_CAP} files with matches; more exist. "
+                f"Narrow the pattern or path."
+            )
+        return body
 
     def _grep_content(self, rx, files, pattern, base) -> str:
         out, total = [], 0
