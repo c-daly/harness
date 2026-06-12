@@ -14,9 +14,11 @@ import weakref
 from pathlib import Path
 from typing import Any
 
+from harness.hooks import Allow, Ask, DispatchDecision, ProposedAction, ProposedToolCall
+from harness.permissions import PermissionRule, RuleSet
 from harness.tools import ToolSpec
 from harness.types import ToolName
-from harness.workspace import WorkspaceError, resolve_in_workspace
+from harness.workspace import PATH_ARG, WorkspaceError, resolve_in_workspace
 
 # Output caps (L3) — module constants, tunable, not contract.
 _READ_DEFAULT_LIMIT = 2000  # lines
@@ -619,3 +621,64 @@ class BashTool:
             os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
         except (ProcessLookupError, PermissionError):
             pass
+
+
+# ---------------------------------------------------------------------------
+# Permission integration (Task 7)
+# ---------------------------------------------------------------------------
+
+# Primary-arg table for the compact-form desugarer (frozen, R-Sa6). Paths come from
+# workspace.PATH_ARG; bash/glob/grep add their own primary arg.
+_PRIMARY_ARG = {**PATH_ARG, "bash": "command", "glob": "pattern", "grep": "pattern"}
+_COMPOUND_TOKENS = (";", "&&", "||", "|", "$(", "`", "\n")
+
+
+def baseline_ruleset() -> RuleSet:
+    """Shipped baseline (DATA, not a code denylist, L4): read-only allow, write/edit/bash ask,
+    default ask. A user permissions.toml layers OVER this (place it as the innermost provided
+    layer so explicit user rules win)."""
+    return RuleSet(
+        rules=[
+            PermissionRule(action="allow", tool="read_file"),
+            PermissionRule(action="allow", tool="glob"),
+            PermissionRule(action="allow", tool="grep"),
+            PermissionRule(action="ask", tool="write_file"),
+            PermissionRule(action="ask", tool="edit_file"),
+            PermissionRule(action="ask", tool="bash"),
+        ],
+        default="ask",
+    )
+
+
+def desugar_pattern(pattern: str) -> PermissionRule:
+    """Expand Claude-Code-style compact form `tool(argpattern)` into a PermissionRule.
+    A bare string with no parens is a tool-name glob (back-compat with todays --allow)."""
+    pattern = pattern.strip()
+    if pattern.endswith(")") and "(" in pattern:
+        tool, inner = pattern[:-1].split("(", 1)
+        tool = tool.strip()
+        key = _PRIMARY_ARG.get(tool)
+        if key is None:
+            raise ValueError(
+                f"compact grant {pattern!r}: tool {tool!r} has no primary arg; "
+                f"use explicit [[rules]] with a match table."
+            )
+        return PermissionRule(action="allow", tool=tool, match={key: inner})
+    return PermissionRule(action="allow", tool=pattern)
+
+
+class CompoundCommandGuard:
+    """Ask hook at priority 950: force a prompt on compound bash commands even when a
+    bash(prefix *) allow would match (R-Sa3). Ask survives a later Allow (first-Ask-wins);
+    deny stays absolute. Heuristic, NOT containment -- documented."""
+
+    name = "bash-compound-guard"
+    priority = 950  # below the engine at 1000, above plugin default 100
+
+    async def __call__(self, action: ProposedAction) -> DispatchDecision:
+        if not isinstance(action, ProposedToolCall) or str(action.tool) != "bash":
+            return Allow()
+        command = str(action.args.get("command", ""))
+        if any(tok in command for tok in _COMPOUND_TOKENS):
+            return Ask(reason="compound bash command (chained/piped) -- review before running")
+        return Allow()

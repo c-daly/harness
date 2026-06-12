@@ -19,16 +19,16 @@ def test_history_ring_up_down_walk():
     ring.remember("two")
     assert ring.prev("") == "two"
     assert ring.prev("two") == "one"
-    assert ring.prev("one") == "one"      # clamped at oldest
+    assert ring.prev("one") == "one"  # clamped at oldest
     assert ring.next("one") == "two"
-    assert ring.next("two") == ""         # past newest -> empty draft
+    assert ring.next("two") == ""  # past newest -> empty draft
 
 
 def test_history_ring_skips_blank_and_duplicate_neighbors():
     ring = HistoryRing()
     ring.remember("a")
-    ring.remember("")        # blanks not stored
-    ring.remember("a")       # consecutive duplicate not stored
+    ring.remember("")  # blanks not stored
+    ring.remember("a")  # consecutive duplicate not stored
     ring.remember("b")
     assert ring.prev("") == "b"
     assert ring.prev("b") == "a"
@@ -40,7 +40,7 @@ def test_history_ring_remember_resets_walk():
     ring.remember("a")
     ring.remember("b")
     assert ring.prev("") == "b"
-    ring.remember("c")               # new submission resets the walk
+    ring.remember("c")  # new submission resets the walk
     assert ring.prev("") == "c"
 
 
@@ -61,17 +61,15 @@ def test_expand_file_mentions_inlines_files(tmp_path):
     assert errors == []
     assert attached == [str(f)]
     assert "alpha\nbeta" in text
-    assert text.startswith("summarize")          # prompt kept; blocks appended
-    assert "```" in text                          # fenced
+    assert text.startswith("summarize")  # prompt kept; blocks appended
+    assert "```" in text  # fenced
 
 
 def test_expand_file_mentions_missing_and_oversize(tmp_path):
     big = tmp_path / "big.bin"
     big.write_bytes(b"x" * 2048)
     missing = tmp_path / "nope.txt"
-    text, attached, errors = expand_file_mentions(
-        f"@{missing} and @{big}", max_bytes=1024
-    )
+    text, attached, errors = expand_file_mentions(f"@{missing} and @{big}", max_bytes=1024)
     assert attached == []
     assert len(errors) == 2
     assert any("nope.txt" in e for e in errors)
@@ -94,8 +92,9 @@ def test_grant_pattern_for_tool_and_model():
         action=ProposedModelCall(call_id=CallId("c2"), model=ModelId("openai/gpt")),
         reason="ask",
     )
-    assert grant_pattern(tool_req) == "mcp__x__y"
-    assert grant_pattern(model_req) == "model:openai/gpt"
+    # grant_pattern now returns (tool, match) tuple (Task 7)
+    assert grant_pattern(tool_req) == ("mcp__x__y", {})
+    assert grant_pattern(model_req) == ("model:openai/gpt", {})
 
 
 async def test_tui_resolver_allow_deny_always():

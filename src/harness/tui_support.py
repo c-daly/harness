@@ -116,12 +116,23 @@ def expand_file_mentions(
     return text + "".join(blocks), attached, []
 
 
-def grant_pattern(request: PermissionRequest) -> str:
+def grant_pattern(request: PermissionRequest) -> tuple[str, dict[str, str]]:
+    """The (tool, match) an [a]lways answer records. Arg-aware so [a] on bash never persists
+    allow-all-bash (L5): bash -> first-token prefix; write/edit -> workspace path glob."""
     action = request.action
-    if isinstance(action, ProposedToolCall):
-        return str(action.tool)
     if isinstance(action, ProposedModelCall):
-        return f"model:{action.model}"
+        return f"model:{action.model}", {}
+    if isinstance(action, ProposedToolCall):
+        tool = str(action.tool)
+        if tool == "bash":
+            command = str(action.args.get("command", "")).strip()
+            first = command.split()[0] if command.split() else ""
+            return "bash", {"command": f"{first} *"} if first else {}
+        if tool in ("write_file", "edit_file"):
+            fp = str(action.args.get("file_path", ""))
+            parent = fp.rsplit("/", 1)[0] if "/" in fp else ""
+            return tool, {"file_path": f"{parent}/*"} if parent else {}
+        return tool, {}
     raise TypeError(f"unknown action: {action!r}")
 
 
@@ -138,6 +149,12 @@ class TuiResolver:
         self.answers_seen.append(answer)
         if answer == "always":
             if self.engine is not None:
-                self.engine.grant(grant_pattern(request), persist=True)
+                import os
+
+                tool, match = grant_pattern(request)
+                # bash grants are session-scoped unless explicitly opted into persistence (L5);
+                # workspace-qualified path grants are safe to persist.
+                persist = (tool != "bash") or os.environ.get("HARNESS_PERSIST_GRANTS") == "1"
+                self.engine.grant(tool, match or None, persist=persist)
             return True
         return answer == "allow"

@@ -53,6 +53,26 @@ class AppBoundAsk:
         return await self.app.push_screen_wait(PermissionScreen(request))
 
 
+def _describe_call(action) -> str:
+    args = action.args
+    tool = str(action.tool)
+    if tool == "bash":
+        cmd = str(args.get("command", ""))
+        return cmd if len(cmd) <= 500 else cmd[:500] + f" …[{len(cmd) - 500} more chars]"
+    if tool in ("read_file", "write_file", "edit_file", "glob", "grep"):
+        key = "file_path" if "file_path" in args else "path" if "path" in args else "pattern"
+        val = str(args.get(key, ""))
+        if tool == "write_file":
+            content_val = str(args.get("content", ""))
+            return f"{val}  ({len(content_val)} bytes)"
+        if tool == "edit_file":
+            old = str(args.get("old_string", ""))[:200]
+            new = str(args.get("new_string", ""))[:200]
+            return f"{val}\n  - {old}\n  + {new}"
+        return val
+    return ""
+
+
 class PermissionScreen(ModalScreen[str]):
     BINDINGS = [
         Binding("y", "answer('allow')", "allow once"),
@@ -66,14 +86,20 @@ class PermissionScreen(ModalScreen[str]):
         self.request = request
 
     def compose(self) -> ComposeResult:
+        from harness.tui_support import grant_pattern
+
         action = self.request.action
-        what = (
-            f"tool {action.tool}"
-            if isinstance(action, ProposedToolCall)
-            else f"model {action.model}"
-        )
         with Vertical(id="permission-box"):
-            yield Static(_plain(f"Permission: {what}"))
+            if isinstance(action, ProposedToolCall):
+                yield Static(_plain(f"Permission: tool {action.tool}"))
+                detail = _describe_call(action)
+                if detail:
+                    yield Static(_plain(detail))
+                tool, match = grant_pattern(self.request)
+                grant = f"{tool}({list(match.values())[0]})" if match else tool
+                yield Static(_plain(f"[a] will allow: {grant}"))
+            else:
+                yield Static(_plain(f"Permission: model {action.model}"))
             yield Static(_plain(self.request.reason))
             yield Static(_plain("[y] allow once   [a] always   [n] deny"))
 
