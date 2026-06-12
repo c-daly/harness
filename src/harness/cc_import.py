@@ -12,11 +12,15 @@ from disk; the converters (added in later tasks) are pure functions over that mo
 """
 
 import json
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
+import yaml
+
 from harness.frontmatter import FrontmatterError, split_frontmatter
+from harness.parity import CC_TOOL_MAP, NO_NATIVE_PARITY
 
 # Recognized primitive subdirs and metadata locations.
 _FOREIGN_HARNESS = {".opencode", ".codex-plugin"}
@@ -257,4 +261,285 @@ def read_cc_plugin(root: Path) -> CcPlugin:
         mcp_json_text=mcp_text,
         hooks_json_text=hooks_text,
         skips=skips,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Task 2: Skills + commands converter
+# ---------------------------------------------------------------------------
+
+_ASSET_CAP = 5 * 1024 * 1024  # bytes; binaries larger than this are refused, not copied
+
+# A backticked exact tool name: `Read`, `TodoWrite`. The capture group is the bare name.
+_BACKTICKED = re.compile(r"`([A-Za-z][A-Za-z0-9_]*)`")
+# Markdown link/image targets: [text](target) and ![alt](target). Group 2 is the target.
+_MD_LINK = re.compile(r"(!?\[[^\]]*\])\(([^)]+)\)")
+# $1-style positionals (not $ARGUMENTS, not ${...}).
+_POSITIONAL = re.compile(r"\$(\d+)\b")
+_ALL_CC_NAMES = set(CC_TOOL_MAP) | set(NO_NATIVE_PARITY)
+
+
+@dataclass(frozen=True)
+class ReportEntry:
+    """One line of the import report. kind drives the section and the summary counts."""
+
+    kind: str  # rewrite | mention | drop | degraded | asset | refused | skip | hook | mcp | meta
+    artifact: str  # emitted relpath or source relpath; sorts the report deterministically
+    detail: str
+    line: int | None = None
+
+
+@dataclass(frozen=True)
+class ConvertedDef:
+    """Result of converting one skill/command/agent. Pure: no disk writes here."""
+
+    relpath: str  # emitted path under the plugin root, e.g. skills/remembering.md
+    text: str  # the full emitted markdown (frontmatter + body)
+    report: tuple[ReportEntry, ...] = ()
+    assets: tuple[tuple[Path, str], ...] = ()  # (source abs path, dest relpath under plugin)
+    degraded: bool = False
+
+
+def _emit_frontmatter(meta: dict, body: str) -> str:
+    """Re-emit clean frontmatter. Keys are sorted for determinism; body trailing-newline kept."""
+    dumped = yaml.safe_dump(meta, sort_keys=True, default_flow_style=False).rstrip("\n")
+    body = body.rstrip("\n")
+    return f"---\n{dumped}\n---\n\n{body}\n"
+
+
+def rewrite_prose(body: str, *, source: str) -> tuple[str, list[ReportEntry]]:
+    """L4b: rewrite ONLY backticked exact tool names; count bare-word mentions; flag
+    NO_NATIVE_PARITY references. Deterministic and idempotent (native text is unchanged).
+    Returns (new_body, report_entries). Degraded flagging is the callers job (any entry
+    with kind==degraded means the artifact is degraded)."""
+    entries: list[ReportEntry] = []
+    out_lines: list[str] = []
+    for lineno, line in enumerate(body.splitlines(), start=1):
+
+        def _sub(match: re.Match) -> str:
+            name = match.group(1)
+            if name in CC_TOOL_MAP:
+                target = CC_TOOL_MAP[name]
+                entries.append(
+                    ReportEntry(
+                        kind="rewrite",
+                        artifact=source,
+                        line=lineno,
+                        detail=f"`{name}` -> `{target}`",
+                    )
+                )
+                return f"`{target}`"
+            if name in NO_NATIVE_PARITY:
+                entries.append(
+                    ReportEntry(
+                        kind="degraded",
+                        artifact=source,
+                        line=lineno,
+                        detail=f"`{name}` has no native parity; capability is missing",
+                    )
+                )
+                return match.group(0)  # leave the name; the artifact is flagged degraded
+            return match.group(0)
+
+        new_line = _BACKTICKED.sub(_sub, line)
+        # bare-word mentions (unbackticked exact CC names) are only counted, never rewritten
+        for word in re.findall(r"\b([A-Za-z][A-Za-z0-9_]*)\b", line):
+            if word in _ALL_CC_NAMES and f"`{word}`" not in line:
+                entries.append(
+                    ReportEntry(
+                        kind="mention",
+                        artifact=source,
+                        line=lineno,
+                        detail=f"possible bare mention of {word} (not rewritten)",
+                    )
+                )
+        out_lines.append(new_line)
+    new_body = "\n".join(out_lines)
+    if body.endswith("\n"):
+        new_body += "\n"
+    return new_body, entries
+
+
+def _plan_assets(
+    raw: "RawDef", *, kind: str
+) -> tuple[list[tuple[Path, str]], dict[str, str], list[ReportEntry]]:
+    """Decide which sibling assets copy and how their relative links rewrite.
+    Returns (copies, link_map old_rel->new_rel, report). Oversize files are refused."""
+    copies: list[tuple[Path, str]] = []
+    link_map: dict[str, str] = {}
+    report: list[ReportEntry] = []
+    base = f"{kind}/{raw.name}.assets"
+    for rel, src in sorted(raw.assets.items()):
+        try:
+            size = src.stat().st_size
+        except OSError:
+            report.append(
+                ReportEntry(
+                    kind="refused",
+                    artifact=f"{kind}/{raw.name}.md",
+                    detail=f"asset {rel} unreadable; not copied",
+                )
+            )
+            continue
+        if size > _ASSET_CAP:
+            report.append(
+                ReportEntry(
+                    kind="refused",
+                    artifact=f"{kind}/{raw.name}.md",
+                    detail=f"asset {rel} is {size} bytes (> cap); not copied",
+                )
+            )
+            continue
+        dest = f"{base}/{rel}"
+        copies.append((src, dest))
+        link_map[rel] = dest
+        report.append(
+            ReportEntry(kind="asset", artifact=f"{kind}/{raw.name}.md", detail=f"{rel} -> {dest}")
+        )
+    return copies, link_map, report
+
+
+def _rewrite_links(
+    body: str, link_map: dict[str, str], *, source: str
+) -> tuple[str, list[ReportEntry]]:
+    """Rewrite markdown link/image targets that point at copied assets to the new path.
+    A link to an asset that was refused (not in link_map) is flagged broken."""
+    report: list[ReportEntry] = []
+    if not link_map and "](" not in body:
+        return body, report
+
+    def _sub(match: re.Match) -> str:
+        label, target = match.group(1), match.group(2)
+        bare = target.split("#", 1)[0]
+        if bare in link_map:
+            return f"{label}({link_map[bare]})"
+        return match.group(0)
+
+    return _MD_LINK.sub(_sub, body), report
+
+
+def _clean_meta(
+    meta: dict, *, keep: set[str], name: str, source: str
+) -> tuple[dict, list[ReportEntry]]:
+    """Keep only allowed frontmatter keys; report every dropped key."""
+    out = {"name": name}
+    report: list[ReportEntry] = []
+    if isinstance(meta.get("description"), str):
+        out["description"] = meta["description"]
+    else:
+        out["description"] = f"Imported {name}"
+        report.append(
+            ReportEntry(
+                kind="meta", artifact=source, detail="missing description; generated a placeholder"
+            )
+        )
+    for key in sorted(meta):
+        if key not in keep and key != "description":
+            report.append(
+                ReportEntry(
+                    kind="drop",
+                    artifact=source,
+                    detail=f"frontmatter key `{key}` dropped (no native slot)",
+                )
+            )
+    return out, report
+
+
+def _sanitize_name(name: str) -> str:
+    """Coerce a name to the native regex [A-Za-z0-9_-]+ without `__`."""
+    cleaned = re.sub(r"[^A-Za-z0-9_-]", "-", name)
+    cleaned = re.sub(r"_{2,}", "_", cleaned).strip("-") or "imported"
+    return cleaned
+
+
+def convert_skill(raw: "RawDef") -> ConvertedDef:
+    source = f"skills/{raw.name}.md"
+    name = _sanitize_name(str(raw.meta.get("name", raw.name)))
+    report: list[ReportEntry] = []
+    if name != raw.name:
+        report.append(
+            ReportEntry(
+                kind="meta",
+                artifact=source,
+                detail=f"skill name {raw.name!r} sanitized to {name!r}",
+            )
+        )
+    meta, meta_report = _clean_meta(
+        raw.meta, keep={"name", "description"}, name=name, source=source
+    )
+    report += meta_report
+    copies, link_map, asset_report = _plan_assets(raw, kind="skills")
+    report += asset_report
+    body, link_report = _rewrite_links(raw.body, link_map, source=source)
+    report += link_report
+    body, prose_report = rewrite_prose(body, source=source)
+    report += prose_report
+    degraded = any(e.kind == "degraded" for e in report)
+    return ConvertedDef(
+        relpath=f"skills/{name}.md",
+        text=_emit_frontmatter(meta, body),
+        report=tuple(report),
+        assets=tuple(copies),
+        degraded=degraded,
+    )
+
+
+def convert_command(raw: "RawDef") -> ConvertedDef:
+    source = f"commands/{raw.name}.md"
+    name = _sanitize_name(raw.name)
+    report: list[ReportEntry] = []
+    if name != raw.name:
+        report.append(
+            ReportEntry(
+                kind="meta",
+                artifact=source,
+                detail=f"command name {raw.name!r} sanitized to {name!r}",
+            )
+        )
+    meta, meta_report = _clean_meta(
+        raw.meta, keep={"name", "description"}, name=name, source=source
+    )
+    report += meta_report
+    body = raw.body
+    # argument-hint survives as a body comment
+    hint = raw.meta.get("argument-hint")
+    if isinstance(hint, str) and hint:
+        body = body.rstrip("\n") + f"\n\n<!-- argument-hint: {hint} -->\n"
+        report.append(
+            ReportEntry(
+                kind="meta",
+                artifact=source,
+                detail=f"argument-hint {hint!r} preserved as a body comment",
+            )
+        )
+    # positional args: only-$1 rewrites to $ARGUMENTS; $2+ degrades, body verbatim
+    positionals = {int(m) for m in _POSITIONAL.findall(body)}
+    degraded = False
+    if positionals == {1}:
+        body = _POSITIONAL.sub("$ARGUMENTS", body)
+        report.append(
+            ReportEntry(
+                kind="rewrite",
+                artifact=source,
+                detail="single positional $1 rewritten to $ARGUMENTS",
+            )
+        )
+    elif positionals - {1}:
+        degraded = True
+        report.append(
+            ReportEntry(
+                kind="degraded",
+                artifact=source,
+                detail="multiple positional args ($2+); native v1 has no"
+                " positional support; body left verbatim",
+            )
+        )
+    body, prose_report = rewrite_prose(body, source=source)
+    report += prose_report
+    degraded = degraded or any(e.kind == "degraded" for e in report)
+    return ConvertedDef(
+        relpath=f"commands/{name}.md",
+        text=_emit_frontmatter(meta, body),
+        report=tuple(report),
+        degraded=degraded,
     )
