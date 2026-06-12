@@ -215,3 +215,55 @@ def test_bom_skill_parses(tmp_path):
     (skill,) = cc.skills
     assert skill.name == "bom"
     assert skill.meta["description"] == "When to write memories"
+
+
+def test_symlinked_skill_dir_recorded_not_read(tmp_path):
+    # A skills/<name> that is a symlink to an external dir must never be read.
+    external = tmp_path / "external_skill"
+    external.mkdir()
+    (external / "SKILL.md").write_text(
+        "---\nname: leak\ndescription: EXTERNAL_SECRET\n---\nbody\n", encoding="utf-8"
+    )
+    root = write_cc(tmp_path / "p", files={})
+    (root / "skills").mkdir(exist_ok=True)
+    (root / "skills" / "linked").symlink_to(external)
+    cc = read_cc_plugin(root)
+    assert cc.skills == ()
+    assert any(s.relpath == "skills/linked" and s.category == "unknown" for s in cc.skips)
+
+
+def test_symlinked_command_and_agent_files_recorded_not_read(tmp_path):
+    external = tmp_path / "ext.md"
+    external.write_text("---\nname: x\ndescription: EXTERNAL_SECRET\n---\nbody\n", encoding="utf-8")
+    root = write_cc(tmp_path / "p", files={})
+    (root / "commands").mkdir(exist_ok=True)
+    (root / "agents").mkdir(exist_ok=True)
+    (root / "commands" / "linked.md").symlink_to(external)
+    (root / "agents" / "linked.md").symlink_to(external)
+    cc = read_cc_plugin(root)
+    assert cc.commands == ()
+    assert cc.agents == ()
+    assert any(s.relpath == "commands/linked.md" for s in cc.skips)
+    assert any(s.relpath == "agents/linked.md" for s in cc.skips)
+
+
+def test_symlinked_mcp_and_hooks_json_recorded_not_read(tmp_path):
+    external = tmp_path / "outside.json"
+    external.write_text('{"EXTERNAL": "SECRET"}', encoding="utf-8")
+    root = write_cc(tmp_path / "p", files={})
+    (root / ".mcp.json").symlink_to(external)
+    (root / "hooks").mkdir(exist_ok=True)
+    (root / "hooks" / "hooks.json").symlink_to(external)
+    cc = read_cc_plugin(root)
+    assert cc.mcp_json_text is None
+    assert cc.hooks_json_text is None
+    assert any(s.relpath == ".mcp.json" for s in cc.skips)
+    assert any(s.relpath == "hooks/hooks.json" for s in cc.skips)
+
+
+def test_bom_mcp_json_parses(tmp_path):
+    # .mcp.json tolerates a Windows BOM the same way defs do.
+    root = write_cc(tmp_path / "p", files={".mcp.json": "﻿" + '{"mcpServers": {}}'})
+    cc = read_cc_plugin(root)
+    assert cc.mcp_json_text is not None
+    assert cc.mcp_json_text.startswith("{")

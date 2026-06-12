@@ -140,7 +140,12 @@ def _read_skills(root: Path, skips: list[Skip]) -> tuple[RawDef, ...]:
     if not skills_dir.is_dir():
         return ()
     out: list[RawDef] = []
+    # Phase 8 walk law: a symlinked skill dir pointing outside the root would
+    # exfiltrate external content into the converted plugin — record, never follow.
     for sub in sorted(p for p in skills_dir.iterdir() if p.is_dir()):
+        if sub.is_symlink():
+            skips.append(Skip(relpath=str(sub.relative_to(root)), category="unknown"))
+            continue
         skill_md = sub / "SKILL.md"
         if not skill_md.is_file():
             skips.append(Skip(relpath=str(sub.relative_to(root)), category="malformed"))
@@ -172,6 +177,10 @@ def _read_flat(root: Path, subdir: str, skips: list[Skip]) -> tuple[RawDef, ...]
         return ()
     out: list[RawDef] = []
     for path in sorted(directory.glob("*.md")):
+        # walk law: symlinked command/agent files read external content — record, never follow
+        if path.is_symlink():
+            skips.append(Skip(relpath=str(path.relative_to(root)), category="unknown"))
+            continue
         raw = _parse_def(path, name=path.stem, skips=skips, root=root)
         if raw is not None:
             out.append(raw)
@@ -236,10 +245,23 @@ def read_cc_plugin(root: Path) -> CcPlugin:
     commands = _read_flat(root, "commands", malformed_skips)
     agents = _read_flat(root, "agents", malformed_skips)
 
+    # walk law: a symlinked .mcp.json/hooks.json reads external content (e.g.
+    # /etc/passwd) into the conversion — treat as absent and record the skip.
+    # utf-8-sig: tolerate a Windows BOM the same way defs do.
     mcp_path = root / ".mcp.json"
-    mcp_text = mcp_path.read_text(encoding="utf-8") if mcp_path.is_file() else None
+    mcp_text = None
+    if mcp_path.is_file():
+        if mcp_path.is_symlink():
+            malformed_skips.append(Skip(relpath=".mcp.json", category="unknown"))
+        else:
+            mcp_text = mcp_path.read_text(encoding="utf-8-sig")
     hooks_path = root / "hooks" / "hooks.json"
-    hooks_text = hooks_path.read_text(encoding="utf-8") if hooks_path.is_file() else None
+    hooks_text = None
+    if hooks_path.is_file():
+        if hooks_path.is_symlink():
+            malformed_skips.append(Skip(relpath="hooks/hooks.json", category="unknown"))
+        else:
+            hooks_text = hooks_path.read_text(encoding="utf-8-sig")
 
     skips = tuple(
         sorted((*_read_skips(root), *malformed_skips), key=lambda s: (s.category, s.relpath))
