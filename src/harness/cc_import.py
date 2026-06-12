@@ -819,3 +819,75 @@ def convert_mcp(text: str | None) -> ConvertedMcp:
             for key, var in sorted(spec.headers.items()):
                 lines.append(f"{_toml_str(key)} = {_toml_str(var)}")
     return ConvertedMcp(toml="\n".join(lines) + "\n", report=report)
+
+
+def flag_hooks(text: str | None) -> tuple[ReportEntry, ...]:
+    """L5: hooks are NEVER converted. Parse hooks.json into one report entry per command,
+    carrying the event, matcher, and command verbatim, with the design wording. Malformed
+    JSON is flagged, not raised."""
+    if text is None:
+        return ()
+    try:
+        data = json.loads(text)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return (
+            ReportEntry(
+                kind="hook",
+                artifact="hooks/hooks.json",
+                detail="hooks.json could not parse; flagged for hand-port (a CC hook is a shell"
+                " command speaking the CC contract; honest conversion is a rewrite, not a"
+                " shim \u2014 this importer never shims)",
+            ),
+        )
+    hooks = data.get("hooks") if isinstance(data, dict) else None
+    if not isinstance(hooks, dict):
+        return ()
+    entries: list[ReportEntry] = []
+    for event in sorted(hooks):
+        groups = hooks[event]
+        if not isinstance(groups, list):
+            continue
+        for group in groups:
+            if not isinstance(group, dict):
+                continue
+            matcher = group.get("matcher", "")
+            for hook in group.get("hooks", []) or []:
+                if not isinstance(hook, dict):
+                    continue
+                command = hook.get("command", "<no command>")
+                htype = hook.get("type", "command")
+                entries.append(
+                    ReportEntry(
+                        kind="hook",
+                        artifact="hooks/hooks.json",
+                        detail=f"{event} (matcher={matcher!r}, type={htype}): {command} \u2014 NOT"
+                        f" converted; flagged for hand-port (a CC hook speaks the CC"
+                        f" stdin-JSON / exit-code / permissionDecision contract; the honest"
+                        f" port is a rewrite to a native dispatch/lifecycle hook, never a"
+                        f" CC-emulation shim)",
+                    )
+                )
+    return tuple(entries)
+
+
+def skip_report(skips: tuple["Skip", ...]) -> tuple[ReportEntry, ...]:
+    """L8: one report entry per skip category, with the per-category count and member list.
+    Deterministic: sorted by category."""
+    if not skips:
+        return ()
+    by_cat: dict[str, list[str]] = {}
+    for skip in skips:
+        by_cat.setdefault(skip.category, []).append(skip.relpath)
+    entries: list[ReportEntry] = []
+    for category in sorted(by_cat):
+        members = sorted(by_cat[category])
+        shown = ", ".join(members[:10])
+        more = f" (+{len(members) - 10} more)" if len(members) > 10 else ""
+        entries.append(
+            ReportEntry(
+                kind="skip",
+                artifact=category,
+                detail=f"{len(members)} {category} file(s) skipped (not converted): {shown}{more}",
+            )
+        )
+    return tuple(entries)
