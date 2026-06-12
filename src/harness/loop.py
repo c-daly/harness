@@ -5,13 +5,20 @@ import asyncio
 from typing import Callable
 
 from harness.dispatcher import Dispatcher, ToolOutcome
-from harness.events import CustomEvent, ErrorRaised, SessionEnded, ToolCallCancelled, UserInterrupt, UserMessage
+from harness.events import (
+    CustomEvent,
+    ErrorRaised,
+    SessionEnded,
+    ToolCallCancelled,
+    UserInterrupt,
+    UserMessage,
+)
 from harness.hooks import Annotate, Emit, HookBus, Inject, LifecyclePoint, ProposedToolCall
 from harness.interaction import Resolver
 from harness.messages import Message, Role, ToolResultBlock
 from harness.provider import Chunk, ModelProvider
 from harness.session import Session
-from harness.tools import ToolRegistry
+from harness.tools import FilteredRegistry, ToolRegistry
 from harness.types import CallId, ModelId
 
 
@@ -21,7 +28,7 @@ class AgentLoop:
         *,
         session: Session,
         provider: ModelProvider,
-        registry: ToolRegistry,
+        registry: ToolRegistry | FilteredRegistry,
         hooks: HookBus,
         resolver: Resolver,
         model: ModelId,
@@ -59,10 +66,12 @@ class AgentLoop:
                     if point is LifecyclePoint.SESSION_START:
                         self.system_prompt = f"{self.system_prompt}\n\n{text}"
                     else:
-                        self.session.append(ErrorRaised(
-                            where=f"lifecycle:{point}",
-                            message="Inject ignored outside session_start",
-                        ))
+                        self.session.append(
+                            ErrorRaised(
+                                where=f"lifecycle:{point}",
+                                message="Inject ignored outside session_start",
+                            )
+                        )
                 case Emit(namespace=ns, name=name, data=data):
                     self.session.append(CustomEvent(namespace=ns, name=name, data=dict(data)))
                 case Annotate(note=note):
@@ -92,8 +101,10 @@ class AgentLoop:
         for _ in range(self.max_iterations):
             messages = [Message.system_text(self.system_prompt), *self.history]
             assistant, _usage = await self.dispatcher.dispatch_model(
-                provider=self.provider, model=self.model,
-                messages=messages, tools=self.registry.specs(),
+                provider=self.provider,
+                model=self.model,
+                messages=messages,
+                tools=self.registry.specs(),
                 pricing=self.pricing,
                 on_chunk=self.on_chunk,
             )
@@ -120,17 +131,21 @@ class AgentLoop:
                 # by gather; history is left without tool results — callers must
                 # treat this loop as dead (see docstring).
                 try:
-                    self.session.append(ErrorRaised(
-                        where="loop:tool_dispatch",
-                        message=f"{type(exc).__name__}: {exc}",
-                    ))
+                    self.session.append(
+                        ErrorRaised(
+                            where="loop:tool_dispatch",
+                            message=f"{type(exc).__name__}: {exc}",
+                        )
+                    )
                 except Exception:
                     pass  # the log itself may be the failing infrastructure
                 raise
             for call, outcome in zip(calls, outcomes):
                 self.history.append(
                     Message.tool_result(
-                        call.call_id, text=outcome.text, blob=outcome.blob,
+                        call.call_id,
+                        text=outcome.text,
+                        blob=outcome.blob,
                         is_error=outcome.is_error,
                     )
                 )
@@ -149,15 +164,23 @@ class AgentLoop:
         for call in self._dangling_tool_calls():
             outcome = self._turn_outcomes.get(call.call_id)
             if outcome is not None:
-                self.history.append(Message.tool_result(
-                    call.call_id, text=outcome.text, blob=outcome.blob,
-                    is_error=outcome.is_error,
-                ))
+                self.history.append(
+                    Message.tool_result(
+                        call.call_id,
+                        text=outcome.text,
+                        blob=outcome.blob,
+                        is_error=outcome.is_error,
+                    )
+                )
             else:
                 self.session.append(ToolCallCancelled(call_id=call.call_id))
-                self.history.append(Message.tool_result(
-                    call.call_id, text="(call did not complete)", is_error=True,
-                ))
+                self.history.append(
+                    Message.tool_result(
+                        call.call_id,
+                        text="(call did not complete)",
+                        is_error=True,
+                    )
+                )
             repaired += 1
         return repaired
 
@@ -203,7 +226,5 @@ class AgentLoop:
         if self._ended:
             raise RuntimeError("AgentLoop.end() already called")
         self._ended = True
-        await self._apply_contributions(
-            LifecyclePoint.SESSION_END, {"session_id": self.session.id}
-        )
+        await self._apply_contributions(LifecyclePoint.SESSION_END, {"session_id": self.session.id})
         self.session.append(SessionEnded())

@@ -30,7 +30,7 @@ from harness.interaction import PermissionRequest, Resolver
 from harness.messages import Message
 from harness.provider import Chunk, ModelProvider, Usage, collect
 from harness.session import Session
-from harness.tools import ToolRegistry, ToolSpec
+from harness.tools import FilteredRegistry, ToolRegistry, ToolSpec
 from harness.types import ModelId, new_call_id
 
 # errors inline (never blob-spilled) so they stay readable; cap keeps log lines bounded
@@ -64,7 +64,7 @@ class Dispatcher:
         self,
         *,
         session: Session,
-        registry: ToolRegistry,
+        registry: ToolRegistry | FilteredRegistry,
         hooks: HookBus,
         resolver: Resolver,
         retry_delays: tuple[float, ...] = (0.5, 2.0, 8.0),
@@ -80,8 +80,9 @@ class Dispatcher:
         outcome = await self.hooks.run_dispatch(action)
         for name, decision in outcome.decisions:
             self.session.append(
-                HookDecided(call_id=action.call_id, hook=name,
-                            decision=decision_to_payload(decision))
+                HookDecided(
+                    call_id=action.call_id, hook=name, decision=decision_to_payload(decision)
+                )
             )
         if outcome.blocked is not None:
             return None, f"blocked by policy: {outcome.blocked.reason}"
@@ -91,18 +92,21 @@ class Dispatcher:
             )
             try:
                 allowed = await self.resolver.resolve(
-                    PermissionRequest(call_id=action.call_id, action=outcome.effective,
-                                      reason=outcome.ask.reason)
+                    PermissionRequest(
+                        call_id=action.call_id, action=outcome.effective, reason=outcome.ask.reason
+                    )
                 )
             except Exception as exc:
                 self.session.append(
-                    PermissionResolved(call_id=action.call_id, allowed=False,
-                                       resolver=self.resolver.name)
+                    PermissionResolved(
+                        call_id=action.call_id, allowed=False, resolver=self.resolver.name
+                    )
                 )
                 return None, f"permission channel error: {exc} (denied)"
             self.session.append(
-                PermissionResolved(call_id=action.call_id, allowed=allowed,
-                                   resolver=self.resolver.name)
+                PermissionResolved(
+                    call_id=action.call_id, allowed=allowed, resolver=self.resolver.name
+                )
             )
             if not allowed:
                 return None, "denied by user"
@@ -126,8 +130,9 @@ class Dispatcher:
             )
             return ToolOutcome(text=denial, blob=None, is_error=True)
         self.session.append(
-            DispatchResolved(call_id=call.call_id, kind="tool",
-                             tool=effective.tool, args=dict(effective.args))
+            DispatchResolved(
+                call_id=call.call_id, kind="tool", tool=effective.tool, args=dict(effective.args)
+            )
         )
         started = time.monotonic()
         try:
@@ -143,8 +148,13 @@ class Dispatcher:
         if not is_error and len(raw.encode()) > INLINE_THRESHOLD:
             blob, text = self.session.blobs.put(raw.encode()), None
         self.session.append(
-            ToolCallCompleted(call_id=call.call_id, result_text=text, result_blob=blob,
-                              is_error=is_error, duration_ms=duration_ms)
+            ToolCallCompleted(
+                call_id=call.call_id,
+                result_text=text,
+                result_blob=blob,
+                is_error=is_error,
+                duration_ms=duration_ms,
+            )
         )
         return ToolOutcome(text=text, blob=blob, is_error=is_error)
 
@@ -190,16 +200,21 @@ class Dispatcher:
                     raise
                 delay = self.retry_delays[attempt]
                 attempt += 1
-                self.session.append(RetryAttempted(
-                    call_id=call.call_id, attempt=attempt,
-                    reason=f"{type(exc).__name__}: {exc}",
-                ))
+                self.session.append(
+                    RetryAttempted(
+                        call_id=call.call_id,
+                        attempt=attempt,
+                        reason=f"{type(exc).__name__}: {exc}",
+                    )
+                )
                 await asyncio.sleep(delay)  # yields the loop: the bus pump renders
                 # RetryAttempted (and the TUI resets its tail) before the next attempt streams
         self.session.append(
             ModelCallCompleted(
-                call_id=call.call_id, model=effective.model,
-                message=message.model_dump(), usage=usage.as_dict(),
+                call_id=call.call_id,
+                model=effective.model,
+                message=message.model_dump(),
+                usage=usage.as_dict(),
                 stop_reason=stop_reason,
                 pricing=pricing or {},
                 duration_ms=int((time.monotonic() - started) * 1000),

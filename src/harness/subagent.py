@@ -3,6 +3,7 @@
 import asyncio
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from harness.events import ErrorRaised, SubagentFinished, SubagentSpawned
 from harness.frontmatter import AgentDef
@@ -119,7 +120,7 @@ class DispatchAgentTool:
             },
         )
 
-    async def __call__(self, args: dict) -> str:
+    async def __call__(self, args: dict[str, Any]) -> str:
         model = ModelId(args["model"]) if args.get("model") else None
         return await self.runner.run(
             prompt=args["prompt"], model=model, parent=self.parent, agent=args.get("agent")
