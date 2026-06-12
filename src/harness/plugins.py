@@ -479,7 +479,8 @@ def load_plugins(dirs: Sequence[Path]) -> LoadedPlugins:
 
 def apply_plugins(loaded: LoadedPlugins, *, registry, hooks, agents_sink: dict) -> list[str]:
     """Register everything register-able at kernel-build time. Returns warnings.
-    Raises PluginError on tool-name collisions (loud, the tools.py promise)."""
+    Raises PluginError on tool-name collisions (loud, the tools.py promise).
+    Not idempotent; call once per kernel."""
     taken = {str(s.name) for s in registry.specs()}
     if loaded.skills:
         from harness.skills import InvokeSkillTool, SkillSet, skills_inventory_hook
@@ -521,6 +522,7 @@ async def _pump(queue, fn, name, session) -> None:
         try:
             await fn(envelope)
         except Exception as exc:  # fail-open per event
+            # CancelledError is BaseException on 3.12+; cancellation propagates naturally
             try:
                 session.append(ErrorRaised(where=f"subscriber:{name}", message=str(exc)[:500]))
             except Exception:
@@ -540,8 +542,6 @@ def start_subscriber_pumps(kernel) -> list:
             if fn is None:
                 continue
             queue = kernel.session.bus.subscribe(maxsize=1024)
-            task = asyncio.get_event_loop().create_task(
-                _pump(queue, fn, sub_def.name, kernel.session)
-            )
+            task = asyncio.create_task(_pump(queue, fn, sub_def.name, kernel.session))
             tasks.append(task)
     return tasks

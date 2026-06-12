@@ -548,3 +548,98 @@ async def test_plugin_dispatch_hook_registered(tmp_path):
     events = [e.event for e in read_session(tmp_path / "base", kernel.session.id)]
     hook_names = [e.hook for e in events if isinstance(e, HookDecided)]
     assert any("plugin:demo:guard" in name for name in hook_names)
+
+
+# Both pump tests drive _pump directly against a bare Session and a PRIVATE queue.
+# In run_once the pump is short-lived (cancelled in the finally before a fast,
+# non-yielding EchoProvider turn ever reschedules it), so end-to-end delivery is not
+# observable there; and a LIVE bus would feed the pump fail-open ErrorRaised back to
+# a crashing subscriber -- an unbounded, disk-filling self-amplifying loop. A private
+# one-shot queue exercises the real subscribe-get-fn path in isolation.
+
+
+async def test_subscriber_receives_events_via_pump(tmp_path):
+    import asyncio
+
+    from harness.plugins import _pump
+    from harness.session import Session
+    from harness.types import new_session_id
+
+    manifest = (
+        MINIMAL_MANIFEST
+        + '\n[[subscribers]]\nname = "spy"\nmodule = "hooks.py"\nfunction = "spy"\n'
+    )
+    plugin_root = tmp_path / "plugins"
+    write_plugin(
+        plugin_root,
+        manifest=manifest,
+        files={
+            "hooks.py": "received = []\n\n\nasync def spy(envelope):\n    received.append(envelope.event.type)\n"
+        },
+    )
+    loaded = load_plugins([plugin_root])
+    plugin = loaded.plugins[0]
+    spy = plugin.subscriber_callables["spy"]
+    received = spy.__globals__["received"]
+    assert received == []
+
+    session = Session(tmp_path / "base", new_session_id())
+    started = session.start()
+    queue: asyncio.Queue = asyncio.Queue()
+    queue.put_nowait(started)
+    task = asyncio.create_task(_pump(queue, spy, "spy", session))
+    # the pump drains on the event loop; give it a few ticks to deliver the envelope
+    for _ in range(10):
+        await asyncio.sleep(0)
+        if queue.empty():
+            break
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+    session.close()
+
+    assert received == ["session_started"], "subscriber pump delivered no events"
+
+
+async def test_crashing_subscriber_does_not_kill_session(tmp_path):
+    import asyncio
+
+    from harness.events import ErrorRaised
+    from harness.log import read_session
+    from harness.plugins import _pump
+    from harness.session import Session
+    from harness.types import new_session_id
+
+    manifest = (
+        MINIMAL_MANIFEST
+        + '\n[[subscribers]]\nname = "boom"\nmodule = "hooks.py"\nfunction = "boom"\n'
+    )
+    plugin_root = tmp_path / "plugins"
+    write_plugin(
+        plugin_root,
+        manifest=manifest,
+        files={"hooks.py": 'async def boom(envelope):\n    raise RuntimeError("crash")\n'},
+    )
+    loaded = load_plugins([plugin_root])
+    boom = loaded.plugins[0].subscriber_callables["boom"]
+
+    session = Session(tmp_path / "base", new_session_id())
+    started = session.start()
+    queue: asyncio.Queue = asyncio.Queue()
+    queue.put_nowait(started)
+    task = asyncio.create_task(_pump(queue, boom, "boom", session))
+    # boom raises; _pump must swallow it and record exactly one fail-open ErrorRaised
+    for _ in range(10):
+        await asyncio.sleep(0)
+        if queue.empty():
+            break
+    # the pump survives the crash: still awaiting the next envelope, not finished
+    assert not task.done(), "crashing subscriber killed the pump"
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+    session.close()
+
+    events = [e.event for e in read_session(tmp_path / "base", session.id)]
+    errors = [e for e in events if isinstance(e, ErrorRaised)]
+    assert any(e.where == "subscriber:boom" and e.message == "crash" for e in errors), (
+        "fail-open ErrorRaised not recorded for crashing subscriber"
+    )
