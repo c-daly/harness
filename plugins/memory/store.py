@@ -6,6 +6,9 @@ Valid types: user, feedback, project, reference
 
 This module runs inside the harness venv (imported by hooks.py) AND inside
 the MCP server subprocess; keep imports to stdlib + yaml only.
+
+Note: the on-disk frontmatter KEY remains `type:`; only the Python/wire
+parameter is named `entry_type` (to avoid shadowing the builtin).
 """
 
 import datetime
@@ -23,11 +26,19 @@ def _validate_name(name: str) -> None:
         raise ValueError(f"name {name!r} must be non-empty and match [A-Za-z0-9_-]+")
 
 
+def _validate_subject(subject: str) -> None:
+    # Same rule as name: rejects path separators, .. traversal, and empty.
+    # subject is interpolated into the on-disk path, so an unvalidated value
+    # like "../secret" would escape the store root.
+    if not subject or not _NAME_RE.fullmatch(subject):
+        raise ValueError(f"subject {subject!r} must be non-empty and match [A-Za-z0-9_-]+")
+
+
 def _entry_path(root: Path, subject: str, name: str, date_str: str) -> Path:
     return root / subject / f"{date_str}-{name}.md"
 
 
-def _find_entry(root: Path, name: str, type_: str) -> Path | None:
+def _find_entry(root: Path, name: str, entry_type: str) -> Path | None:
     """Locate an entry by name+type across all subject dirs."""
     if not root.is_dir():
         return None
@@ -37,7 +48,7 @@ def _find_entry(root: Path, name: str, type_: str) -> Path | None:
         for path in subject_dir.glob(f"*-{name}.md"):
             try:
                 meta, _ = _parse_file(path)
-                if meta.get("name") == name and meta.get("type") == type_:
+                if meta.get("name") == name and meta.get("type") == entry_type:
                     return path
             except Exception:
                 continue
@@ -60,10 +71,10 @@ def _parse_file(path: Path) -> tuple[dict, str]:
     return meta, body
 
 
-def _render(*, name: str, description: str, type_: str, subject: str, body: str) -> str:
+def _render(*, name: str, description: str, entry_type: str, subject: str, body: str) -> str:
     """Render a frontmatter markdown string."""
     fm = yaml.dump(
-        {"name": name, "description": description, "type": type_, "subject": subject},
+        {"name": name, "description": description, "type": entry_type, "subject": subject},
         default_flow_style=False,
         allow_unicode=True,
     ).rstrip()
@@ -73,7 +84,7 @@ def _render(*, name: str, description: str, type_: str, subject: str, body: str)
 def write(
     root: Path,
     *,
-    type: str,
+    entry_type: str,
     name: str,
     subject: str,
     description: str,
@@ -81,32 +92,44 @@ def write(
 ) -> str:
     """Write a new memory entry; returns its relative path string.
 
-    Raises ValueError on invalid type, bad name, or name+type collision.
-    Append-only: existing name+type pairs are never overwritten.
+    Raises ValueError on invalid type, bad name, bad subject, or name+type
+    collision. Append-only: existing name+type pairs are never overwritten.
     """
-    if type not in _VALID_TYPES:
-        raise ValueError(f"type {type!r} is not valid; must be one of {sorted(_VALID_TYPES)}")
+    if entry_type not in _VALID_TYPES:
+        raise ValueError(f"type {entry_type!r} is not valid; must be one of {sorted(_VALID_TYPES)}")
     _validate_name(name)
+    _validate_subject(subject)
     # Collision check
-    existing = _find_entry(root, name, type)
+    existing = _find_entry(root, name, entry_type)
     if existing is not None:
         raise ValueError(
-            f"entry name={name!r} type={type!r} already exists at {existing.relative_to(root)}"
+            f"entry name={name!r} type={entry_type!r} already exists at"
+            f" {existing.relative_to(root)}"
         )
     date_str = datetime.date.today().isoformat()
     path = _entry_path(root, subject, name, date_str)
     path.parent.mkdir(parents=True, exist_ok=True)
-    content = _render(name=name, description=description, type_=type, subject=subject, body=body)
-    path.write_text(content, encoding="utf-8")
+    content = _render(
+        name=name, description=description, entry_type=entry_type, subject=subject, body=body
+    )
+    # Atomic write: write to a temp sibling then rename (atomic on POSIX) so a
+    # crash mid-write never leaves a truncated entry.
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(content, encoding="utf-8")
+    tmp.rename(path)
     return str(path.relative_to(root))
 
 
 def list_entries(
     root: Path,
-    type: str | None = None,
+    entry_type: str | None = None,
     subject: str | None = None,
 ) -> list[dict]:
-    """Return a list of frontmatter dicts for all entries matching the filters."""
+    """Return a list of frontmatter dicts for all entries matching the filters.
+
+    Filters compare against stored frontmatter values; subject is never used to
+    build a path here (the scan walks existing dirs), so no traversal risk.
+    """
     if not root.is_dir():
         return []
     results = []
@@ -118,7 +141,7 @@ def list_entries(
                 meta, _ = _parse_file(path)
             except Exception:
                 continue
-            if type is not None and meta.get("type") != type:
+            if entry_type is not None and meta.get("type") != entry_type:
                 continue
             if subject is not None and meta.get("subject") != subject:
                 continue
@@ -126,9 +149,9 @@ def list_entries(
     return results
 
 
-def get(root: Path, name: str, type: str) -> str | None:
+def get(root: Path, name: str, entry_type: str) -> str | None:
     """Return the full round-trippable markdown for name+type, or None."""
-    path = _find_entry(root, name, type)
+    path = _find_entry(root, name, entry_type)
     if path is None:
         return None
     try:
@@ -153,6 +176,10 @@ def brief(root: Path) -> str:
 
     Empty store -> "# Memory\n\n_No entries._"
     ANY internal error -> empty-store brief (fail-open, never raises).
+
+    v1 caveat: this includes EVERY user-level description; stores with hundreds
+    of entries grow the per-session injection unboundedly. A future version
+    should cap at N entries / K bytes.
     """
     try:
         return _brief_inner(root)

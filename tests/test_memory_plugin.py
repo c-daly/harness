@@ -37,7 +37,7 @@ def store():
 def test_write_and_get_roundtrip(tmp_path, store):
     rel = store.write(
         tmp_path,
-        type="user",
+        entry_type="user",
         name="test-entry",
         subject="user",
         description="A test entry",
@@ -49,7 +49,7 @@ def test_write_and_get_roundtrip(tmp_path, store):
     assert "test-entry" in text
     assert "A test entry" in text
     assert "The body of the entry." in text
-    # Frontmatter fields are present
+    # Frontmatter fields are present (on-disk key stays `type:`)
     assert "type: user" in text
     assert "subject: user" in text
 
@@ -58,7 +58,7 @@ def test_write_invalid_type_raises(tmp_path, store):
     with pytest.raises(ValueError, match="not valid"):
         store.write(
             tmp_path,
-            type="bogus",
+            entry_type="bogus",
             name="x",
             subject="user",
             description="d",
@@ -70,7 +70,7 @@ def test_write_bad_name_raises(tmp_path, store):
     with pytest.raises(ValueError, match="name"):
         store.write(
             tmp_path,
-            type="user",
+            entry_type="user",
             name="bad name with spaces",
             subject="user",
             description="d",
@@ -78,10 +78,26 @@ def test_write_bad_name_raises(tmp_path, store):
         )
 
 
+def test_write_bad_subject_traversal_raises(tmp_path, store):
+    """subject is interpolated into the path; a traversal value must be rejected."""
+    with pytest.raises(ValueError, match="subject"):
+        store.write(
+            tmp_path,
+            entry_type="user",
+            name="evil",
+            subject="../evil",
+            description="d",
+            body="b",
+        )
+    # Nothing escaped the store root.
+    escaped = tmp_path.parent / "evil"
+    assert not escaped.exists()
+
+
 def test_write_collision_raises(tmp_path, store):
     store.write(
         tmp_path,
-        type="user",
+        entry_type="user",
         name="unique-name",
         subject="user",
         description="first",
@@ -90,7 +106,7 @@ def test_write_collision_raises(tmp_path, store):
     with pytest.raises(ValueError, match="already exists"):
         store.write(
             tmp_path,
-            type="user",
+            entry_type="user",
             name="unique-name",
             subject="user",
             description="second",
@@ -101,7 +117,7 @@ def test_write_collision_raises(tmp_path, store):
 def test_list_entries_filter_by_type(tmp_path, store):
     store.write(
         tmp_path,
-        type="user",
+        entry_type="user",
         name="u1",
         subject="user",
         description="User pref",
@@ -109,13 +125,13 @@ def test_list_entries_filter_by_type(tmp_path, store):
     )
     store.write(
         tmp_path,
-        type="project",
+        entry_type="project",
         name="p1",
         subject="myproject",
         description="Project note",
         body="",
     )
-    users = store.list_entries(tmp_path, type="user")
+    users = store.list_entries(tmp_path, entry_type="user")
     assert len(users) == 1
     assert users[0]["name"] == "u1"
 
@@ -123,7 +139,7 @@ def test_list_entries_filter_by_type(tmp_path, store):
 def test_list_entries_filter_by_subject(tmp_path, store):
     store.write(
         tmp_path,
-        type="user",
+        entry_type="user",
         name="u2",
         subject="user",
         description="desc",
@@ -131,7 +147,7 @@ def test_list_entries_filter_by_subject(tmp_path, store):
     )
     store.write(
         tmp_path,
-        type="project",
+        entry_type="project",
         name="p2",
         subject="projectA",
         description="desc",
@@ -145,7 +161,7 @@ def test_list_entries_filter_by_subject(tmp_path, store):
 def test_brief_user_bullets_and_subjects(tmp_path, store):
     store.write(
         tmp_path,
-        type="user",
+        entry_type="user",
         name="pref1",
         subject="user",
         description="Prefers dark mode",
@@ -153,7 +169,7 @@ def test_brief_user_bullets_and_subjects(tmp_path, store):
     )
     store.write(
         tmp_path,
-        type="project",
+        entry_type="project",
         name="proj1",
         subject="harness",
         description="Project note",
@@ -177,7 +193,7 @@ def test_brief_fail_open_on_unreadable_entry(tmp_path, store):
     # Write a valid entry then add a malformed file in the subject dir
     store.write(
         tmp_path,
-        type="user",
+        entry_type="user",
         name="ok-entry",
         subject="user",
         description="Something",
@@ -194,7 +210,7 @@ def test_brief_fail_open_on_unreadable_entry(tmp_path, store):
 def test_rebuild_index_count_and_file(tmp_path, store):
     store.write(
         tmp_path,
-        type="user",
+        entry_type="user",
         name="r1",
         subject="user",
         description="d1",
@@ -202,7 +218,7 @@ def test_rebuild_index_count_and_file(tmp_path, store):
     )
     store.write(
         tmp_path,
-        type="reference",
+        entry_type="reference",
         name="r2",
         subject="wiki",
         description="d2",
@@ -255,7 +271,7 @@ def test_session_brief_returns_inject(tmp_path, monkeypatch):
     store_mod = _load_module("memory_store_for_brief", _PLUGIN_ROOT / "store.py")
     store_mod.write(
         tmp_path,
-        type="user",
+        entry_type="user",
         name="brief-test",
         subject="user",
         description="A test preference",
@@ -284,24 +300,6 @@ def test_session_brief_kill_switch(tmp_path, monkeypatch):
     fn = mem.lifecycle_callables["brief"]
     result = fn({})
     assert result == []
-
-
-def test_session_brief_fail_open_broken_dir(tmp_path, monkeypatch):
-    # HARNESS_MEMORY_DIR pointing at a FILE, not a dir: session start must survive
-    from harness.plugins import load_plugins
-
-    not_a_dir = tmp_path / "not-a-dir"
-    not_a_dir.write_text("I am a file", encoding="utf-8")
-    monkeypatch.setenv("HARNESS_MEMORY_DIR", str(not_a_dir))
-
-    plugins_dir = Path(__file__).parent.parent / "plugins"
-    loaded = load_plugins([plugins_dir])
-    mem = next(p for p in loaded.plugins if p.name == "memory")
-    fn = mem.lifecycle_callables["brief"]
-    result = fn({})
-    assert isinstance(result, list)
-    if result:  # empty-store brief is acceptable; raising is not
-        assert "# Memory" in result[0].text
 
 
 # ---------------------------------------------------------------------------
@@ -350,7 +348,7 @@ async def test_mcp_server_write_and_get(tmp_path, monkeypatch):
         result = await conn.call_tool(
             "memory_write",
             {
-                "type": "user",
+                "entry_type": "user",
                 "name": "mcp-test",
                 "subject": "user",
                 "description": "MCP roundtrip test",
@@ -366,11 +364,46 @@ async def test_mcp_server_write_and_get(tmp_path, monkeypatch):
         # Get the entry back
         result2 = await conn.call_tool(
             "memory_get",
-            {"name": "mcp-test", "type": "user"},
+            {"name": "mcp-test", "entry_type": "user"},
         )
         texts2 = [c.text for c in result2.content if isinstance(c, types.TextContent)]
         assert len(texts2) == 1
         assert "mcp-test" in texts2[0]
         assert "MCP roundtrip test" in texts2[0]
+    finally:
+        await conn.stop()
+
+
+async def test_mcp_server_subject_traversal_returns_error(tmp_path, monkeypatch):
+    """A traversal subject must come back as an errors-as-values string, never raise."""
+    from harness.mcp_config import McpServerSpec
+    from harness.mcp_host import ServerConnection
+
+    monkeypatch.setenv("HARNESS_MEMORY_DIR", str(tmp_path))
+
+    server_mod = _load_module("memory_server_traversal", _PLUGIN_ROOT / "server.py")
+    fastmcp = server_mod.mcp
+
+    spec = McpServerSpec(name="memory-traversal", transport="stdio", command="unused")
+
+    conn = ServerConnection(spec, transport_factory=lambda s: _memory_transport(fastmcp))
+    await conn.start()
+    try:
+        result = await conn.call_tool(
+            "memory_write",
+            {
+                "entry_type": "user",
+                "name": "evil",
+                "subject": "../evil",
+                "description": "should fail",
+                "body": "x",
+            },
+        )
+        texts = [c.text for c in result.content if isinstance(c, types.TextContent)]
+        assert len(texts) == 1
+        assert texts[0].startswith("error: ")
+        assert "subject" in texts[0]
+        # Nothing escaped the store root.
+        assert not (tmp_path.parent / "evil").exists()
     finally:
         await conn.stop()

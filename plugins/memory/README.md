@@ -21,9 +21,20 @@ plugins/memory/
 
 Entries are stored as `<root>/<subject>/<YYYY-MM-DD>-<name>.md` with YAML
 frontmatter (`name`, `description`, `type`, `subject`). The store is
-append-only: name+type collisions raise `ValueError`.
+append-only: name+entry_type collisions raise `ValueError`.
+
+The on-disk frontmatter KEY is `type:`. The Python/wire parameter is named
+`entry_type` (it would otherwise shadow the builtin `type`); the two refer to
+the same value.
 
 Valid types: `user`, `feedback`, `project`, `reference`.
+
+Both `name` and `subject` are validated against `[A-Za-z0-9_-]+` before they
+reach the filesystem. This rejects path separators and `..`, so a write can
+never escape the store root.
+
+Writes are atomic: the entry is written to a `.tmp` sibling then renamed into
+place (atomic on POSIX), so a crash mid-write never leaves a truncated entry.
 
 ## Environment variables
 
@@ -31,6 +42,13 @@ Valid types: `user`, `feedback`, `project`, `reference`.
 |---|---|---|
 | `HARNESS_MEMORY_DIR` | `~/.local/share/harness/memory` | Store root |
 | `HARNESS_MEMORY_BRIEF` | `1` | Set to `0` to disable the SESSION_START brief |
+
+### Brief size (v1 caveat)
+
+The v1 SESSION_START brief includes EVERY user-level description. A store with
+hundreds of entries will grow the per-session injection without bound. A future
+version should cap the brief at N entries / K bytes; for now, the kill-switch
+(`HARNESS_MEMORY_BRIEF=0`) is the only mitigation.
 
 ## Trust model
 

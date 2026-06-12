@@ -22,6 +22,10 @@ def session_brief(ctx):
 
     Fail-open: an unreadable/missing memory dir returns [] (never raises).
     Kill-switch: HARNESS_MEMORY_BRIEF=0 disables the hook entirely.
+
+    v1 caveat: store.brief() emits EVERY user-level description, so a store
+    with hundreds of entries grows this single per-session injection without
+    bound. A future version should cap the brief at N entries / K bytes.
     """
     if os.environ.get("HARNESS_MEMORY_BRIEF", "1") == "0":
         return []
