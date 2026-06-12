@@ -182,9 +182,12 @@ class HarnessApp(App[None]):
             kernel.session.append(
                 CustomEvent(namespace="harness", name="tag", data={"tag": tag})
             )
+        # Subscribe before flush_events() so MCP lifecycle events (server_started etc)
+        # are not missed: flush_events() publishes to the bus synchronously.
+        _bus_queue = self.kernel.session.bus.subscribe()
         if kernel.mcp is not None:
             kernel.mcp.flush_events()
-        self.run_worker(self._bus_pump(), group="driver", exit_on_error=False)
+        self.run_worker(self._bus_pump(_bus_queue), group="driver", exit_on_error=False)
         self.set_interval(1.0, self.refresh_stats)
 
     def _render_resumed_history(self) -> None:
@@ -194,8 +197,7 @@ class HarnessApp(App[None]):
                 prefix = "> " if message.role == Role.USER else ""
                 self.say(prefix, text)
 
-    async def _bus_pump(self) -> None:
-        queue = self.kernel.session.bus.subscribe()
+    async def _bus_pump(self, queue) -> None:
         while True:
             envelope = await queue.get()
             self._render_event(envelope.event)
