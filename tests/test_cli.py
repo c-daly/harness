@@ -10,7 +10,8 @@ from tests.conftest import fixture_stdio_spec
 async def test_build_kernel_wires_dispatch_agent_tool(tmp_path):
     kernel = build_kernel(
         provider=FakeProvider([text_turn("ok")]),
-        base_dir=tmp_path, model=ModelId("fake"),
+        base_dir=tmp_path,
+        model=ModelId("fake"),
     )
     assert isinstance(kernel, Kernel)
     assert "dispatch_agent" in [s.name for s in kernel.registry.specs()]
@@ -19,12 +20,14 @@ async def test_build_kernel_wires_dispatch_agent_tool(tmp_path):
 async def test_run_once_returns_final_text_and_closes_session(tmp_path):
     kernel = build_kernel(
         provider=FakeProvider([text_turn("the answer")]),
-        base_dir=tmp_path, model=ModelId("fake"),
+        base_dir=tmp_path,
+        model=ModelId("fake"),
     )
     assert await run_once(kernel, "question?") == "the answer"
     # session closed: log readable, ends with SessionEnded
     # without MCP; an MCP-active session appends mcp/server_stopped after session_ended
     from harness.log import read_session
+
     envs = read_session(tmp_path, kernel.session.id)
     assert envs[-1].event.type == "session_ended"
 
@@ -32,7 +35,7 @@ async def test_run_once_returns_final_text_and_closes_session(tmp_path):
 async def test_build_kernel_with_catalog_pricing(tmp_path):
     catalog_toml = tmp_path / "models.toml"
     catalog_toml.write_text(
-        "[models.fake]\nroute = \"fake:echo\"\n"
+        '[models.fake]\nroute = "fake:echo"\n'
         "input_cost_per_token = 1e-6\noutput_cost_per_token = 2e-6\nverified = true\n"
     )
     from harness.catalog import Catalog
@@ -41,8 +44,10 @@ async def test_build_kernel_with_catalog_pricing(tmp_path):
 
     resolved = Catalog.load(catalog_toml).resolve("fake")
     kernel = build_kernel(
-        provider=FakeProvider([text_turn("ok")]), base_dir=tmp_path,
-        model=resolved.route, pricing=resolved.pricing_dict(),
+        provider=FakeProvider([text_turn("ok")]),
+        base_dir=tmp_path,
+        model=resolved.route,
+        pricing=resolved.pricing_dict(),
     )
     sid = kernel.session.id
     await run_once(kernel, "hi")
@@ -61,8 +66,10 @@ async def test_resume_flag_continues_session(tmp_path):
     await run_once(kernel, "first question")
 
     resumed = build_kernel(
-        provider=FakeProvider([text_turn("second answer")]), base_dir=tmp_path,
-        model=ModelId("fake"), resume_session_id=sid,
+        provider=FakeProvider([text_turn("second answer")]),
+        base_dir=tmp_path,
+        model=ModelId("fake"),
+        resume_session_id=sid,
     )
     assert resumed.session.id == sid
     assert len(resumed.loop.history) >= 2  # prior user + assistant turns seeded
@@ -82,22 +89,29 @@ async def test_permission_engine_denies_through_kernel(tmp_path):
     from harness.provider import tool_call_turn
     from harness.types import ToolName
 
-    engine = PermissionEngine([RuleSet(
-        rules=[PermissionRule(action="deny", tool="dispatch_agent")], default="allow"
-    )])
+    engine = PermissionEngine(
+        [RuleSet(rules=[PermissionRule(action="deny", tool="dispatch_agent")], default="allow")]
+    )
     kernel = build_kernel(
-        provider=FakeProvider([
-            tool_call_turn("delegating", ToolName("dispatch_agent"), {"prompt": "x"}),
-            text_turn("gave up"),
-        ]),
-        base_dir=tmp_path, model=ModelId("fake"), permissions=engine,
+        provider=FakeProvider(
+            [
+                tool_call_turn("delegating", ToolName("dispatch_agent"), {"prompt": "x"}),
+                text_turn("gave up"),
+            ]
+        ),
+        base_dir=tmp_path,
+        model=ModelId("fake"),
+        permissions=engine,
     )
     sid = kernel.session.id
     result = await run_once(kernel, "delegate something")
     assert result == "gave up"
     events = [e.event for e in read_session(tmp_path, sid)]
-    denied = [e for e in events if isinstance(e, HookDecided) and e.hook == "permissions"
-              and e.decision["kind"] == "block"]
+    denied = [
+        e
+        for e in events
+        if isinstance(e, HookDecided) and e.hook == "permissions" and e.decision["kind"] == "block"
+    ]
     assert denied  # the engine deny was recorded like any hook decision
 
 
@@ -109,9 +123,10 @@ async def test_permission_ask_resolves_and_grant_silences(tmp_path):
     from harness.provider import tool_call_turn
     from harness.types import ToolName
 
-    engine = PermissionEngine([RuleSet(
-        rules=[PermissionRule(action="ask", tool="dispatch_agent")], default="allow"
-    )])
+    engine = PermissionEngine(
+        [RuleSet(rules=[PermissionRule(action="ask", tool="dispatch_agent")], default="allow")]
+    )
+
     class GrantingResolver(ScriptedResolver):
         """Approve once, then grant.
         One scripted answer: a second ask would IndexError,
@@ -128,14 +143,18 @@ async def test_permission_ask_resolves_and_grant_silences(tmp_path):
             return answer
 
     kernel = build_kernel(
-        provider=FakeProvider([
-            tool_call_turn("first", ToolName("dispatch_agent"), {"prompt": "a"}),
-            text_turn("child one done"),
-            tool_call_turn("second", ToolName("dispatch_agent"), {"prompt": "b"}),
-            text_turn("child two done"),
-            text_turn("all delegated"),
-        ]),
-        base_dir=tmp_path, model=ModelId("fake"), permissions=engine,
+        provider=FakeProvider(
+            [
+                tool_call_turn("first", ToolName("dispatch_agent"), {"prompt": "a"}),
+                text_turn("child one done"),
+                tool_call_turn("second", ToolName("dispatch_agent"), {"prompt": "b"}),
+                text_turn("child two done"),
+                text_turn("all delegated"),
+            ]
+        ),
+        base_dir=tmp_path,
+        model=ModelId("fake"),
+        permissions=engine,
         resolver=GrantingResolver(engine),
     )
     sid = kernel.session.id
@@ -148,10 +167,20 @@ async def test_permission_ask_resolves_and_grant_silences(tmp_path):
 
 def test_main_missing_catalog_is_actionable(tmp_path, capsys, monkeypatch):
     import pytest
+
     monkeypatch.setattr(
         "sys.argv",
-        ["harness", "-p", "x", "--model", "gpt",
-         "--catalog", str(tmp_path / "nope.toml"), "--base-dir", str(tmp_path)],
+        [
+            "harness",
+            "-p",
+            "x",
+            "--model",
+            "gpt",
+            "--catalog",
+            str(tmp_path / "nope.toml"),
+            "--base-dir",
+            str(tmp_path),
+        ],
     )
     with pytest.raises(SystemExit) as exc:
         main()
@@ -162,6 +191,7 @@ def test_main_missing_catalog_is_actionable(tmp_path, capsys, monkeypatch):
 def test_allow_flags_become_session_grants(tmp_path):
     from harness.permissions import PermissionEngine, PermissionRule, RuleSet
     from harness.cli import _apply_allow_flags
+
     engine = PermissionEngine([RuleSet(rules=[PermissionRule(action="ask", tool="*")])])
     _apply_allow_flags(engine, ["bash", "read_*"])
     assert engine.decide("bash", {}) == "allow"
@@ -171,6 +201,7 @@ def test_allow_flags_become_session_grants(tmp_path):
 
 def test_allow_without_config_warns(tmp_path, capsys, monkeypatch):
     import harness.cli as cli_mod
+
     monkeypatch.setattr(cli_mod, "default_engine", lambda project_dir=None: None)
     monkeypatch.setattr(
         "sys.argv",
@@ -184,8 +215,11 @@ def test_allow_without_config_warns(tmp_path, capsys, monkeypatch):
 
 async def test_run_with_tags_lands_in_telemetry(tmp_path):
     from harness.telemetry import rebuild_index
+
     kernel = build_kernel(
-        provider=FakeProvider([text_turn("ok")]), base_dir=tmp_path, model=ModelId("fake"),
+        provider=FakeProvider([text_turn("ok")]),
+        base_dir=tmp_path,
+        model=ModelId("fake"),
         tags=["exp:cli"],
     )
     sid = kernel.session.id
@@ -198,11 +232,10 @@ async def test_run_with_tags_lands_in_telemetry(tmp_path):
 
 def test_stats_subcommand_prints_summary(tmp_path, capsys, monkeypatch):
     import harness.cli as cli_mod
+
     # seed one session via the legacy run path
     monkeypatch.setattr(cli_mod, "default_engine", lambda project_dir=None: None)
-    monkeypatch.setattr(
-        "sys.argv", ["harness", "-p", "hello", "--base-dir", str(tmp_path)]
-    )
+    monkeypatch.setattr("sys.argv", ["harness", "-p", "hello", "--base-dir", str(tmp_path)])
     cli_mod.main()
     capsys.readouterr()
     monkeypatch.setattr("sys.argv", ["harness", "stats", "--base-dir", str(tmp_path)])
@@ -213,12 +246,11 @@ def test_stats_subcommand_prints_summary(tmp_path, capsys, monkeypatch):
 
 def test_outcome_then_compare_subcommands(tmp_path, capsys, monkeypatch):
     import harness.cli as cli_mod
+
     monkeypatch.setattr(cli_mod, "default_engine", lambda project_dir=None: None)
     sids = []
     for prompt in ("one", "two"):
-        monkeypatch.setattr(
-            "sys.argv", ["harness", "-p", prompt, "--base-dir", str(tmp_path)]
-        )
+        monkeypatch.setattr("sys.argv", ["harness", "-p", prompt, "--base-dir", str(tmp_path)])
         cli_mod.main()
     capsys.readouterr()
     sids = sorted(p.stem for p in (tmp_path / "sessions").glob("*.jsonl"))
@@ -262,12 +294,16 @@ async def test_kernel_with_mcp_runs_tool_and_injects_instructions(tmp_path):
     from harness.provider import tool_call_turn
     from harness.types import ToolName
 
-    provider = FakeProvider([
-        tool_call_turn("calling add", ToolName("mcp__fixture__add"), {"a": 19, "b": 23}),
-        text_turn("done"),
-    ])
+    provider = FakeProvider(
+        [
+            tool_call_turn("calling add", ToolName("mcp__fixture__add"), {"a": 19, "b": 23}),
+            text_turn("done"),
+        ]
+    )
     kernel = build_kernel(
-        provider=provider, base_dir=tmp_path, model=ModelId("fake:echo"),
+        provider=provider,
+        base_dir=tmp_path,
+        model=ModelId("fake:echo"),
         mcp=[fixture_stdio_spec()],
     )
     reply = await run_once(kernel, "add the numbers")
@@ -277,7 +313,9 @@ async def test_kernel_with_mcp_runs_tool_and_injects_instructions(tmp_path):
     customs = [e.event for e in envelopes if getattr(e.event, "type", "") == "custom"]
     assert any(c.namespace == "mcp" and c.name == "server_started" for c in customs)
     assert any(c.namespace == "mcp" and c.name == "server_stopped" for c in customs)
-    completed = [e.event for e in envelopes if getattr(e.event, "type", "") == "tool_call_completed"]
+    completed = [
+        e.event for e in envelopes if getattr(e.event, "type", "") == "tool_call_completed"
+    ]
     assert any(e.result_text == "42" for e in completed)
 
 
@@ -288,7 +326,9 @@ async def test_mcp_server_stopped_lands_after_session_ended(tmp_path):
 
     provider = FakeProvider([text_turn("ok")])
     kernel = build_kernel(
-        provider=provider, base_dir=tmp_path, model=ModelId("fake:echo"),
+        provider=provider,
+        base_dir=tmp_path,
+        model=ModelId("fake:echo"),
         mcp=[fixture_stdio_spec()],
     )
     await run_once(kernel, "hi")
@@ -304,7 +344,9 @@ async def test_mcp_events_never_precede_session_started(tmp_path):
 
     provider = FakeProvider([text_turn("ok")])
     kernel = build_kernel(
-        provider=provider, base_dir=tmp_path, model=ModelId("fake:echo"),
+        provider=provider,
+        base_dir=tmp_path,
+        model=ModelId("fake:echo"),
         mcp=[fixture_stdio_spec()],
     )
     await run_once(kernel, "hi")
@@ -322,10 +364,18 @@ async def test_kernel_without_mcp_unchanged(tmp_path):
 def test_mcp_config_flag_bad_path_exits_cleanly(tmp_path, capsys, monkeypatch):
     import pytest
     import harness.cli as cli_mod
+
     monkeypatch.setattr(
         "sys.argv",
-        ["harness", "-p", "hi", "--mcp-config", str(tmp_path / "nope.toml"),
-         "--base-dir", str(tmp_path)],
+        [
+            "harness",
+            "-p",
+            "hi",
+            "--mcp-config",
+            str(tmp_path / "nope.toml"),
+            "--base-dir",
+            str(tmp_path),
+        ],
     )
     with pytest.raises(SystemExit):
         cli_mod.main()
@@ -333,6 +383,7 @@ def test_mcp_config_flag_bad_path_exits_cleanly(tmp_path, capsys, monkeypatch):
 
 def test_no_mcp_flag_skips_mcp(tmp_path, capsys, monkeypatch):
     import harness.cli as cli_mod
+
     monkeypatch.setattr(cli_mod, "default_engine", lambda project_dir=None: None)
     monkeypatch.setattr(
         "sys.argv",
@@ -343,13 +394,12 @@ def test_no_mcp_flag_skips_mcp(tmp_path, capsys, monkeypatch):
     assert "echo: hi" in captured.out
 
 
-
-
 def run_cli(*args):
     """Invoke the harness CLI with the given args, patching sys.argv.
     Propagates SystemExit (e.g. from argparse or validation errors).
     """
     import sys
+
     old_argv = sys.argv
     sys.argv = ["harness"] + list(args)
     try:
@@ -361,21 +411,43 @@ def run_cli(*args):
 def test_mcp_add_list_remove_roundtrip(tmp_path, monkeypatch, capsys):
     home = tmp_path / "home"
     monkeypatch.chdir(tmp_path)
-    run_cli("mcp", "add", "github", "--command", "npx", "--arg=-y", "--arg=pkg",
-        "--env", "TOKEN=GH_PAT", "--scope", "user", "--config-home", str(home))
+    run_cli(
+        "mcp",
+        "add",
+        "github",
+        "--command",
+        "npx",
+        "--arg=-y",
+        "--arg=pkg",
+        "--env",
+        "TOKEN=GH_PAT",
+        "--scope",
+        "user",
+        "--config-home",
+        str(home),
+    )
     run_cli("mcp", "list", "--config-home", str(home))
     out = capsys.readouterr().out
     assert "github" in out and "stdio" in out and "user" in out
     run_cli("mcp", "remove", "github", "--scope", "user", "--config-home", str(home))
-    capsys.readouterr() # clear remove output
+    capsys.readouterr()  # clear remove output
     run_cli("mcp", "list", "--config-home", str(home))
     assert "github" not in capsys.readouterr().out
 
 
 def test_mcp_add_http_with_header(tmp_path, capsys):
     home = tmp_path / "home"
-    run_cli("mcp", "add", "remote", "--url", "https://x/mcp",
-        "--header", "Authorization=X_AUTH", "--config-home", str(home))
+    run_cli(
+        "mcp",
+        "add",
+        "remote",
+        "--url",
+        "https://x/mcp",
+        "--header",
+        "Authorization=X_AUTH",
+        "--config-home",
+        str(home),
+    )
     loaded = load_mcp_file(home / "mcp.toml", source="user")
     assert loaded[0].headers == {"Authorization": "X_AUTH"}
 
@@ -383,27 +455,45 @@ def test_mcp_add_http_with_header(tmp_path, capsys):
 def test_mcp_add_rejects_literal_looking_env(tmp_path):
     home = tmp_path / "home"
     import pytest
+
     with pytest.raises(SystemExit):
-        run_cli("mcp", "add", "bad", "--command", "x",
-            "--env", "TOKEN=ghp_abc123literal-token", "--config-home", str(home))
+        run_cli(
+            "mcp",
+            "add",
+            "bad",
+            "--command",
+            "x",
+            "--env",
+            "TOKEN=ghp_abc123literal-token",
+            "--config-home",
+            str(home),
+        )
 
 
 def test_mcp_add_rejects_malformed_env_pair(tmp_path):
     home = tmp_path / "home"
     import pytest
+
     with pytest.raises(SystemExit) as exc:
-        run_cli("mcp", "add", "bad", "--command", "x",
-            "--env", "NOEQUALS", "--config-home", str(home))
+        run_cli(
+            "mcp", "add", "bad", "--command", "x", "--env", "NOEQUALS", "--config-home", str(home)
+        )
     assert "NAME=ENV_VAR_NAME" in str(exc.value)
 
 
 def test_mcp_import_writes_scope_file_and_warns(tmp_path, capsys):
     home = tmp_path / "home"
     sample = tmp_path / ".mcp.json"
-    sample.write_text(json.dumps({"mcpServers": {
-        "clean": {"command": "/bin/clean"},
-        "leaky": {"command": "x", "env": {"TOKEN": "ghp_literal123"}},
-    }}))
+    sample.write_text(
+        json.dumps(
+            {
+                "mcpServers": {
+                    "clean": {"command": "/bin/clean"},
+                    "leaky": {"command": "x", "env": {"TOKEN": "ghp_literal123"}},
+                }
+            }
+        )
+    )
     run_cli("mcp", "import", str(sample), "--write", "--config-home", str(home))
     captured = capsys.readouterr()
     assert "leaky" in captured.err and "literal" in captured.err
@@ -421,14 +511,81 @@ def test_no_prompt_routes_to_tui(tmp_path, monkeypatch):
         launched["ask"] = ask
 
     monkeypatch.setattr("harness.tui.run_tui", fake_run_tui)
-    run_cli("--base-dir", str(tmp_path))               # no -p
+    run_cli("--base-dir", str(tmp_path))  # no -p
     kernel = launched["kernel"]
     assert kernel.loop.dispatcher.resolver.name == "tui"
     assert type(kernel.provider).__name__ == "EchoProvider"
-    assert launched["ask"] is not None                 # AppBoundAsk threaded through
-    kernel.session.close()                             # fake_run_tui skipped teardown
+    assert launched["ask"] is not None  # AppBoundAsk threaded through
+    kernel.session.close()  # fake_run_tui skipped teardown
 
 
 def test_prompt_mode_unchanged(tmp_path, capsys):
     run_cli("-p", "hello", "--base-dir", str(tmp_path))
     assert "echo: hello" in capsys.readouterr().out
+
+
+def _make_demo_plugin(plugin_dir):
+    """Create a minimal demo plugin with a skill in plugin_dir."""
+    plugin_dir.mkdir(parents=True, exist_ok=True)
+    (plugin_dir / "plugin.toml").write_text(
+        '[plugin]\nname = "demo"\nversion = "0.1.0"\ndescription = "A demo plugin"\n'
+    )
+    (plugin_dir / "skills").mkdir(exist_ok=True)
+    (plugin_dir / "skills/hello.md").write_text(
+        "---\nname: hello\ndescription: A greeting skill\n---\nHello world!"
+    )
+
+
+def test_no_plugins_flag_and_plugin_dir(tmp_path, monkeypatch):
+    """--plugin-dir loads plugins (invoke_skill appears); --no-plugins skips loading."""
+    import harness.cli as cli_mod
+
+    plugin_dir = tmp_path / "myplugins"
+    _make_demo_plugin(plugin_dir / "demo")
+
+    # Test --plugin-dir loads plugin and invoke_skill appears
+    monkeypatch.setattr(cli_mod, "default_engine", lambda project_dir=None: None)
+    monkeypatch.setattr(
+        "sys.argv",
+        ["harness", "-p", "hi", "--plugin-dir", str(plugin_dir), "--base-dir", str(tmp_path)],
+    )
+    captured_kernel = {}
+    orig_build = cli_mod.build_kernel
+
+    def capturing_build(**kwargs):
+        k = orig_build(**kwargs)
+        captured_kernel["kernel"] = k
+        return k
+
+    monkeypatch.setattr(cli_mod, "build_kernel", capturing_build)
+    cli_mod.main()
+    kernel = captured_kernel["kernel"]
+    names = {str(s.name) for s in kernel.registry.specs()}
+    assert "invoke_skill" in names
+
+    # Test --no-plugins skips loading entirely
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "harness",
+            "-p",
+            "hi",
+            "--plugin-dir",
+            str(plugin_dir),
+            "--no-plugins",
+            "--base-dir",
+            str(tmp_path),
+        ],
+    )
+    captured_kernel2 = {}
+
+    def capturing_build2(**kwargs):
+        k = orig_build(**kwargs)
+        captured_kernel2["kernel"] = k
+        return k
+
+    monkeypatch.setattr(cli_mod, "build_kernel", capturing_build2)
+    cli_mod.main()
+    kernel2 = captured_kernel2["kernel"]
+    names2 = {str(s.name) for s in kernel2.registry.specs()}
+    assert "invoke_skill" not in names2

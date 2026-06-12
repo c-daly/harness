@@ -6,7 +6,7 @@ import signal
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Sequence
+from typing import TYPE_CHECKING, Sequence
 
 from harness.hooks import HookBus
 from harness.interaction import HeadlessResolver, Resolver
@@ -20,6 +20,9 @@ from harness.subagent import DispatchAgentTool, SubagentRunner
 from harness.tools import ToolRegistry
 from harness.types import ModelId, SessionId, new_session_id
 
+if TYPE_CHECKING:
+    from harness.plugins import LoadedPlugins
+
 
 @dataclass
 class Kernel:
@@ -31,6 +34,8 @@ class Kernel:
     resumed: bool = field(default=False)
     tags: list[str] = field(default_factory=list)
     mcp: McpHost | None = None
+    plugins: "LoadedPlugins | None" = None
+    plugin_warnings: list[str] = field(default_factory=list)
 
 
 def build_kernel(
@@ -46,6 +51,7 @@ def build_kernel(
     permissions: PermissionEngine | None = None,
     tags: list[str] | None = None,
     mcp: Sequence[McpServerSpec] | None = None,  # None disables MCP entirely
+    plugins: "LoadedPlugins | None" = None,
 ) -> Kernel:
     from harness.resume import resume_session
 
@@ -61,15 +67,33 @@ def build_kernel(
     else:
         session = Session(base_dir, new_session_id(), default_model=model)
         transcript = None
+    agents_sink: dict = {}
+    plugin_warnings: list[str] = []
+    if plugins is not None:
+        from harness.plugins import apply_plugins
+
+        plugin_warnings = apply_plugins(
+            plugins, registry=registry, hooks=hooks, agents_sink=agents_sink
+        )
     runner = SubagentRunner(
-        base=base_dir, provider=provider, registry=registry,
-        hooks=hooks, resolver=resolver, default_model=model,
+        base=base_dir,
+        provider=provider,
+        registry=registry,
+        hooks=hooks,
+        resolver=resolver,
+        default_model=model,
         pricing=pricing,
+        agents=agents_sink,
     )
     registry.register(DispatchAgentTool(runner=runner, parent=session))
     loop_kwargs: dict = dict(
-        session=session, provider=provider, registry=registry, hooks=hooks,
-        resolver=resolver, model=model, system_prompt=system_prompt,
+        session=session,
+        provider=provider,
+        registry=registry,
+        hooks=hooks,
+        resolver=resolver,
+        model=model,
+        system_prompt=system_prompt,
         pricing=pricing,
     )
     if transcript is not None:
@@ -79,14 +103,24 @@ def build_kernel(
     if mcp:
         mcp_host = McpHost(mcp, registry=registry, hooks=hooks, session=session)
     return Kernel(
-        session=session, loop=loop, registry=registry, hooks=hooks, provider=provider,
-        resumed=resumed, tags=tags or [], mcp=mcp_host,
+        session=session,
+        loop=loop,
+        registry=registry,
+        hooks=hooks,
+        provider=provider,
+        resumed=resumed,
+        tags=tags or [],
+        mcp=mcp_host,
+        plugins=plugins,
+        plugin_warnings=plugin_warnings,
     )
 
 
 async def run_once(kernel: Kernel, prompt: str) -> str:
     from harness.events import CustomEvent, UserInterrupt
+    from harness.plugins import start_subscriber_pumps
 
+    pump_tasks: list = []
     try:
         # host.start() BEFORE loop.start(): the instructions hook must be registered
         # before SESSION_START fires so it can inject into the system prompt.
@@ -98,12 +132,20 @@ async def run_once(kernel: Kernel, prompt: str) -> str:
         # tags are per-run annotations: emitted after start (new) or before the
         # turn (resumed) -- i.e., here, unconditionally
         for t in kernel.tags:
-            kernel.session.append(
-                CustomEvent(namespace="harness", name="tag", data={"tag": t})
-            )
+            kernel.session.append(CustomEvent(namespace="harness", name="tag", data={"tag": t}))
         # flush AFTER loop.start()+tags: nothing precedes SessionStarted in the log.
         if kernel.mcp is not None:
             kernel.mcp.flush_events()
+        if kernel.plugins is not None:
+            for _plugin in kernel.plugins.plugins:
+                kernel.session.append(
+                    CustomEvent(
+                        namespace="plugin",
+                        name="plugin_loaded",
+                        data={"plugin": _plugin.name, "version": _plugin.version},
+                    )
+                )
+        pump_tasks = start_subscriber_pumps(kernel)
         result = await kernel.loop.run_turn(prompt)
         await kernel.loop.end()
         return result
@@ -114,6 +156,8 @@ async def run_once(kernel: Kernel, prompt: str) -> str:
             pass
         raise
     finally:
+        for _task in pump_tasks:
+            _task.cancel()
         # stop() then flush() BEFORE session.close(): server_stopped lands in the log;
         # closed sessions drop events.
         # server teardown is post-session: session_ended is NOT the final envelope when
@@ -148,12 +192,19 @@ def _subcommand(argv: list[str]) -> None:
     import argparse
 
     from harness.resume import append_events
-    from harness.telemetry import rebuild_index, render_compare, render_stats, run_rollup, stats_summary
+    from harness.telemetry import (
+        rebuild_index,
+        render_compare,
+        render_stats,
+        run_rollup,
+        stats_summary,
+    )
 
     command, rest = argv[0], argv[1:]
     parser = argparse.ArgumentParser(prog=f"harness {command}")
-    parser.add_argument("--base-dir", type=Path,
-                        default=Path.home() / ".local" / "share" / "harness")
+    parser.add_argument(
+        "--base-dir", type=Path, default=Path.home() / ".local" / "share" / "harness"
+    )
     if command == "stats":
         parser.add_argument("--tag", default=None)
         args = parser.parse_args(rest)
@@ -181,10 +232,13 @@ def _subcommand(argv: list[str]) -> None:
         from harness.events import SessionOutcome
         from harness.log import SessionLockedError
         from harness.types import SessionId
+
         try:
-            append_events(args.base_dir, SessionId(args.session_id), [
-                SessionOutcome(status=args.status, score=args.score, note=args.note)
-            ])
+            append_events(
+                args.base_dir,
+                SessionId(args.session_id),
+                [SessionOutcome(status=args.status, score=args.score, note=args.note)],
+            )
         except SessionLockedError as exc:
             raise SystemExit(f"session is still running: {exc}") from exc
         print(f"recorded {args.status} for {args.session_id}")
@@ -193,25 +247,51 @@ def _subcommand(argv: list[str]) -> None:
 def _run_main() -> None:
     parser = argparse.ArgumentParser(prog="harness")
     parser.add_argument("-p", "--prompt", default=None)
-    parser.add_argument("--base-dir", type=Path,
-                        default=Path.home() / ".local" / "share" / "harness")
-    parser.add_argument("--model", default=None,
-                        help="Catalog alias to use for the model (requires a catalog file).")
-    parser.add_argument("--catalog", type=Path,
-                        default=Path.home() / ".config" / "harness" / "models.toml",
-                        help="Path to the model catalog TOML (default: ~/.config/harness/models.toml).")
-    parser.add_argument("--resume", dest="resume_session_id", default=None,
-                        help="Session ID to resume.")
-    parser.add_argument("--allow", action="append", default=[],
-                        metavar="TOOL_GLOB",
-                        help="Grant a tool glob at session scope (can be repeated).")
-    parser.add_argument("--tag", action="append", default=[],
-                        metavar="TAG",
-                        help="Tag this run (can be repeated).")
-    parser.add_argument("--mcp-config", type=Path, default=None,
-                        help="Explicit mcp.toml; overrides the standard locations.")
-    parser.add_argument("--no-mcp", action="store_true",
-                        help="Skip MCP server startup entirely.")
+    parser.add_argument(
+        "--base-dir", type=Path, default=Path.home() / ".local" / "share" / "harness"
+    )
+    parser.add_argument(
+        "--model",
+        default=None,
+        help="Catalog alias to use for the model (requires a catalog file).",
+    )
+    parser.add_argument(
+        "--catalog",
+        type=Path,
+        default=Path.home() / ".config" / "harness" / "models.toml",
+        help="Path to the model catalog TOML (default: ~/.config/harness/models.toml).",
+    )
+    parser.add_argument(
+        "--resume", dest="resume_session_id", default=None, help="Session ID to resume."
+    )
+    parser.add_argument(
+        "--allow",
+        action="append",
+        default=[],
+        metavar="TOOL_GLOB",
+        help="Grant a tool glob at session scope (can be repeated).",
+    )
+    parser.add_argument(
+        "--tag", action="append", default=[], metavar="TAG", help="Tag this run (can be repeated)."
+    )
+    parser.add_argument(
+        "--mcp-config",
+        type=Path,
+        default=None,
+        help="Explicit mcp.toml; overrides the standard locations.",
+    )
+    parser.add_argument("--no-mcp", action="store_true", help="Skip MCP server startup entirely.")
+    parser.add_argument(
+        "--plugin-dir",
+        action="append",
+        default=[],
+        type=Path,
+        metavar="DIR",
+        help="Extra plugin directory (can be repeated).",
+    )
+    parser.add_argument(
+        "--no-plugins", action="store_true", help="Disable plugin discovery entirely."
+    )
     args = parser.parse_args()
 
     resume_session_id = SessionId(args.resume_session_id) if args.resume_session_id else None
@@ -260,6 +340,27 @@ def _run_main() -> None:
         except (McpConfigError, OSError) as exc:
             raise SystemExit(str(exc)) from exc
 
+    loaded_plugins = None
+    if not args.no_plugins:
+        from harness.plugins import load_plugins
+
+        config_home = Path.home() / ".config" / "harness"
+        plugin_dirs = []
+        _default_dirs = [config_home / "plugins", Path.cwd() / ".harness" / "plugins"]
+        for _d in _default_dirs:
+            if _d.is_dir():
+                plugin_dirs.append(_d)
+        plugin_dirs.extend(args.plugin_dir)
+        if plugin_dirs:
+            loaded_plugins = load_plugins(plugin_dirs)
+            for warning in loaded_plugins.warnings:
+                print(f"warning: {warning}", file=__import__("sys").stderr)
+            if loaded_plugins.mcp_servers:
+                plugin_specs = {s.name: s for s in loaded_plugins.mcp_servers}
+                config_specs = {s.name: s for s in mcp_specs}
+                merged = {**plugin_specs, **config_specs}
+                mcp_specs = tuple(merged.values())
+
     if args.prompt is None:
         from harness.tui import AppBoundAsk, run_tui
         from harness.tui_support import TuiResolver
@@ -276,6 +377,7 @@ def _run_main() -> None:
             tags=args.tag,
             mcp=mcp_specs or None,
             resolver=resolver,
+            plugins=loaded_plugins,
         )
         # Textual owns the terminal: no SIGINT handler here (Esc interrupts; Ctrl+C quits)
         asyncio.run(run_tui(kernel, catalog_path=args.catalog, ask=ask))
@@ -289,8 +391,10 @@ def _run_main() -> None:
         permissions=engine,
         tags=args.tag,
         mcp=mcp_specs or None,
+        plugins=loaded_plugins,
     )
     from harness.errors import ProviderError
+
     try:
         print(asyncio.run(_amain(kernel, args.prompt)))
     except ProviderError as exc:
@@ -319,7 +423,6 @@ def _parse_add_spec(args, refs: dict, headers: dict):
     return _parse_server(args.name, body, source="adhoc")
 
 
-
 def _mcp_subcommand(argv: list[str]) -> None:
     from harness.mcp_config import (
         McpConfigError,
@@ -337,7 +440,9 @@ def _mcp_subcommand(argv: list[str]) -> None:
     def _common(p: argparse.ArgumentParser) -> None:
         p.add_argument("--scope", choices=("user", "project"), default="user")
         p.add_argument(
-            "--config-home", type=Path, default=None,
+            "--config-home",
+            type=Path,
+            default=None,
             help="Override the user config dir (for tests).",
         )
 
@@ -348,18 +453,25 @@ def _mcp_subcommand(argv: list[str]) -> None:
     add.add_argument("--cwd")
     add.add_argument("--url")
     add.add_argument(
-        "--env", action="append", default=[],
+        "--env",
+        action="append",
+        default=[],
         help="VAR=ENV_VAR_NAME (a reference, never a literal value)",
     )
     add.add_argument(
-        "--header", action="append", default=[], dest="headers",
+        "--header",
+        action="append",
+        default=[],
+        dest="headers",
         help="Header=ENV_VAR_NAME holding the full header value",
     )
     add.add_argument("--restart", choices=("never", "on_failure"), default="on_failure")
     add.add_argument("--tool-timeout", type=float, default=60.0, dest="tool_timeout")
     _common(add)
 
-    lst = sub.add_parser("list", help="Show the merged user+project view; --scope does not filter it.")
+    lst = sub.add_parser(
+        "list", help="Show the merged user+project view; --scope does not filter it."
+    )
     _common(lst)
 
     rem = sub.add_parser("remove")
@@ -368,7 +480,9 @@ def _mcp_subcommand(argv: list[str]) -> None:
 
     imp = sub.add_parser("import")
     imp.add_argument("path", type=Path)
-    imp.add_argument("--write", action="store_true", help="Merge into the scope file instead of printing.")
+    imp.add_argument(
+        "--write", action="store_true", help="Merge into the scope file instead of printing."
+    )
     _common(imp)
 
     args = parser.parse_args(argv)

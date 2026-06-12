@@ -135,8 +135,7 @@ def _parse_mcp_servers(plugin: str, root: Path, table: object) -> tuple[McpServe
                 substituted[key] = _substitute_root(substituted[key], root)
         if isinstance(substituted.get("args"), list):
             substituted["args"] = [
-                _substitute_root(a, root) if isinstance(a, str) else a
-                for a in substituted["args"]
+                _substitute_root(a, root) if isinstance(a, str) else a for a in substituted["args"]
             ]
         try:
             specs.append(_parse_server(name, substituted, source="plugin"))
@@ -169,8 +168,7 @@ def _parse_lifecycle_hooks(
 ) -> tuple[LifecycleHookDef, ...]:
     if not isinstance(entries, list):
         raise PluginError(
-            f"plugin {plugin!r}: [hooks].lifecycle must be an array of tables"
-            " ([[hooks.lifecycle]])"
+            f"plugin {plugin!r}: [hooks].lifecycle must be an array of tables ([[hooks.lifecycle]])"
         )
     defs = []
     for entry in entries:
@@ -356,9 +354,7 @@ def _check_cross_plugin_collisions(plugins: list[Plugin]) -> None:
                 seen[name] = plugin.name
 
 
-def _load_module(
-    plugin: str, root: Path, relative: str, loaded_module_names: list[str]
-):
+def _load_module(plugin: str, root: Path, relative: str, loaded_module_names: list[str]):
     """Import a hook module from *root/relative* with a unique synthetic name.
 
     Using unique names (harness_plugin_<plugin>_<relpath>) prevents importlib
@@ -393,13 +389,9 @@ def _resolve(plugin: str, module, function: str, *, kind: str):
     if fn is None:
         raise PluginError(f"plugin {plugin!r}: {kind} function {function!r} not found")
     if not callable(fn):
-        raise PluginError(
-            f"plugin {plugin!r}: {kind} attribute {function!r} is not callable"
-        )
+        raise PluginError(f"plugin {plugin!r}: {kind} attribute {function!r} is not callable")
     if kind == "subscriber" and not iscoroutinefunction(fn):
-        raise PluginError(
-            f"plugin {plugin!r}: subscriber {function!r} must be an async function"
-        )
+        raise PluginError(f"plugin {plugin!r}: subscriber {function!r} must be an async function")
     return fn
 
 
@@ -483,3 +475,73 @@ def load_plugins(dirs: Sequence[Path]) -> LoadedPlugins:
             sys.modules.pop(module_name, None)
         raise
     return LoadedPlugins(plugins=ordered, warnings=warnings)
+
+
+def apply_plugins(loaded: LoadedPlugins, *, registry, hooks, agents_sink: dict) -> list[str]:
+    """Register everything register-able at kernel-build time. Returns warnings.
+    Raises PluginError on tool-name collisions (loud, the tools.py promise)."""
+    from harness.skills import InvokeSkillTool, SkillSet, skills_inventory_hook
+
+    taken = {str(s.name) for s in registry.specs()}
+    if loaded.skills:
+        skill_set = SkillSet(tuple(loaded.skills))
+        tool = InvokeSkillTool(skill_set)
+        if str(tool.spec.name) in taken:
+            raise PluginError("tool name collision: invoke_skill already registered")
+        registry.register(tool)
+        hooks.register_lifecycle(
+            "plugin:skills:inventory",
+            LifecyclePoint.SESSION_START,
+            skills_inventory_hook(skill_set),
+        )
+    for plugin in loaded.plugins:
+        for hook_def in plugin.dispatch_hooks:
+            hooks.register_dispatch(
+                f"plugin:{plugin.name}:{hook_def.name}",
+                plugin.dispatch_callables[hook_def.name],
+                priority=hook_def.priority,
+            )
+        for hook_def in plugin.lifecycle_hooks:
+            hooks.register_lifecycle(
+                f"plugin:{plugin.name}:{hook_def.name}",
+                hook_def.point,
+                plugin.lifecycle_callables[hook_def.name],
+            )
+    for agent in loaded.agents:
+        agents_sink[agent.name] = agent
+    return list(loaded.warnings)
+
+
+async def _pump(queue, fn, name, session) -> None:
+    """Drain a subscriber queue, calling fn per envelope. Fail-open per event."""
+    from harness.events import ErrorRaised
+
+    while True:
+        envelope = await queue.get()
+        try:
+            await fn(envelope)
+        except Exception as exc:  # fail-open per event
+            try:
+                session.append(ErrorRaised(where=f"subscriber:{name}", message=str(exc)[:500]))
+            except Exception:
+                pass
+
+
+def start_subscriber_pumps(kernel) -> list:
+    """Start asyncio pump tasks for each plugin subscriber. Returns task list."""
+    import asyncio
+
+    if kernel.plugins is None:
+        return []
+    tasks = []
+    for plugin in kernel.plugins.plugins:
+        for sub_def in plugin.subscribers:
+            fn = plugin.subscriber_callables.get(sub_def.name)
+            if fn is None:
+                continue
+            queue = kernel.session.bus.subscribe(maxsize=1024)
+            task = asyncio.get_event_loop().create_task(
+                _pump(queue, fn, sub_def.name, kernel.session)
+            )
+            tasks.append(task)
+    return tasks
