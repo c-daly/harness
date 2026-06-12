@@ -20,9 +20,12 @@ class FrontmatterError(Exception):
 
 
 def split_frontmatter(text: str) -> tuple[dict[str, Any], str]:
+    text = text.replace("\r\n", "\n")  # Windows/autocrlf files must parse identically
     if not text.startswith("---\n"):
         raise FrontmatterError("missing frontmatter (file must start with '---')")
-    end = text.find("\n---", 4)
+    # limitation: an unindented '---' line inside a block scalar splits early (YAML itself
+    # treats it as a document marker, so honest authors never hit this)
+    end = text.find("\n---", 3)
     if end == -1:
         raise FrontmatterError("missing closing '---' for frontmatter")
     raw, body = text[4:end], text[end + 4 :].lstrip("\n")
@@ -61,10 +64,17 @@ class AgentDef(_Def):
     tools: tuple[str, ...] | None = None  # None = all tools
     model: str | None = None
 
+    @field_validator("tools", mode="before")
+    @classmethod
+    def _tools_scalar_ok(cls, value):
+        if isinstance(value, str):
+            return (value,)  # a bare scalar means a one-tool list
+        return value
+
 
 def _load(path: Path, model: type[_Def]):
     try:
-        meta, body = split_frontmatter(path.read_text())
+        meta, body = split_frontmatter(path.read_text(encoding="utf-8"))
     except OSError as exc:
         raise FrontmatterError(f"{path}: {exc}") from exc
     except FrontmatterError as exc:

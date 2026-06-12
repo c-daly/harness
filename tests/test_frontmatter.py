@@ -93,3 +93,21 @@ def test_load_agent_defaults(tmp_path):
     agent = load_agent(path)
     assert agent.tools is None           # None = all tools
     assert agent.model is None
+
+
+def test_split_frontmatter_crlf_normalized():
+    meta, body = split_frontmatter("---\r\nname: x\r\ndescription: d\r\n---\r\nbody\r\n")
+    assert meta["name"] == "x"
+    assert "body" in body
+
+
+def test_split_frontmatter_empty_block_is_clear_error():
+    with pytest.raises(FrontmatterError) as exc:
+        split_frontmatter("---\n---\nbody")
+    assert "mapping" in str(exc.value)
+
+
+def test_load_agent_scalar_tools_coerces(tmp_path):
+    path = tmp_path / "a.md"
+    path.write_text("---\nname: a\ndescription: d\ntools: invoke_skill\n---\nbody")
+    assert load_agent(path).tools == ("invoke_skill",)
