@@ -332,11 +332,14 @@ class HarnessApp(App[None]):
         elif command.name in self._plugin_commands:
             body = self._plugin_commands[command.name].body
             prompt = body.replace("$ARGUMENTS", command.arg)
+            if not prompt.strip():
+                self.say("! ", f"command /{command.name} is empty after expansion")
+                return
             # A plugin command IS a turn: route through the same guard as plain input.
             # (@file mentions deliberately do NOT expand inside command bodies v1 --
             # the body is the plugin author's text.)
             if self._turn_worker is not None and self._turn_worker.is_running:
-                self.say("! ", "a turn is already running — Esc to interrupt it first")
+                self.say("! ", "a turn is already running -- Esc to interrupt it first")
                 return
             self.say("> ", prompt)
             self._turn_worker = self.run_worker(
