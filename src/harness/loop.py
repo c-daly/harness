@@ -17,6 +17,7 @@ from harness.hooks import Annotate, Emit, HookBus, Inject, LifecyclePoint, Propo
 from harness.interaction import Resolver
 from harness.messages import Message, Role, ToolResultBlock
 from harness.provider import Chunk, ModelProvider
+from harness.redaction import StringRedactor, identity_redact
 from harness.session import Session
 from harness.tools import FilteredRegistry, ToolRegistry
 from harness.types import CallId, ModelId
@@ -36,26 +37,22 @@ class AgentLoop:
         max_iterations: int = 20,
         history: list[Message] | None = None,
         pricing: dict[str, float] | None = None,
+        redact: StringRedactor = identity_redact,
     ) -> None:
         self.session = session
         self.provider = provider
         self.registry = registry
         self.hooks = hooks
-        self.model = model  # mutable by design: reassigning between turns is the /model switch; the dispatcher receives it per call
+        self.model = model
         self.system_prompt = system_prompt
         self.max_iterations = max_iterations
-        # history seeds a RESUMED transcript (resume_session's fold output).
-        # Never call start() on a resumed loop: the session already started
-        # and SESSION_START hooks (memory briefs) must not double-inject.
         self.history: list[Message] = list(history) if history else []
         self.pricing = pricing
         self.dispatcher = Dispatcher(
-            session=session, registry=registry, hooks=hooks, resolver=resolver
+            session=session, registry=registry, hooks=hooks, resolver=resolver, redact=redact
         )
-        self.on_chunk: Callable[[Chunk], None] | None = None  # set by the frontend; root loop only
+        self.on_chunk: Callable[[Chunk], None] | None = None
         self._ended = False
-        # per-turn tool outcomes, recorded at completion so interrupt_turn can
-        # tell completed-but-unpaired calls from truly-cancelled ones
         self._turn_outcomes: dict[CallId, ToolOutcome] = {}
 
     async def _apply_contributions(self, point: LifecyclePoint, ctx: dict) -> None:
@@ -88,14 +85,6 @@ class AgentLoop:
         )
 
     async def run_turn(self, user_text: str) -> str:
-        """Run one user turn to completion.
-
-        Raises ModelDispatchBlocked (policy refused the model call) or
-        infrastructure errors from dispatch. After any raise, this loop's
-        history may hold an unanswered user message or unpaired tool calls:
-        treat the loop as dead — start a new session rather than calling
-        run_turn again.
-        """
         self.session.append(UserMessage(text=user_text))
         self.history.append(Message.user_text(user_text))
         for _ in range(self.max_iterations):
@@ -118,18 +107,12 @@ class AgentLoop:
                 outcome = await self.dispatcher.dispatch_tool(
                     ProposedToolCall(call_id=call.call_id, tool=call.tool, args=call.args)
                 )
-                # recorded at completion so interrupt_turn can distinguish
-                # completed-but-unpaired calls from truly-cancelled ones
                 self._turn_outcomes[call.call_id] = outcome
                 return outcome
 
             try:
                 outcomes = await asyncio.gather(*[_run_one(c) for c in calls])
             except Exception as exc:
-                # dispatch_tool converts tool errors to results; only infrastructure
-                # failures (log write, blob store) reach here. Siblings are cancelled
-                # by gather; history is left without tool results — callers must
-                # treat this loop as dead (see docstring).
                 try:
                     self.session.append(
                         ErrorRaised(
@@ -138,7 +121,7 @@ class AgentLoop:
                         )
                     )
                 except Exception:
-                    pass  # the log itself may be the failing infrastructure
+                    pass
                 raise
             for call, outcome in zip(calls, outcomes):
                 self.history.append(
@@ -155,11 +138,6 @@ class AgentLoop:
         return f"[stopped: max iterations ({self.max_iterations}) reached]"
 
     def repair_turn(self) -> int:
-        """Close unpaired tool_use blocks in the trailing assistant message
-        (real recorded results for completed calls; ToolCallCancelled + the
-        fold-matching synthetic for the rest). Returns the number repaired.
-        Shared by interrupt_turn (Esc) and the TUI's exception path -- after
-        repair the loop is safe to keep using."""
         repaired = 0
         for call in self._dangling_tool_calls():
             outcome = self._turn_outcomes.get(call.call_id)
@@ -185,28 +163,10 @@ class AgentLoop:
         return repaired
 
     def interrupt_turn(self) -> None:
-        """In-process mirror of resume repair: call after cancelling run_turn.
-
-        Delegates to repair_turn to close unpaired tool_use blocks in the
-        trailing assistant message: calls that COMPLETED before cancellation
-        get their real recorded result (the log already holds ToolCallCompleted);
-        truly-incomplete calls get a ToolCallCancelled event + the synthetic
-        error result fold renders for them. Repairs are idempotent (a second
-        call finds everything paired); each call appends exactly one
-        UserInterrupt. The loop stays alive. Callers must ensure at most one
-        call per logical interrupt (each call records a UserInterrupt)."""
         self.repair_turn()
         self.session.append(UserInterrupt())
 
     def _dangling_tool_calls(self):
-        """tool_use blocks in the last assistant message lacking a paired result.
-
-        Walks history backwards collecting result call_ids until the last assistant
-        message that has tool_calls(); returns its calls that lack paired results.
-        Returns empty list when no trailing unpaired assistant-with-tools exists.
-        Only the segment AFTER the last assistant message is inspected, so an old
-        fully-paired assistant deeper in history is never re-repaired."""
-        # Collect result call_ids and find the last assistant-with-tools
         paired_ids: set[str] = set()
         for msg in reversed(self.history):
             if msg.role == Role.TOOL:
@@ -216,9 +176,7 @@ class AgentLoop:
             elif msg.role == Role.ASSISTANT:
                 calls = msg.tool_calls()
                 if not calls:
-                    # a trailing text-only assistant means the turn completed cleanly -- nothing to repair
                     return []
-                # Return calls lacking a paired result
                 return [c for c in calls if c.call_id not in paired_ids]
         return []
 

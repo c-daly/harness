@@ -51,8 +51,10 @@ def build_kernel(
     resume_session_id: SessionId | None = None,
     permissions: PermissionEngine | None = None,
     tags: list[str] | None = None,
-    mcp: Sequence[McpServerSpec] | None = None,  # None disables MCP entirely
+    mcp: Sequence[McpServerSpec] | None = None,
     plugins: "LoadedPlugins | None" = None,
+    workspace_root: Path | None = None,
+    native_tools: bool = False,
 ) -> Kernel:
     from harness.resume import resume_session
 
@@ -68,6 +70,43 @@ def build_kernel(
     else:
         session = Session(base_dir, new_session_id(), default_model=model)
         transcript = None
+    if native_tools:
+        from harness.fold import fold
+        from harness.log import read_session
+        from harness.native_tools import (
+            CompoundCommandGuard,
+            ReadState,
+            baseline_ruleset,
+            register_native_tools,
+        )
+        from harness.permissions import PermissionEngine as _PermissionEngine
+        from harness.redaction import identity_redact  # noqa: F401
+        from harness.workspace import WorkspaceGuard, resolve_in_workspace
+
+        ws_root = (workspace_root or Path.cwd()).resolve()
+        seed: set[str] = set()
+        if resume_session_id is not None:
+            raw_paths = fold(list(read_session(base_dir, resume_session_id))).read_paths
+            for p in raw_paths:
+                try:
+                    resolved = resolve_in_workspace(ws_root, p)
+                    seed.add(str(resolved))
+                except Exception:
+                    pass
+        read_state = ReadState(seed)
+        register_native_tools(
+            registry,
+            workspace_root=ws_root,
+            read_state=read_state,
+            emit=session.append,
+        )
+        if permissions is None:
+            permissions = _PermissionEngine([baseline_ruleset()])
+            hooks.register_dispatch(permissions.name, permissions, priority=permissions.priority)
+        else:
+            permissions.layers.append(baseline_ruleset())
+        hooks.register_dispatch("workspace-guard", WorkspaceGuard(ws_root), priority=900)
+        hooks.register_dispatch("bash-compound-guard", CompoundCommandGuard(), priority=950)
     agents_sink: dict = {}
     plugin_warnings: list[str] = []
     if plugins is not None:
@@ -123,18 +162,13 @@ async def run_once(kernel: Kernel, prompt: str) -> str:
 
     pump_tasks: list = []
     try:
-        # host.start() BEFORE loop.start(): the instructions hook must be registered
-        # before SESSION_START fires so it can inject into the system prompt.
         if kernel.mcp is not None:
             for warning in await kernel.mcp.start():
                 print(f"warning: {warning}", file=sys.stderr)
         if not kernel.resumed:
             await kernel.loop.start()
-        # tags are per-run annotations: emitted after start (new) or before the
-        # turn (resumed) -- i.e., here, unconditionally
         for t in kernel.tags:
             kernel.session.append(CustomEvent(namespace="harness", name="tag", data={"tag": t}))
-        # flush AFTER loop.start()+tags: nothing precedes SessionStarted in the log.
         if kernel.mcp is not None:
             kernel.mcp.flush_events()
         if kernel.plugins is not None:
@@ -164,15 +198,8 @@ async def run_once(kernel: Kernel, prompt: str) -> str:
             for _task in pump_tasks:
                 _task.cancel()
             await asyncio.gather(*pump_tasks, return_exceptions=True)
-        # stop() then flush() BEFORE session.close(): server_stopped lands in the log;
-        # closed sessions drop events.
-        # server teardown is post-session: session_ended is NOT the final envelope when
-        # MCP is active (mcp/server_stopped follows). Teardown is administrative, not
-        # conversational, so it must not precede SESSION_END hooks.
         if kernel.mcp is not None:
             await kernel.mcp.stop()
-            # crash path: if flush never ran (loop.start raised), drain the buffered
-            # mcp events now as post-crash diagnostics; no-op on the happy path
             kernel.mcp.flush_events()
         kernel.session.close()
 
@@ -181,7 +208,6 @@ async def _amain(kernel: Kernel, prompt: str) -> str:
     task = asyncio.current_task()
     loop = asyncio.get_running_loop()
     loop.add_signal_handler(signal.SIGINT, task.cancel)
-    # run_once owns the UserInterrupt record; this wrapper only owns the signal handler lifecycle
     try:
         return await run_once(kernel, prompt)
     finally:
@@ -189,9 +215,12 @@ async def _amain(kernel: Kernel, prompt: str) -> str:
 
 
 def _apply_allow_flags(engine: PermissionEngine, allows: list[str]) -> None:
-    """Grant each tool glob in allows at session scope."""
+    """Grant each --allow pattern at session scope, expanding compact tool(arg) form."""
+    from harness.native_tools import desugar_pattern
+
     for pattern in allows:
-        engine.grant(pattern)
+        rule = desugar_pattern(pattern)
+        engine.grant(rule.tool, dict(rule.match) or None)
 
 
 def _subcommand(argv: list[str]) -> None:
@@ -228,7 +257,7 @@ def _subcommand(argv: list[str]) -> None:
         try:
             print(render_compare(run_rollup(conn, args.run_a), run_rollup(conn, args.run_b)))
         except KeyError as exc:
-            raise SystemExit(str(exc).strip("'\"")) from exc
+            raise SystemExit(str(exc).strip("\u0027\u0022")) from exc
     elif command == "outcome":
         parser.add_argument("session_id")
         parser.add_argument("status", choices=("ok", "fail", "abandoned"))
@@ -298,6 +327,7 @@ def _run_main() -> None:
     parser.add_argument(
         "--no-plugins", action="store_true", help="Disable plugin discovery entirely."
     )
+    parser.add_argument("--workspace", type=Path, default=None)
     args = parser.parse_args()
 
     resume_session_id = SessionId(args.resume_session_id) if args.resume_session_id else None
@@ -385,8 +415,9 @@ def _run_main() -> None:
             mcp=mcp_specs or None,
             resolver=resolver,
             plugins=loaded_plugins,
+            workspace_root=args.workspace,
+            native_tools=True,
         )
-        # Textual owns the terminal: no SIGINT handler here (Esc interrupts; Ctrl+C quits)
         asyncio.run(run_tui(kernel, catalog_path=args.catalog, ask=ask))
         return
     kernel = build_kernel(
@@ -399,6 +430,8 @@ def _run_main() -> None:
         tags=args.tag,
         mcp=mcp_specs or None,
         plugins=loaded_plugins,
+        workspace_root=args.workspace,
+        native_tools=True,
     )
     from harness.errors import ProviderError
 

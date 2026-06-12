@@ -29,6 +29,7 @@ from harness.hooks import (
 from harness.interaction import PermissionRequest, Resolver
 from harness.messages import Message
 from harness.provider import Chunk, ModelProvider, Usage, collect
+from harness.redaction import StringRedactor, identity_redact
 from harness.session import Session
 from harness.tools import FilteredRegistry, ToolRegistry, ToolSpec
 from harness.types import ModelId, new_call_id
@@ -68,12 +69,14 @@ class Dispatcher:
         hooks: HookBus,
         resolver: Resolver,
         retry_delays: tuple[float, ...] = (0.5, 2.0, 8.0),
+        redact: StringRedactor = identity_redact,
     ) -> None:
         self.session = session
         self.registry = registry
         self.hooks = hooks
         self.resolver = resolver
         self.retry_delays = retry_delays
+        self._redact = redact
 
     async def _run_chain(self, action) -> tuple[object | None, str | None]:
         """Run hooks + Ask resolution. Returns (effective_action, denial_reason)."""
@@ -124,7 +127,7 @@ class Dispatcher:
             return ToolOutcome(text=denial, blob=None, is_error=True)
         if not isinstance(effective, ProposedToolCall):
             # a hook rewrote tool -> model; fail closed rather than crash
-            denial = "blocked by policy: rewrite changed action type — refused"
+            denial = "blocked by policy: rewrite changed action type \u2014 refused"
             self.session.append(
                 ToolCallCompleted(call_id=call.call_id, result_text=denial, is_error=True)
             )
@@ -141,8 +144,10 @@ class Dispatcher:
         except Exception as exc:
             raw, is_error = f"tool error: {exc}", True
             if len(raw) > _ERROR_TEXT_CAP:
-                raw = raw[:_ERROR_TEXT_CAP] + " …[truncated]"
+                raw = raw[:_ERROR_TEXT_CAP] + " \u2026[truncated]"
         duration_ms = int((time.monotonic() - started) * 1000)
+        if not is_error:
+            raw = self._redact(raw)  # redact BEFORE the spill decision (L8)
         text: str | None = raw
         blob: BlobRef | None = None
         if not is_error and len(raw.encode()) > INLINE_THRESHOLD:
@@ -181,7 +186,7 @@ class Dispatcher:
             raise ModelDispatchBlocked(denial)
         if not isinstance(effective, ProposedModelCall):
             # a hook rewrote model -> tool; fail closed rather than crash
-            raise ModelDispatchBlocked("rewrite changed action type — refused")
+            raise ModelDispatchBlocked("rewrite changed action type \u2014 refused")
         self.session.append(
             DispatchResolved(call_id=call.call_id, kind="model", model=effective.model)
         )

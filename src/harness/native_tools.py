@@ -641,6 +641,9 @@ def baseline_ruleset() -> RuleSet:
     layer so explicit user rules win)."""
     return RuleSet(
         rules=[
+            PermissionRule(action="allow", tool="model:*"),
+            PermissionRule(action="allow", tool="dispatch_agent"),
+            PermissionRule(action="allow", tool="todo"),
             PermissionRule(action="allow", tool="read_file"),
             PermissionRule(action="allow", tool="glob"),
             PermissionRule(action="allow", tool="grep"),
@@ -699,3 +702,18 @@ class CompoundCommandGuard:
         if any(tok in command for tok in _COMPOUND_TOKENS):
             return Ask(reason="compound bash command (chained/piped) -- review before running")
         return Allow()
+
+
+def register_native_tools(registry, *, workspace_root, read_state, emit) -> None:
+    """Register the seven Phase-8 natives into registry. Caller registers this BEFORE
+    apply_plugins so the plugin loader\u2019s loud collision check protects these names (R-S7):
+    natives win, a plugin tool of the same name fails the plugin load loudly."""
+    from harness.todo import TodoTool
+
+    registry.register(ReadFileTool(workspace_root=workspace_root, read_state=read_state))
+    registry.register(WriteFileTool(workspace_root=workspace_root, read_state=read_state))
+    registry.register(EditFileTool(workspace_root=workspace_root, read_state=read_state))
+    registry.register(GlobTool(workspace_root=workspace_root))
+    registry.register(GrepTool(workspace_root=workspace_root))
+    registry.register(BashTool(workspace_root=workspace_root))
+    registry.register(TodoTool(emit=emit))

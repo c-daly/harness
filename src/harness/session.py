@@ -3,11 +3,15 @@
 import asyncio
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from harness.blobs import BlobStore
 from harness.events import Envelope, Event, SessionStarted
 from harness.log import EventLogWriter
 from harness.types import ModelId, SessionId
+
+if TYPE_CHECKING:
+    from harness.redaction import EventRedactor
 
 
 class SubscriberBus:
@@ -40,6 +44,7 @@ class Session:
         parent: tuple[SessionId, int] | None = None,
         default_model: ModelId | None = None,
         start_seq: int = 0,
+        redactors: "list[EventRedactor] | None" = None,
     ) -> None:
         self.id = session_id
         self.base = base
@@ -50,6 +55,7 @@ class Session:
         self.bus = SubscriberBus()
         self._seq = start_seq
         self._closed = False
+        self._redactors: list = list(redactors or [])
 
     def start(self) -> Envelope:
         if self._seq != 0:
@@ -64,11 +70,13 @@ class Session:
         )
 
     def append(self, event: Event) -> Envelope:
+        for redactor in self._redactors:
+            event = redactor(event)  # frozen events: redactors must model_copy(update=...)
         # _seq advances before the write and is not rolled back on failure: a failed write leaves a gap, never a duplicate
         self._seq += 1
         envelope = Envelope(session_id=self.id, seq=self._seq, ts=time.time(), event=event)
-        self._writer.append(envelope)   # source of truth first
-        self.bus.publish(envelope)      # observers second; never blocking
+        self._writer.append(envelope)  # source of truth first
+        self.bus.publish(envelope)  # observers second; never blocking
         return envelope
 
     def close(self) -> None:
