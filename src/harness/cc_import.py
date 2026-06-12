@@ -629,7 +629,9 @@ def _normalize_tools(value) -> list[str]:
     if value is None:
         return []
     if isinstance(value, list):
-        return [str(v).strip() for v in value if str(v).strip()]
+        # YAML null elements (tools: [Read, ~]) would stringify to the noise
+        # token 'None' — filter them before coercion
+        return [str(v).strip() for v in value if v is not None and str(v).strip()]
     if isinstance(value, str):
         return [part.strip() for part in re.split(r"[,\s]+", value) if part.strip()]
     return [str(value).strip()]

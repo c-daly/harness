@@ -146,3 +146,23 @@ def _split(text):
     from harness.frontmatter import split_frontmatter
 
     return split_frontmatter(text)
+
+
+def test_scalar_bool_tools_degrades_without_crash():
+    # YAML coerces bare `tools: true` to a bool — must route through the drop
+    # path as an unknown token, never crash or emit a garbage AgentDef
+    conv = convert_agent(_agent({"name": "s", "description": "d", "tools": True}), catalog=CATALOG)
+    meta, _ = _split(conv.text)
+    assert "tools" not in meta
+    assert any(e.kind == "drop" for e in conv.report)
+    assert any(e.kind == "degraded" for e in conv.report)
+
+
+def test_yaml_null_in_tools_list_filtered_silently():
+    # tools: [Read, ~] — the null element must not become a noise token 'None'
+    conv = convert_agent(
+        _agent({"name": "s", "description": "d", "tools": ["Read", None]}), catalog=CATALOG
+    )
+    meta, _ = _split(conv.text)
+    assert meta["tools"] == ["read_file"]
+    assert not any("None" in e.detail for e in conv.report)
