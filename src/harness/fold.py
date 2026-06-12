@@ -15,6 +15,7 @@ from harness.events import (
     DispatchResolved,
     Envelope,
     ModelCallCompleted,
+    TodoListUpdated,
     ToolCallAborted,
     ToolCallCancelled,
     ToolCallCompleted,
@@ -40,6 +41,8 @@ class FoldedState:
     read_paths: set[str] = field(default_factory=set)
     # call_id -> file_path for in-flight read_file/write_file proposals
     _read_intents: dict[CallId, str] = field(default_factory=dict)
+    # native todo list: last-write-wins from TodoListUpdated events
+    todos: list[dict] = field(default_factory=list)
 
     def _append(self, seq: int, message: Message) -> None:
         self.messages.append(message)
@@ -92,6 +95,8 @@ def fold(envelopes: list[Envelope]) -> FoldedState:
             summary = Message.system_text(f"Summary of earlier conversation: {ev.summary}")
             state.messages = [summary, *kept_msgs]
             state._msg_seqs = [env.seq, *kept_seqs]
+        elif isinstance(ev, TodoListUpdated):
+            state.todos = [dict(item) for item in ev.items]
     return state
 
 

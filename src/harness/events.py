@@ -32,6 +32,7 @@ class _Event(BaseModel):
 
 # --- session lifecycle ---
 
+
 class SessionStarted(_Event):
     type: Literal["session_started"] = "session_started"
     parent_session_id: SessionId | None = None
@@ -46,6 +47,7 @@ class SessionEnded(_Event):
 class SessionResumed(_Event):
     """A new process lifetime reopened this session. Timeline renderers pair
     runs as SessionStarted|SessionResumed ... SessionEnded; the fold ignores it."""
+
     type: Literal["session_resumed"] = "session_resumed"
 
 
@@ -59,6 +61,7 @@ class UserInterrupt(_Event):
 
 
 # --- dispatch: intents ---
+
 
 class ToolCallProposed(_Event):
     type: Literal["tool_call_proposed"] = "tool_call_proposed"
@@ -94,6 +97,7 @@ class DispatchResolved(_Event):
 
 # --- dispatch: facts ---
 
+
 class ToolCallCompleted(_Event):
     type: Literal["tool_call_completed"] = "tool_call_completed"
     call_id: CallId
@@ -110,6 +114,7 @@ class ToolCallCancelled(_Event):
 
 class ToolCallAborted(_Event):
     """Synthesized on resume for a dangling intent; the fold never guesses outcomes."""
+
     type: Literal["tool_call_aborted"] = "tool_call_aborted"
     call_id: CallId
     reason: str
@@ -126,9 +131,11 @@ class ModelCallCompleted(_Event):
     call_id: CallId
     model: ModelId
     message: dict[str, Any]  # Message.model_dump(); assistant turn incl. tool-call blocks
-    usage: dict[str, int]    # input_tokens / output_tokens / cache_read_tokens / cache_write_tokens
+    usage: dict[str, int]  # input_tokens / output_tokens / cache_read_tokens / cache_write_tokens
     stop_reason: str = "unknown"  # end_turn | tool_use | max_tokens | unknown (additive, default keeps old logs valid)
-    pricing: dict[str, float] = Field(default_factory=dict)  # cost-per-token at call time; {} when unknown
+    pricing: dict[str, float] = Field(
+        default_factory=dict
+    )  # cost-per-token at call time; {} when unknown
     duration_ms: int = 0
 
 
@@ -138,6 +145,7 @@ class ModelCallCancelled(_Event):
 
 
 # --- permissions ---
+
 
 class PermissionRequested(_Event):
     type: Literal["permission_requested"] = "permission_requested"
@@ -154,6 +162,7 @@ class PermissionResolved(_Event):
 
 
 # --- subagents ---
+
 
 class SubagentSpawned(_Event):
     type: Literal["subagent_spawned"] = "subagent_spawned"
@@ -173,8 +182,10 @@ class SubagentFinished(_Event):
 
 # --- transcript transforms ---
 
+
 class CompactionApplied(_Event):
     """The full summary and exact replaced range are facts; a fold never re-summarizes."""
+
     type: Literal["compaction_applied"] = "compaction_applied"
     from_seq: int
     to_seq: int
@@ -183,6 +194,7 @@ class CompactionApplied(_Event):
 
 
 # --- outcomes ---
+
 
 class TaskOutcome(_Event):
     type: Literal["task_outcome"] = "task_outcome"
@@ -202,6 +214,7 @@ class SessionOutcome(_Event):
 
 # --- errors, retries, extensibility ---
 
+
 class ErrorRaised(_Event):
     type: Literal["error_raised"] = "error_raised"
     where: str
@@ -217,28 +230,56 @@ class RetryAttempted(_Event):
 
 class CustomEvent(_Event):
     """Plugin-emitted, namespaced. How anything becomes telemetry-visible."""
+
     type: Literal["custom"] = "custom"
     namespace: str
     name: str
     data: dict[str, Any]
 
 
+class TodoListUpdated(_Event):
+    """Whole-list replacement of the native todo state. Native (not a plugin CustomEvent):
+    todo is a first-class kernel tool, so it earns a typed event. Folded last-write-wins."""
+
+    type: Literal["todo_list_updated"] = "todo_list_updated"
+    items: list[dict[str, Any]]
+
+
 class UnknownEvent(_Event):
     """A type this binary doesn't know. Raw JSON retained; never dropped."""
+
     type: Literal["unknown"] = "unknown"
     raw: dict[str, Any]
 
 
 Event = Annotated[
     Union[
-        SessionStarted, SessionEnded, SessionResumed, UserMessage, UserInterrupt,
-        ToolCallProposed, ModelCallProposed, HookDecided, DispatchResolved,
-        ToolCallCompleted, ToolCallCancelled, ToolCallAborted,
-        ModelCallStarted, ModelCallCompleted, ModelCallCancelled,
-        PermissionRequested, PermissionResolved,
-        SubagentSpawned, SubagentFinished,
-        CompactionApplied, TaskOutcome, SessionOutcome,
-        ErrorRaised, RetryAttempted, CustomEvent,
+        SessionStarted,
+        SessionEnded,
+        SessionResumed,
+        UserMessage,
+        UserInterrupt,
+        ToolCallProposed,
+        ModelCallProposed,
+        HookDecided,
+        DispatchResolved,
+        ToolCallCompleted,
+        ToolCallCancelled,
+        ToolCallAborted,
+        ModelCallStarted,
+        ModelCallCompleted,
+        ModelCallCancelled,
+        PermissionRequested,
+        PermissionResolved,
+        SubagentSpawned,
+        SubagentFinished,
+        CompactionApplied,
+        TaskOutcome,
+        SessionOutcome,
+        ErrorRaised,
+        RetryAttempted,
+        CustomEvent,
+        TodoListUpdated,
         UnknownEvent,
     ],
     Field(discriminator="type"),
@@ -256,6 +297,7 @@ class Envelope(BaseModel):
 
 class _LaxEnvelope(BaseModel):
     """Fallback shape for preserve-and-skip parsing."""
+
     v: int = SCHEMA_VERSION
     session_id: SessionId
     seq: int
