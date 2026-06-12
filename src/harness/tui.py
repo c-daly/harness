@@ -158,10 +158,11 @@ class HarnessApp(App[None]):
         kernel = self.kernel
         # Subscribe the stats queue BEFORE loop.start() so SessionStarted is captured;
         # run_rollup KeyErrors on unknown session ids. On resumed sessions SessionStarted
-        # is past -- refresh_stats guards with try/except KeyError (v1: stats blank).
+        # is past -- refresh_stats guards with try/except KeyError (v1: stats blank);
+        # 4096 deep so a tool burst between ticks cannot drop SessionStarted.
         self._stats_conn = open_store_memory()
         self._stats_sub = TelemetrySubscriber(self._stats_conn)
-        self._stats_queue = self.kernel.session.bus.subscribe()
+        self._stats_queue = self.kernel.session.bus.subscribe(maxsize=4096)
         if kernel.mcp is not None:
             for warning in await kernel.mcp.start():
                 self.say("! ", warning)
@@ -207,7 +208,7 @@ class HarnessApp(App[None]):
         tc = rollup["tool_calls"]
         model = self.kernel.loop.model
         self.query_one("#stats", Static).update(
-            f"{model} | in {inp} out {out} | cost {cost_text} | tools {tc}"
+            _plain(f"{model} | in {inp} out {out} | cost {cost_text} | tools {tc}")
         )
 
     def _render_event(self, event) -> None:
