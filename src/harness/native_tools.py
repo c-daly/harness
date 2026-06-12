@@ -33,6 +33,10 @@ class ReadState:
     Seeded from fold(envelopes).read_paths at build_kernel so the gate survives resume."""
 
     def __init__(self, paths: set[str] | None = None) -> None:
+        # WARNING: paths must already be canonical. fold.read_paths is as-recorded,
+        # canonical only when WorkspaceGuard ran; resume seeding MUST resolve each
+        # against the workspace root (resolve_in_workspace) and silently drop
+        # unresolvable ones before passing them here (wiring: Task 8).
         self._paths = set(paths or ())
 
     def mark(self, path: str) -> None:
@@ -42,6 +46,7 @@ class ReadState:
         return path in self._paths
 
 
+# asyncio.Lock is not loop-bound since Python 3.10; safe to cache across event-loop instances.
 _PATH_LOCKS: "weakref.WeakValueDictionary[str, asyncio.Lock]" = weakref.WeakValueDictionary()
 
 
@@ -189,9 +194,9 @@ class WriteFileTool:
         prev_lines = (
             len(path.read_text(encoding="utf-8", errors="replace").splitlines()) if existed else 0
         )
+        tmp = path.with_name(path.name + _WRITE_TMP_SUFFIX)
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = path.with_name(path.name + _WRITE_TMP_SUFFIX)
             tmp.write_text(content, encoding="utf-8")
             tmp.replace(path)  # atomic
         except OSError as exc:
@@ -199,6 +204,8 @@ class WriteFileTool:
                 f"could not write {path}: {exc.strerror or exc}. Check that the path is writable "
                 f"and that the filesystem is not full."
             ) from exc
+        finally:
+            tmp.unlink(missing_ok=True)  # no-op after a successful replace; cleans leaks on failure
         self._rs.mark(str(path))  # a write counts as a read for chained edits
         n = len(content.splitlines())
         if existed:
@@ -265,19 +272,23 @@ class EditFileTool:
                 f"lines to make it unique, or pass replace_all: true to change every occurrence."
             )
         updated = text.replace(old, new) if replace_all else text.replace(old, new, 1)
+        tmp = path.with_name(path.name + _WRITE_TMP_SUFFIX)
         try:
-            tmp = path.with_name(path.name + _WRITE_TMP_SUFFIX)
             tmp.write_text(updated, encoding="utf-8")
             tmp.replace(path)
         except OSError as exc:
             raise ToolError(
                 f"could not write {path}: {exc.strerror or exc}. Check that the path is writable."
             ) from exc
+        finally:
+            tmp.unlink(missing_ok=True)  # no-op after a successful replace; cleans leaks on failure
         self._rs.mark(str(path))
         return f"Edited {path}. Snippet of the result:\n{self._snippet(updated, new)}"
 
     def _snippet(self, text: str, needle: str) -> str:
         lines = text.split("\n")
+        # needle is guaranteed present (we just replaced old->new), so the 0 fallback
+        # is unreachable by construction; it only satisfies the default-value argument.
         idx = next((i for i, ln in enumerate(lines) if needle.split("\n")[0] in ln), 0)
         lo = max(0, idx - _EDIT_SNIPPET_CONTEXT)
         hi = min(len(lines), idx + _EDIT_SNIPPET_CONTEXT + 1)

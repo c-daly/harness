@@ -33,7 +33,10 @@ class FoldedState:
     last_seq: int = 0
     # seq -> index range bookkeeping for compaction
     _msg_seqs: list[int] = field(default_factory=list)
-    # canonical paths read or written successfully this session (read-before-edit gate, R-C1)
+    # paths read or written successfully this session (read-before-edit gate, R-C1).
+    # NOTE: these are as-recorded path strings, canonical ONLY when WorkspaceGuard ran.
+    # Resume seeding MUST resolve each against the workspace root (resolve_in_workspace)
+    # and silently drop unresolvable ones before constructing ReadState (wiring: Task 8).
     read_paths: set[str] = field(default_factory=set)
     # call_id -> file_path for in-flight read_file/write_file proposals
     _read_intents: dict[CallId, str] = field(default_factory=dict)

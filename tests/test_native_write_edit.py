@@ -1,6 +1,7 @@
 """write_file + edit_file: create/overwrite gate, edit uniqueness, per-path lock."""
 
 import asyncio
+from pathlib import Path
 
 import pytest
 
@@ -112,15 +113,39 @@ async def test_edit_identical_strings_rejected(tmp_path):
 
 async def test_concurrent_edits_serialize_per_path(tmp_path):
     rs = _rs()
-    (tmp_path / "c.txt").write_text("0")
+    (tmp_path / "c.txt").write_text("v0")
     await ReadFileTool(workspace_root=tmp_path, read_state=rs)({"file_path": "c.txt"})
     tool = EditFileTool(workspace_root=tmp_path, read_state=rs)
-    # two edits that each depend on the previous value; serialized -> deterministic
-    await tool({"file_path": "c.txt", "old_string": "0", "new_string": "01"})
-    await asyncio.gather(
-        tool({"file_path": "c.txt", "old_string": "01", "new_string": "012"}),
+    # Two competing edits on the SAME path, launched together. Edit B (v1->v2) can only
+    # succeed if edit A (v0->v1) has already committed; if the per-path lock failed to
+    # serialize them, B would see "v0", find no "v1", and raise. gather preserves start
+    # order, so A acquires the lock first; the deterministic result is "v2" with neither
+    # call raising.
+    results = await asyncio.gather(
+        tool({"file_path": "c.txt", "old_string": "v0", "new_string": "v1"}),
+        tool({"file_path": "c.txt", "old_string": "v1", "new_string": "v2"}),
     )
-    assert (tmp_path / "c.txt").read_text() == "012"
+    assert all("Edited" in r for r in results)
+    assert (tmp_path / "c.txt").read_text() == "v2"
+
+
+async def test_failed_replace_leaves_no_tmp(tmp_path, monkeypatch):
+    rs = _rs()
+    real_replace = Path.replace
+
+    def boom(self, target):
+        # Fail only the atomic rename onto the real target, not unrelated replaces.
+        if str(self).endswith(".harness.tmp"):
+            raise OSError("simulated rename failure")
+        return real_replace(self, target)
+
+    monkeypatch.setattr(Path, "replace", boom)
+    with pytest.raises(ToolError):
+        await WriteFileTool(workspace_root=tmp_path, read_state=rs)(
+            {"file_path": "doomed.txt", "content": "data"}
+        )
+    # the .harness.tmp file the write created must not survive the failed replace
+    assert list(tmp_path.glob("*.harness.tmp")) == []
 
 
 async def test_edit_returns_snippet(tmp_path):
