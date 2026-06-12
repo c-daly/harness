@@ -608,6 +608,64 @@ def _mcp_subcommand(argv: list[str]) -> None:
         raise SystemExit(str(exc)) from exc
 
 
+def _import_subcommand(argv: list[str]) -> None:
+    from harness.cc_import import (
+        CcImportError,
+        _default_catalog,
+        convert_plugin,
+        eject_plugin,
+    )
+
+    parser = argparse.ArgumentParser(prog="harness import")
+    parser.add_argument("path", help="Local CC plugin root, OR a target dir with --eject")
+    parser.add_argument(
+        "--out", type=Path, default=None, help="Output dir (default: ./<plugin-name>)"
+    )
+    parser.add_argument(
+        "--eject",
+        action="store_true",
+        help="Flip an imported plugin (the path arg) to owned; re-import then refused",
+    )
+    parser.add_argument("--force", action="store_true", help="Overwrite a non-generated output dir")
+    args = parser.parse_args(argv)
+
+    if args.eject:
+        try:
+            eject_plugin(Path(args.path))
+        except CcImportError as exc:
+            raise SystemExit(str(exc)) from exc
+        print(f"ejected {args.path} (re-import now refused; use --force to override)")
+        return
+
+    if args.path.startswith(("http://", "https://", "git@", "ssh://")):
+        raise SystemExit(
+            "importing from a git URL is not supported in v1; run `git clone <url>` first and"
+            " point `harness import` at the cloned plugin root"
+        )
+
+    src = Path(args.path)
+    from harness.cc_import import read_cc_plugin
+
+    try:
+        cc = read_cc_plugin(src)
+    except CcImportError as exc:
+        raise SystemExit(str(exc)) from exc
+    out = args.out or (Path.cwd() / _sanitize_for_out(cc.name))
+    try:
+        result = convert_plugin(src, out=out, catalog=_default_catalog(), force=args.force)
+    except CcImportError as exc:
+        raise SystemExit(str(exc)) from exc
+    action = "re-imported (overwrote generated output)" if result.overwritten else "imported"
+    print(f"{action} {cc.name} -> {result.out}")
+    print(f"report: {result.report_path}")
+
+
+def _sanitize_for_out(name: str) -> str:
+    from harness.cc_import import _sanitize_name
+
+    return _sanitize_name(name)
+
+
 def main() -> None:
     argv = sys.argv[1:]
     if argv and argv[0] in ("stats", "compare", "outcome"):
@@ -615,5 +673,8 @@ def main() -> None:
         return
     if argv and argv[0] == "mcp":
         _mcp_subcommand(argv[1:])
+        return
+    if argv and argv[0] == "import":
+        _import_subcommand(argv[1:])
         return
     _run_main()

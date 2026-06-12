@@ -589,3 +589,31 @@ def test_no_plugins_flag_and_plugin_dir(tmp_path, monkeypatch):
     kernel2 = captured_kernel2["kernel"]
     names2 = {str(s.name) for s in kernel2.registry.specs()}
     assert "invoke_skill" not in names2
+
+
+def test_import_cli_emits_plugin_and_report(tmp_path, monkeypatch, capsys):
+    import json
+    from harness.cli import main
+
+    cc = tmp_path / "cc"
+    (cc / ".claude-plugin").mkdir(parents=True)
+    (cc / ".claude-plugin" / "plugin.json").write_text(
+        json.dumps({"name": "demo", "version": "1.0.0", "description": "d"})
+    )
+    (cc / "skills" / "a").mkdir(parents=True)
+    (cc / "skills" / "a" / "SKILL.md").write_text("---\nname: a\ndescription: d\n---\nx\n")
+    out = tmp_path / "out"
+    monkeypatch.setattr("sys.argv", ["harness", "import", str(cc), "--out", str(out)])
+    main()
+    assert (out / "plugin.toml").is_file()
+    assert (out / "IMPORT-REPORT.md").is_file()
+
+
+def test_import_cli_url_is_teaching_error(tmp_path, monkeypatch):
+    import pytest
+    from harness.cli import main
+
+    monkeypatch.setattr("sys.argv", ["harness", "import", "https://github.com/x/y"])
+    with pytest.raises(SystemExit) as exc:
+        main()
+    assert "git clone" in str(exc.value)

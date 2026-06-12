@@ -13,17 +13,19 @@ from disk; the converters (added in later tasks) are pure functions over that mo
 
 import json
 import re
+import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
 import yaml
 
-from harness.frontmatter import FrontmatterError, split_frontmatter
-from harness.parity import CC_TOOL_MAP, NO_NATIVE_PARITY
 from harness.catalog import Catalog, UnknownAliasError
+from harness.frontmatter import FrontmatterError, split_frontmatter
 from harness.mcp_import import McpImportError, convert_mcp_json
+from harness.parity import CC_TOOL_MAP, NO_NATIVE_PARITY
 from harness.permissions import _toml_str
+from harness.plugins import PluginError, load_plugins
 
 # Recognized primitive subdirs and metadata locations.
 _FOREIGN_HARNESS = {".opencode", ".codex-plugin"}
@@ -503,10 +505,11 @@ def _sanitize_name(name: str) -> str:
 
 
 def convert_skill(raw: "RawDef") -> ConvertedDef:
-    source = f"skills/{raw.name}.md"
-    name = _sanitize_name(str(raw.meta.get("name", raw.name)))
+    relpath_name = _sanitize_name(raw.name)  # output filename: use the CC dir name
+    source = f"skills/{relpath_name}.md"
+    name = _sanitize_name(str(raw.meta.get("name", raw.name)))  # metadata name: from frontmatter
     report: list[ReportEntry] = []
-    if name != raw.name:
+    if name != _sanitize_name(raw.name):
         report.append(
             ReportEntry(
                 kind="meta",
@@ -526,7 +529,7 @@ def convert_skill(raw: "RawDef") -> ConvertedDef:
     report += prose_report
     degraded = any(e.kind == "degraded" for e in report)
     return ConvertedDef(
-        relpath=f"skills/{name}.md",
+        relpath=f"skills/{relpath_name}.md",
         text=_emit_frontmatter(meta, body),
         report=tuple(report),
         assets=tuple(copies),
@@ -1006,3 +1009,155 @@ def eject_marker(plugin_toml: Path) -> None:
     text = plugin_toml.read_text(encoding="utf-8")
     kept = [ln for ln in text.splitlines() if ln.strip() != _GENERATED_MARKER]
     plugin_toml.write_text("\n".join(kept) + "\n", encoding="utf-8")
+
+
+@dataclass
+class ImportResult:
+    out: Path
+    report_path: Path
+    report: tuple[ReportEntry, ...]
+    overwritten: bool = False
+
+
+def _collect(cc: CcPlugin, *, catalog: Catalog):
+    """Run every converter. Returns (files relpath->text, asset copies, all report entries,
+    mcp_toml)."""
+    files: dict[str, str] = {}
+    copies: list[tuple[Path, str]] = []
+    report: list[ReportEntry] = []
+    all_defs: list[ConvertedDef] = []
+    for raw in cc.skills:
+        conv = convert_skill(raw)
+        all_defs.append(conv)
+        copies += list(conv.assets)
+        report += list(conv.report)
+    for raw in cc.commands:
+        conv = convert_command(raw)
+        all_defs.append(conv)
+        report += list(conv.report)
+    for raw in cc.agents:
+        conv = convert_agent(raw, catalog=catalog)
+        all_defs.append(conv)
+        report += list(conv.report)
+    collision_entries = detect_relpath_collisions(all_defs)
+    report += collision_entries
+    collision_relpaths = {e.artifact for e in collision_entries}
+    seen_relpaths: set[str] = set()
+    for d in all_defs:
+        if d.relpath in collision_relpaths and d.relpath in seen_relpaths:
+            continue
+        files[d.relpath] = d.text
+        seen_relpaths.add(d.relpath)
+    mcp = convert_mcp(cc.mcp_json_text)
+    report += list(mcp.report)
+    report += list(flag_hooks(cc.hooks_json_text))
+    report += list(skip_report(cc.skips))
+    return files, copies, report, mcp.toml
+
+
+def _write_tree(dest: Path, *, cc: CcPlugin, files, copies, mcp_toml, report, generated: bool):
+    dest.mkdir(parents=True, exist_ok=True)
+    name = _sanitize_name(cc.name)
+    (dest / "plugin.toml").write_text(
+        emit_plugin_toml(
+            name=name,
+            version=cc.version,
+            description=cc.description,
+            source=str(cc.root),
+            author=cc.author,
+            homepage=cc.homepage,
+            repository=cc.repository,
+            license=cc.license,
+            keywords=cc.keywords,
+            mcp_toml=mcp_toml,
+            generated=generated,
+        )
+    )
+    for rel, text in files.items():
+        path = dest / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+    for src, rel in copies:
+        path = dest / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(src, path)
+    (dest / "IMPORT-REPORT.md").write_text(
+        build_report(report, plugin_name=name, source=str(cc.root))
+    )
+
+
+def convert_plugin(
+    root: Path, *, out: Path, catalog: Catalog, force: bool = False
+) -> "ImportResult":
+    """Read a CC plugin, convert it, validate-by-loading into a temp dir, then atomically
+    publish to *out*. Refuses a non-generated existing target unless force (L10/L12). Emits
+    nothing if the result would not load (L13)."""
+    out = Path(out)
+    cc = read_cc_plugin(root)
+    overwritten = False
+    if out.exists() and any(out.iterdir()):
+        marker = out / "plugin.toml"
+        if has_generated_marker(marker):
+            overwritten = True
+        elif not force:
+            raise CcImportError(
+                f"{out} already exists and was not generated by harness import (no"
+                f" generated marker); refusing to overwrite hand-edited output. Re-run with"
+                f" --force to replace it, or choose a different --out."
+            )
+        else:
+            overwritten = True
+
+    files, copies, report, mcp_toml = _collect(cc, catalog=catalog)
+
+    staging = out.parent / f".{out.name}.import-tmp"
+    if staging.exists():
+        shutil.rmtree(staging)
+    plugin_staging = staging / out.name
+    _write_tree(
+        plugin_staging,
+        cc=cc,
+        files=files,
+        copies=copies,
+        mcp_toml=mcp_toml,
+        report=report,
+        generated=True,
+    )
+    try:
+        load_plugins([staging])
+    except PluginError as exc:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise CcImportError(
+            f"the converted plugin would not load: {exc}. Nothing was written. This is a"
+            f" converter bug or an un-importable source; see IMPORT-REPORT for degradations."
+        ) from exc
+
+    if out.exists():
+        shutil.rmtree(out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    plugin_staging.rename(out)
+    shutil.rmtree(staging, ignore_errors=True)
+    return ImportResult(
+        out=out, report_path=out / "IMPORT-REPORT.md", report=tuple(report), overwritten=overwritten
+    )
+
+
+def eject_plugin(target: Path) -> None:
+    """Flip an imported plugin to owned source so re-import is refused (L10)."""
+    target = Path(target)
+    marker = target / "plugin.toml"
+    if not marker.is_file():
+        raise CcImportError(f"{target} has no plugin.toml; not an imported plugin")
+    if not has_generated_marker(marker):
+        raise CcImportError(f"{target} is already owned (no generated marker); nothing to eject")
+    eject_marker(marker)
+
+
+def _default_catalog() -> Catalog:
+    """Load the shipped catalog if present; else an empty catalog (model aliases then drop)."""
+    from pathlib import Path as _P
+
+    candidate = _P.cwd() / "catalog.toml"
+    if candidate.is_file():
+        return Catalog.load(candidate)
+    return Catalog(entries={})
