@@ -22,6 +22,8 @@ import yaml
 from harness.frontmatter import FrontmatterError, split_frontmatter
 from harness.parity import CC_TOOL_MAP, NO_NATIVE_PARITY
 from harness.catalog import Catalog, UnknownAliasError
+from harness.mcp_import import McpImportError, convert_mcp_json
+from harness.permissions import _toml_str
 
 # Recognized primitive subdirs and metadata locations.
 _FOREIGN_HARNESS = {".opencode", ".codex-plugin"}
@@ -759,3 +761,61 @@ def convert_agent(raw: "RawDef", *, catalog: Catalog) -> ConvertedDef:
         report=tuple(report),
         degraded=degraded,
     )
+
+
+@dataclass(frozen=True)
+class ConvertedMcp:
+    toml: str  # [mcp.servers.*] lines (empty string if no servers), or "" if no .mcp.json
+    report: tuple[ReportEntry, ...] = ()
+
+
+def _rewrite_plugin_root(value: str) -> str:
+    return value.replace("${CLAUDE_PLUGIN_ROOT}", "${PLUGIN_ROOT}")
+
+
+def convert_mcp(text: str | None) -> ConvertedMcp:
+    """Convert a CC .mcp.json into [mcp.servers.*] TOML. Reuses convert_mcp_json verbatim
+    (refusals, no-secret-echo); rewrites ${CLAUDE_PLUGIN_ROOT} -> ${PLUGIN_ROOT} first."""
+    if text is None:
+        return ConvertedMcp(toml="", report=())
+    try:
+        specs, warnings = convert_mcp_json(text)
+    except McpImportError as exc:
+        # a document-level .mcp.json problem is non-fatal to the whole import: skip MCP,
+        # report it (the rest of the plugin still converts).
+        return ConvertedMcp(
+            toml="",
+            report=(
+                ReportEntry(
+                    kind="mcp", artifact=".mcp.json", detail=f".mcp.json not converted: {exc}"
+                ),
+            ),
+        )
+    report = tuple(ReportEntry(kind="mcp", artifact=".mcp.json", detail=w) for w in warnings)
+    if not specs:
+        return ConvertedMcp(toml="", report=report)
+    lines: list[str] = []
+    for spec in sorted(specs, key=lambda s: s.name):
+        lines.append(f"[mcp.servers.{spec.name}]")
+        if spec.command is not None:
+            lines.append(f"command = {_toml_str(_rewrite_plugin_root(spec.command))}")
+        if spec.args:
+            joined = ", ".join(_toml_str(_rewrite_plugin_root(a)) for a in spec.args)
+            lines.append(f"args = [{joined}]")
+        if spec.cwd is not None:
+            lines.append(f"cwd = {_toml_str(_rewrite_plugin_root(spec.cwd))}")
+        if spec.url is not None:
+            lines.append(f"url = {_toml_str(spec.url)}")
+        if spec.restart != "on_failure":
+            lines.append(f"restart = {_toml_str(spec.restart)}")
+        if spec.tool_timeout_s != 60.0:
+            lines.append(f"tool_timeout_s = {spec.tool_timeout_s}")
+        if spec.env:
+            lines.append(f"[mcp.servers.{spec.name}.env]")
+            for key, var in sorted(spec.env.items()):
+                lines.append(f"{_toml_str(key)} = {_toml_str(var)}")
+        if spec.headers:
+            lines.append(f"[mcp.servers.{spec.name}.headers]")
+            for key, var in sorted(spec.headers.items()):
+                lines.append(f"{_toml_str(key)} = {_toml_str(var)}")
+    return ConvertedMcp(toml="\n".join(lines) + "\n", report=report)
