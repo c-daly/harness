@@ -151,3 +151,15 @@ async def test_glob_toctou_deleted_file_does_not_crash(tmp_path, monkeypatch):
     monkeypatch.setattr(nt, "_walk_workspace", fake_walk)
     out = await GlobTool(workspace_root=tmp_path)({"pattern": "*.py"})
     assert str(real) in out
+
+
+async def test_glob_missing_pattern_teaches(tmp_path):
+    with pytest.raises(ToolError) as exc:
+        await GlobTool(workspace_root=tmp_path)({"path": "."})
+    assert "pattern is required" in str(exc.value)
+
+
+async def test_grep_missing_pattern_teaches(tmp_path):
+    with pytest.raises(ToolError) as exc:
+        await GrepTool(workspace_root=tmp_path)({"path": "."})
+    assert "pattern is required" in str(exc.value)

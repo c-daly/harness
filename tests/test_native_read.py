@@ -93,3 +93,18 @@ async def test_permission_error_becomes_tool_error(tmp_path):
         assert "permission" in str(exc.value).lower()
     finally:
         secret.chmod(0o644)
+
+
+async def test_read_rejects_bad_offset_and_limit(tmp_path):
+    f = tmp_path / "x.txt"
+    f.write_text("a\nb\nc\n", encoding="utf-8")
+    tool = _tool(tmp_path)
+    with pytest.raises(ToolError) as exc:
+        await tool({"file_path": "x.txt", "offset": "abc"})
+    assert "positive integers" in str(exc.value)
+    with pytest.raises(ToolError) as exc:
+        await tool({"file_path": "x.txt", "offset": -1})
+    assert ">= 1" in str(exc.value)
+    with pytest.raises(ToolError) as exc:
+        await tool({"file_path": "x.txt", "limit": 0})
+    assert ">= 1" in str(exc.value)

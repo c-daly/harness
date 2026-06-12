@@ -106,9 +106,23 @@ class ReadFileTool:
 
     async def __call__(self, args: dict[str, Any]) -> str:
         path = _resolve(self._root, args.get("file_path", ""))
-        offset = int(args["offset"]) if args.get("offset") else 1
-        limit = int(args["limit"]) if args.get("limit") else _READ_DEFAULT_LIMIT
-        windowed = bool(args.get("offset") or args.get("limit"))
+        try:
+            # presence-based, not truthiness: 0 must be rejected below, not
+            # silently swapped for the default
+            raw_offset = args.get("offset")
+            raw_limit = args.get("limit")
+            offset = int(raw_offset) if raw_offset is not None else 1
+            limit = int(raw_limit) if raw_limit is not None else _READ_DEFAULT_LIMIT
+        except (TypeError, ValueError):
+            raise ToolError(
+                "offset and limit must be positive integers. Omit them to read from the start."
+            ) from None
+        if offset < 1 or limit < 1:
+            raise ToolError(
+                "offset and limit must be >= 1 (line numbers are 1-based). "
+                "Omit them to read from the start."
+            )
+        windowed = raw_offset is not None or raw_limit is not None
         result = await asyncio.to_thread(self._read, path, offset, limit, windowed)
         if self._rs is not None:
             self._rs.mark(str(path))
@@ -364,8 +378,11 @@ class GlobTool:
         )
 
     async def __call__(self, args: dict[str, Any]) -> str:
+        pattern = str(args.get("pattern", ""))
+        if not pattern:
+            raise ToolError("pattern is required; pass a glob pattern like '*.py'.")
         base = _resolve(self._root, args["path"]) if args.get("path") else self._root.resolve()
-        return await asyncio.to_thread(self._glob, base, str(args["pattern"]))
+        return await asyncio.to_thread(self._glob, base, pattern)
 
     def _glob(self, base: Path, pattern: str) -> str:
         if not base.exists():
@@ -416,6 +433,8 @@ class GrepTool:
         )
 
     async def __call__(self, args: dict[str, Any]) -> str:
+        if not str(args.get("pattern", "")):
+            raise ToolError("pattern is required; pass a Python regular expression.")
         base = _resolve(self._root, args["path"]) if args.get("path") else self._root.resolve()
         return await asyncio.to_thread(self._grep, base, args)
 
