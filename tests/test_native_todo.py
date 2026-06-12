@@ -68,6 +68,27 @@ async def test_missing_content_raises(tmp_path):
     assert "content" in str(exc.value)
 
 
+async def test_empty_content_rejected(tmp_path):
+    tool, emitted = _tool()
+    with pytest.raises(ToolError) as exc:
+        await tool({"todos": [{"content": "", "status": "pending"}]})
+    assert "todos[0].content" in str(exc.value)
+    assert emitted == []
+    with pytest.raises(ToolError) as exc:
+        await tool({"todos": [{"content": "   ", "status": "pending"}]})
+    assert "todos[0].content" in str(exc.value)
+    assert emitted == []
+
+
+async def test_oversize_list_rejected(tmp_path):
+    tool, emitted = _tool()
+    big = [{"content": f"task {i}", "status": "pending"} for i in range(201)]
+    with pytest.raises(ToolError) as exc:
+        await tool({"todos": big})
+    assert "too large" in str(exc.value)
+    assert emitted == []
+
+
 def test_spec_name():
     tool, _ = _tool()
     assert tool.spec.name == ToolName("todo")

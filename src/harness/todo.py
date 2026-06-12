@@ -14,6 +14,7 @@ from harness.types import ToolName
 
 _STATUSES = ("pending", "in_progress", "completed")
 _GLYPH = {"pending": "[ ]", "in_progress": "[>]", "completed": "[x]"}
+_TODO_MAX_ITEMS = 200
 
 
 class TodoTool:
@@ -31,6 +32,7 @@ class TodoTool:
                 "properties": {
                     "todos": {
                         "type": "array",
+                        "maxItems": _TODO_MAX_ITEMS,
                         "items": {
                             "type": "object",
                             "properties": {
@@ -49,13 +51,21 @@ class TodoTool:
         raw = args.get("todos")
         if not isinstance(raw, list):
             raise ToolError("todos must be a list of {content, status} objects.")
+        if len(raw) > _TODO_MAX_ITEMS:
+            raise ToolError(
+                f"todos list too large (max {_TODO_MAX_ITEMS} items); send the active "
+                "working set, not an archive."
+            )
         items: list[dict[str, Any]] = []
         for i, item in enumerate(raw):
             if not isinstance(item, dict) or "content" not in item:
                 raise ToolError(f"todos[{i}].content is required.")
+            if not str(item["content"]).strip():
+                raise ToolError(f"todos[{i}].content must be non-empty.")
             status = item.get("status")
             if status not in _STATUSES:
                 raise ToolError(f"todos[{i}].status must be one of {_STATUSES} (got {status!r}).")
+            # extra keys are deliberately dropped -- stored todo state carries only content+status
             items.append({"content": str(item["content"]), "status": status})
         self._emit(TodoListUpdated(items=items))
         return self._render(items)
