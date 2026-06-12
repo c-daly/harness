@@ -44,3 +44,16 @@ def test_inventory_hook_injects_listing():
     assert isinstance(inject, Inject)
     assert "invoke_skill" in inject.text
     assert "remembering" in inject.text and "When to write memories" in inject.text
+
+
+def test_inventory_hook_empty_skillset_returns_nothing():
+    hook = skills_inventory_hook(SkillSet())
+    assert hook({"session_id": "x"}) == []
+
+
+async def test_invoke_skill_missing_name_key():
+    # a missing "name" key takes the same errors-as-values path as an unknown name
+    tool = InvokeSkillTool(make_skills())
+    result = await tool({})
+    assert "unknown skill" in result
+    assert "remembering" in result

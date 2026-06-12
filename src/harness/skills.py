@@ -3,6 +3,8 @@
 invoke_skill returns the skill body into the transcript (the model reads it
 as a tool result — the dispatcher's blob spill applies to huge skills)."""
 
+from typing import Any
+
 from harness.frontmatter import SkillDef
 from harness.hooks import Inject
 from harness.tools import ToolSpec
@@ -36,7 +38,7 @@ class InvokeSkillTool:
         )
         self._skills = skills
 
-    async def __call__(self, args: dict) -> str:
+    async def __call__(self, args: dict[str, Any]) -> str:
         skill = self._skills.get(str(args.get("name", "")))
         if skill is None:
             available = ", ".join(s.name for s in self._skills.all()) or "(none)"
@@ -49,6 +51,8 @@ def skills_inventory_hook(skills: SkillSet):
     wiring when any skills exist — mirrors mcp-instructions)."""
 
     def hook(ctx) -> list[Inject]:
+        if not skills.all():
+            return []
         lines = "\n".join(f"- {s.name}: {s.description}" for s in skills.all())
         return [Inject(text=f"## Skills (load with invoke_skill)\n\n{lines}")]
 
