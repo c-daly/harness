@@ -63,6 +63,12 @@ def test_empty_and_nul_rejected(tmp_path):
         resolve_in_workspace(root, "a\x00b")
 
 
+def test_whitespace_only_rejected(tmp_path):
+    root = tmp_path
+    with pytest.raises(WorkspaceError):
+        resolve_in_workspace(root, "   ")
+
+
 async def test_guard_rewrites_path_arg_to_canonical(tmp_path):
     root = tmp_path / "proj"
     root.mkdir()
@@ -89,3 +95,27 @@ async def test_guard_blocks_escape_and_ignores_non_path_tools(tmp_path):
     # model calls -> Allow
     model = ProposedModelCall(call_id=CallId("c4"), model=ModelId("m"))
     assert isinstance(await guard(model), Allow)
+
+
+async def test_guard_blocks_non_string_path_arg(tmp_path):
+    root = tmp_path / "proj"
+    root.mkdir()
+    guard = WorkspaceGuard(root)
+    call = ProposedToolCall(
+        call_id=CallId("c5"), tool=ToolName("read_file"), args={"file_path": 42}
+    )
+    decision = await guard(call)
+    assert isinstance(decision, Block)
+    assert "must be a string" in decision.reason
+
+
+async def test_guard_allows_already_canonical_path(tmp_path):
+    root = tmp_path / "proj"
+    root.mkdir()
+    guard = WorkspaceGuard(root)
+    canonical = str((root / "a.txt").resolve())
+    call = ProposedToolCall(
+        call_id=CallId("c6"), tool=ToolName("read_file"), args={"file_path": canonical}
+    )
+    decision = await guard(call)
+    assert isinstance(decision, Allow)
