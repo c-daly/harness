@@ -1,0 +1,19 @@
+[plugin]
+name = "memory"
+version = "0.1.0"
+description = "Durable observation memory (golden reference plugin)"
+
+[hooks]
+module = "hooks.py"
+
+[[hooks.lifecycle]]
+name = "brief"
+function = "session_brief"
+point = "session_start"
+
+[mcp.servers.memory]
+command = "python3"
+args = ["${PLUGIN_ROOT}/server.py"]
+
+[emitters]
+namespaces = ["memory"]
