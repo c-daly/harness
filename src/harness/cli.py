@@ -72,7 +72,7 @@ def build_kernel(
         transcript = None
     if native_tools:
         from harness.fold import fold
-        from harness.log import read_session
+        from harness.log import TornLogError, read_session
         from harness.native_tools import (
             CompoundCommandGuard,
             ReadState,
@@ -80,13 +80,17 @@ def build_kernel(
             register_native_tools,
         )
         from harness.permissions import PermissionEngine as _PermissionEngine
-        from harness.redaction import identity_redact  # noqa: F401
         from harness.workspace import WorkspaceGuard, resolve_in_workspace
 
         ws_root = (workspace_root or Path.cwd()).resolve()
         seed: set[str] = set()
         if resume_session_id is not None:
-            raw_paths = fold(list(read_session(base_dir, resume_session_id))).read_paths
+            try:
+                raw_paths = fold(list(read_session(base_dir, resume_session_id))).read_paths
+            except (TornLogError, OSError):
+                # seeding is best-effort; a torn log seeds empty rather than blocking the
+                # kernel (resume repair is the loop’s job)
+                raw_paths = set()
             for p in raw_paths:
                 try:
                     resolved = resolve_in_workspace(ws_root, p)
@@ -102,9 +106,16 @@ def build_kernel(
         )
         if permissions is None:
             permissions = _PermissionEngine([baseline_ruleset()])
+            permissions._baseline_installed = True
+            # hooks is a fresh HookBus() per build_kernel call (callers do not pass one),
+            # so cross-call double registration on the bus is impossible; the shared
+            # engine object is what accumulates, hence the sentinel flag below.
             hooks.register_dispatch(permissions.name, permissions, priority=permissions.priority)
-        else:
+        elif not getattr(permissions, "_baseline_installed", False):
+            # a caller-supplied engine may be reused across rebuilds (TUI); install the
+            # baseline layer exactly once so it does not accumulate per call
             permissions.layers.append(baseline_ruleset())
+            permissions._baseline_installed = True
         hooks.register_dispatch("workspace-guard", WorkspaceGuard(ws_root), priority=900)
         hooks.register_dispatch("bash-compound-guard", CompoundCommandGuard(), priority=950)
     agents_sink: dict = {}

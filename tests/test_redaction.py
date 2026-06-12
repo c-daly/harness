@@ -23,7 +23,10 @@ async def test_dispatcher_redact_runs_before_spill(tmp_path):
     reg = ToolRegistry()
     reg.register(Leaky())
     disp = Dispatcher(
-        session=session, registry=reg, hooks=HookBus(), resolver=HeadlessResolver(),
+        session=session,
+        registry=reg,
+        hooks=HookBus(),
+        resolver=HeadlessResolver(),
         redact=lambda s: s.replace("SECRET123", "[REDACTED]"),
     )
     out = await disp.dispatch_tool(
@@ -51,12 +54,14 @@ async def test_session_redactor_rewrites_event_at_append(tmp_path):
         if isinstance(event, ToolCallCompleted) and event.result_text:
             return event.model_copy(update={"result_text": event.result_text.replace("X", "#")})
         return event
+
     session = Session(tmp_path, SessionId("s3"), redactors=[mask])
     session.start()
     session.append(ToolCallCompleted(call_id=CallId("c1"), result_text="XYZ", is_error=False))
     session.close()
     completed = [
-        e.event for e in read_session(tmp_path, SessionId("s3"))
+        e.event
+        for e in read_session(tmp_path, SessionId("s3"))
         if isinstance(e.event, ToolCallCompleted)
     ]
     assert completed[0].result_text == "#YZ"

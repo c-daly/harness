@@ -5,6 +5,10 @@ Scrub story (documented cost): a redacted log loses byte-exact replay of redacte
 results — the folded model transcript contains the masked text, not the original. Redaction
 runs BEFORE blob-spill (blobs are content-addressed/immutable, so redact-before-put is the only
 sound order) and at Session.append (the event-write choke point covering log AND live UI).
+
+Contract: redactors MUST NOT raise — a raising redactor kills append/dispatch; catch
+internally and return a safe fallback. This is the v1 stance; enforcement guards land with
+the first real (pattern-config) redactor.
 """
 
 from typing import Callable
