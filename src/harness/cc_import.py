@@ -21,6 +21,7 @@ import yaml
 
 from harness.frontmatter import FrontmatterError, split_frontmatter
 from harness.parity import CC_TOOL_MAP, NO_NATIVE_PARITY
+from harness.catalog import Catalog, UnknownAliasError
 
 # Recognized primitive subdirs and metadata locations.
 _FOREIGN_HARNESS = {".opencode", ".codex-plugin"}
@@ -617,3 +618,142 @@ def detect_relpath_collisions(defs: list[ConvertedDef]) -> list[ReportEntry]:
             )
         )
     return out
+
+
+# A paren-pattern tool entry like Bash(mcp*) -- group 1 is the bare tool name.
+_PAREN_TOOL = re.compile(r"^([A-Za-z][A-Za-z0-9_]*)[(].*[)]$")
+
+
+def _normalize_tools(value) -> list[str]:
+    """CC tools: may be a YAML list, a comma/space string, or a bare scalar."""
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [str(v).strip() for v in value if str(v).strip()]
+    if isinstance(value, str):
+        return [part.strip() for part in re.split(r"[,\s]+", value) if part.strip()]
+    return [str(value).strip()]
+
+
+def _map_tool(entry: str, *, source: str, report: list[ReportEntry]) -> str | None:
+    """Map one CC tool entry to a native name, or None (dropped). Appends report lines;
+    a degraded mapping appends a kind==degraded entry so the caller flags the agent."""
+    paren = _PAREN_TOOL.match(entry)
+    if paren:
+        bare = paren.group(1)
+        if bare in CC_TOOL_MAP:
+            mapped = CC_TOOL_MAP[bare]
+            report.append(
+                ReportEntry(
+                    kind="degraded",
+                    artifact=source,
+                    detail=f"{entry} arg-scope dropped -> `{mapped}` (arg-scoping lives in the"
+                    f" permission engine natively, not the agent allowlist)",
+                )
+            )
+            return mapped
+        report.append(
+            ReportEntry(
+                kind="drop",
+                artifact=source,
+                detail=f"{entry} pattern over unknown tool {bare!r}; dropped",
+            )
+        )
+        return None
+    if entry in CC_TOOL_MAP:
+        mapped = CC_TOOL_MAP[entry]
+        report.append(
+            ReportEntry(kind="rewrite", artifact=source, detail=f"tool {entry} -> {mapped}")
+        )
+        return mapped
+    if entry in NO_NATIVE_PARITY:
+        report.append(
+            ReportEntry(
+                kind="degraded",
+                artifact=source,
+                detail=f"tool {entry} has no native parity; dropped",
+            )
+        )
+        return None
+    if entry.startswith("mcp__"):
+        return entry  # a plugin/mcp tool name is valid natively, kept verbatim
+    report.append(
+        ReportEntry(
+            kind="drop",
+            artifact=source,
+            detail=f"unknown tool {entry!r} dropped (not in the parity table)",
+        )
+    )
+    return None
+
+
+def convert_agent(raw: "RawDef", *, catalog: Catalog) -> ConvertedDef:
+    source = f"agents/{raw.name}.md"
+    name = _sanitize_name(str(raw.meta.get("name", raw.name)))
+    report: list[ReportEntry] = []
+    if name != raw.name:
+        report.append(
+            ReportEntry(
+                kind="meta",
+                artifact=source,
+                detail=f"agent name {raw.name!r} sanitized to {name!r}",
+            )
+        )
+    meta: dict = {"name": name}
+    meta["description"] = (
+        raw.meta["description"]
+        if isinstance(raw.meta.get("description"), str)
+        else f"Imported {name}"
+    )
+
+    declared = _normalize_tools(raw.meta.get("tools"))
+    if "tools" in raw.meta:
+        mapped: list[str] = []
+        for entry in declared:
+            target = _map_tool(entry, source=source, report=report)
+            if target is not None and target not in mapped:
+                mapped.append(target)
+        if mapped:
+            meta["tools"] = mapped
+        elif declared:
+            report.append(
+                ReportEntry(
+                    kind="degraded",
+                    artifact=source,
+                    detail="all declared tools dropped; `tools` omitted (the"
+                    " agent now sees ALL native tools) -- review needed",
+                )
+            )
+
+    model = raw.meta.get("model")
+    if isinstance(model, str) and model:
+        try:
+            catalog.resolve(model)
+            meta["model"] = model
+        except UnknownAliasError:
+            report.append(
+                ReportEntry(
+                    kind="drop",
+                    artifact=source,
+                    detail=f"model alias {model!r} not in the catalog;"
+                    " model dropped (defaults to the kernel model)",
+                )
+            )
+
+    for key in sorted(raw.meta):
+        if key not in {"name", "description", "tools", "model"}:
+            report.append(
+                ReportEntry(
+                    kind="drop", artifact=source, detail=f"custom frontmatter key `{key}` dropped"
+                )
+            )
+
+    body, prose_report = rewrite_prose(raw.body, source=source)
+    report += prose_report
+    degraded = any(e.kind == "degraded" for e in report)
+    return ConvertedDef(
+        relpath=f"agents/{name}.md",
+        text=_emit_frontmatter(meta, body),
+        report=tuple(report),
+        degraded=degraded,
+    )
