@@ -32,7 +32,7 @@ def test_report_has_fixed_section_order_and_no_timestamps():
             continue  # colons appear in prose; only forbid clock-like patterns
     import re
 
-    assert not re.search(r"\\d{4}-\\d{2}-\\d{7T}\\d{2}:\\d{2}", md)
+    assert not re.search(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}", md)
 
 
 def test_summary_counts_by_confidence():
