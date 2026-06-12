@@ -218,3 +218,30 @@ async def test_unknown_agent_is_error_result(tmp_path):
     assert "curator" in result  # available agents listed
     events = [e.event for e in read_session(tmp_path, SessionId("parent"))]
     assert not any(isinstance(e, SubagentSpawned) for e in events)
+
+
+async def test_explicit_model_arg_beats_agent_default_model(tmp_path):
+    """An explicit model arg overrides the agent definition's default model."""
+    parent = Session(tmp_path, SessionId("parent"))
+    parent.start()
+    runner = SubagentRunner(
+        base=tmp_path,
+        provider=FakeProvider([text_turn("done")]),
+        registry=ToolRegistry(),
+        hooks=HookBus(),
+        resolver=HeadlessResolver(),
+        default_model=ModelId("fake"),
+        agents={
+            "curator": AgentDef(
+                name="curator",
+                description="d",
+                body="x",
+                model="agent-default-model",
+            )
+        },
+    )
+    await runner.run(prompt="go", model=ModelId("explicit-model"), parent=parent, agent="curator")
+    parent.close()
+    events = [e.event for e in read_session(tmp_path, SessionId("parent"))]
+    spawned = [e for e in events if isinstance(e, SubagentSpawned)]
+    assert spawned and spawned[0].model == "explicit-model"
