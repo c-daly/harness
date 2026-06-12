@@ -891,3 +891,118 @@ def skip_report(skips: tuple["Skip", ...]) -> tuple[ReportEntry, ...]:
             )
         )
     return tuple(entries)
+
+
+_GENERATED_MARKER = "# harness-import: generated = true"
+_SOURCE_PREFIX = "# harness-import: source = "
+# kinds grouped into report sections, in fixed order (L9).
+_ARTIFACT_KINDS = ("rewrite", "mention", "drop", "degraded", "asset", "refused", "meta")
+
+
+def build_report(entries, *, plugin_name: str, source: str) -> str:
+    """Deterministic IMPORT-REPORT.md. Sections: Summary, Artifacts, Hooks, MCP, Skipped.
+    Sorted by (artifact, line, detail); NO timestamps (idempotency, L9)."""
+    entries = sorted(
+        entries, key=lambda e: (e.artifact, e.line if e.line is not None else -1, e.detail)
+    )
+    counts: dict[str, int] = {}
+    for entry in entries:
+        counts[entry.kind] = counts.get(entry.kind, 0) + 1
+    high = counts.get("rewrite", 0)
+    degraded = counts.get("degraded", 0)
+    refused = counts.get("refused", 0) + sum(
+        1 for e in entries if e.kind == "mcp" and "skipped" in e.detail
+    )
+    skipped = counts.get("skip", 0)
+    lines = [
+        f"# Import Report: {plugin_name}",
+        "",
+        f"Source: `{source}`",
+        "",
+        "A converter, not a compatibility layer. Every rewrite, drop, degradation,",
+        "hand-port flag, and skip is listed below.",
+        "",
+        "## Summary",
+        "",
+        f"- rewrites (high confidence): {high}",
+        f"- degraded: {degraded} (capability gap — review)",
+        f"- refused (not converted): {refused}",
+        f"- skipped (kitchen-sink, by category): {skipped}",
+        f"- hooks flagged for hand-port: {counts.get('hook', 0)}",
+        "",
+    ]
+
+    def _section(title: str, kinds) -> None:
+        rows = [e for e in entries if e.kind in kinds]
+        lines.append(f"## {title}")
+        lines.append("")
+        if not rows:
+            lines.append("_none_")
+            lines.append("")
+            return
+        for e in rows:
+            loc = f":{e.line}" if e.line is not None else ""
+            lines.append(f"- `{e.artifact}{loc}` [{e.kind}] {e.detail}")
+        lines.append("")
+
+    _section("Artifacts", _ARTIFACT_KINDS)
+    _section("Hooks", ("hook",))
+    _section("MCP", ("mcp",))
+    _section("Skipped", ("skip",))
+    return chr(10).join(lines).rstrip(chr(10)) + chr(10)
+
+
+def emit_plugin_toml(
+    *,
+    name: str,
+    version: str,
+    description: str,
+    source: str,
+    author: dict | None = None,
+    homepage: str | None = None,
+    repository=None,
+    license: str | None = None,
+    keywords=None,
+    mcp_toml: str = "",
+    generated: bool = True,
+) -> str:
+    """Emit plugin.toml: [plugin] table + provenance/extra-metadata COMMENT block (never
+    tables — extra tables/keys would fail the loaders _MANIFEST_KEYS/_PLUGIN_KEYS check)."""
+    head = [f"{_SOURCE_PREFIX}{_toml_str(source)}"]
+    if generated:
+        head.append(_GENERATED_MARKER)
+    if author:
+        head.append(f"# author: {author.get('name', '')} {author.get('email', '')}".rstrip())
+    if homepage:
+        head.append(f"# homepage: {homepage}")
+    if repository:
+        head.append(f"# repository: {repository}")
+    if license:
+        head.append(f"# license: {license}")
+    if keywords:
+        head.append(f"# keywords: {', '.join(str(k) for k in keywords)}")
+    body = [
+        "",
+        "[plugin]",
+        f"name = {_toml_str(name)}",
+        f"version = {_toml_str(version)}",
+        f"description = {_toml_str(description)}",
+    ]
+    out = chr(10).join(head + body) + chr(10)
+    if mcp_toml.strip():
+        out += chr(10) + mcp_toml
+    return out
+
+
+def has_generated_marker(plugin_toml: Path) -> bool:
+    try:
+        return _GENERATED_MARKER in plugin_toml.read_text(encoding="utf-8")
+    except OSError:
+        return False
+
+
+def eject_marker(plugin_toml: Path) -> None:
+    """Flip a generated plugin to owned: drop the generated marker line, keep source comment."""
+    text = plugin_toml.read_text(encoding="utf-8")
+    kept = [ln for ln in text.splitlines() if ln.strip() != _GENERATED_MARKER]
+    plugin_toml.write_text(chr(10).join(kept) + chr(10), encoding="utf-8")
