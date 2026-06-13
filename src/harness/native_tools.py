@@ -51,6 +51,9 @@ class ReadState:
     def was_read(self, path: str) -> bool:
         return path in self._paths
 
+    def paths(self) -> frozenset[str]:
+        return frozenset(self._paths)
+
 
 # asyncio.Lock is not loop-bound since Python 3.10; safe to cache across event-loop instances.
 _PATH_LOCKS: "weakref.WeakValueDictionary[str, asyncio.Lock]" = weakref.WeakValueDictionary()

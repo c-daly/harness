@@ -3,7 +3,7 @@
 import asyncio
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from harness.events import ErrorRaised, SubagentFinished, SubagentSpawned
 from harness.frontmatter import AgentDef
@@ -25,6 +25,7 @@ class SubagentRunner:
     resolver: Resolver
     default_model: ModelId
     pricing: dict[str, float] | None = None
+    pricing_for: "Callable[[ModelId], dict[str, float]] | None" = None
     agents: dict[str, AgentDef] = field(default_factory=dict)
 
     async def run(
@@ -33,19 +34,31 @@ class SubagentRunner:
         system_prompt = "You are a focused subagent. Complete the task and report."
         registry: ToolRegistry | FilteredRegistry = self.registry
         chosen = model or self.default_model
+        # an explicit dispatch_agent model= or an AgentDef.model is a pin (routing-exempt);
+        # an unpinned child inherits the routable default_model
+        pinned = model is not None
         if agent is not None:
             definition = self.agents.get(agent)
             if definition is None:
                 available = ", ".join(sorted(self.agents)) or "(none)"
                 return f"[subagent error] unknown agent {agent!r}; available: {available}"
+            if definition.strategy is not None:
+                # a coordination agent-def fans out to its experts instead of
+                # running one child loop (experts become children of `parent`)
+                from harness.mixture import Expert, run_strategy
+
+                experts = [Expert(model=m) for m in (definition.experts or ())]
+                return await run_strategy(definition.strategy, self, parent, prompt, experts)
             system_prompt = definition.body or system_prompt
             if definition.model is not None:
                 chosen = ModelId(definition.model)
+                pinned = True
             if definition.tools is not None:
                 registry = FilteredRegistry(self.registry, allowed=definition.tools)
         # explicit model arg beats agent default
         if model is not None:
             chosen = model
+            pinned = True
         child_id = new_session_id()
         spawn_env = parent.append(SubagentSpawned(child_session_id=child_id, model=chosen))
         child = Session(
@@ -60,6 +73,8 @@ class SubagentRunner:
             model=chosen,
             system_prompt=system_prompt,
             pricing=self.pricing,
+            pricing_for=self.pricing_for,
+            pinned=pinned,
         )
         try:
             await loop.start()

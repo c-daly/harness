@@ -63,6 +63,11 @@ class CommandDef(_Def):
 class AgentDef(_Def):
     tools: tuple[str, ...] | None = None  # None = all tools
     model: str | None = None
+    # Mixture-of-Models coordination def: when `strategy` is set the agent fans
+    # out to `experts` (positional aliases) via mixture.run_strategy instead of
+    # running a single child loop.
+    strategy: str | None = None  # ensemble | panel | draft_refine | escalate
+    experts: tuple[str, ...] | None = None
 
     @field_validator("tools", mode="before")
     @classmethod

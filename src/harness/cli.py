@@ -6,7 +6,7 @@ import signal
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Sequence
+from typing import TYPE_CHECKING, Callable, Sequence
 
 from harness.hooks import HookBus
 from harness.interaction import HeadlessResolver, Resolver
@@ -22,6 +22,7 @@ from harness.types import ModelId, SessionId, new_session_id
 
 if TYPE_CHECKING:
     from harness.plugins import LoadedPlugins
+    from harness.routing import RoutingRuleSet
 
 
 @dataclass
@@ -37,6 +38,20 @@ class Kernel:
     plugins: "LoadedPlugins | None" = None
     plugin_warnings: list[str] = field(default_factory=list)
     _plugin_pumps: list = field(default_factory=list)
+
+
+def _make_pricing_for(catalog) -> "Callable[[ModelId], dict[str, float]]":
+    """Pricing keyed on the EFFECTIVE (post-routing) model alias, so telemetry's
+    per-model cost reflects the model actually used. Unknown alias -> {} (no cost)."""
+    from harness.catalog import UnknownAliasError
+
+    def _pricing(model: ModelId) -> dict[str, float]:
+        try:
+            return catalog.resolve(str(model)).pricing_dict()
+        except UnknownAliasError:
+            return {}
+
+    return _pricing
 
 
 def build_kernel(
@@ -55,6 +70,9 @@ def build_kernel(
     plugins: "LoadedPlugins | None" = None,
     workspace_root: Path | None = None,
     native_tools: bool = False,
+    pricing_for: "Callable[[ModelId], dict[str, float]] | None" = None,
+    routing_rules: "RoutingRuleSet | None" = None,
+    model_pinned: bool = False,
 ) -> Kernel:
     from harness.resume import resume_session
 
@@ -63,6 +81,7 @@ def build_kernel(
     if permissions is not None:
         hooks.register_dispatch(permissions.name, permissions, priority=permissions.priority)
     registry = ToolRegistry()
+    read_state = None  # set below when native tools are on; used by routing signals
     resumed = False
     if resume_session_id is not None:
         session, transcript = resume_session(base_dir, resume_session_id, default_model=model)
@@ -97,7 +116,7 @@ def build_kernel(
                     seed.add(str(resolved))
                 except Exception:
                     pass
-        read_state = ReadState(seed)
+        read_state = ReadState(seed)  # noqa: F841 (captured by routing signals below)
         register_native_tools(
             registry,
             workspace_root=ws_root,
@@ -134,9 +153,13 @@ def build_kernel(
         resolver=resolver,
         default_model=model,
         pricing=pricing,
+        pricing_for=pricing_for,
         agents=agents_sink,
     )
     registry.register(DispatchAgentTool(runner=runner, parent=session))
+    from harness.mixture import register_mixture_tools
+
+    register_mixture_tools(registry, runner=runner, parent=session)
     loop_kwargs: dict = dict(
         session=session,
         provider=provider,
@@ -146,10 +169,29 @@ def build_kernel(
         model=model,
         system_prompt=system_prompt,
         pricing=pricing,
+        pricing_for=pricing_for,
+        pinned=model_pinned,
     )
     if transcript is not None:
         loop_kwargs["history"] = transcript
     loop = AgentLoop(**loop_kwargs)
+    if routing_rules is not None:
+        from harness.messages import Role
+        from harness.routing import RoutingContext, RoutingEngine
+
+        def _routing_signals() -> "RoutingContext":
+            prompt = ""
+            for _m in reversed(loop.history):
+                if _m.role == Role.USER and _m.text():
+                    prompt = _m.text()
+                    break
+            _paths = tuple(read_state.paths()) if read_state is not None else ()
+            return RoutingContext(tags=tuple(tags or []), prompt=prompt, paths=_paths)
+
+        routing_engine = RoutingEngine(routing_rules, _routing_signals)
+        hooks.register_dispatch(
+            routing_engine.name, routing_engine, priority=routing_engine.priority
+        )
     mcp_host = None
     if mcp:
         mcp_host = McpHost(mcp, registry=registry, hooks=hooks, session=session)
@@ -343,19 +385,60 @@ def _run_main() -> None:
 
     resume_session_id = SessionId(args.resume_session_id) if args.resume_session_id else None
 
+    from harness.routing import load_routing
+
+    routing_rules = load_routing(project_dir=Path.cwd())
+    pricing_for: Callable[[ModelId], dict[str, float]] | None = None
+    model_pinned = False
+
     if args.model is not None:
-        from harness.catalog import Catalog
-        from harness.provider_litellm import LiteLLMProvider
+        from harness.catalog import Catalog, UnknownAliasError
+        from harness.provider_litellm import CatalogProvider
 
         try:
-            resolved = Catalog.load(args.catalog).resolve(args.model)
+            catalog = Catalog.load(args.catalog)
         except FileNotFoundError:
             raise SystemExit(
                 f"catalog not found at {args.catalog}; create it or pass --catalog <path>"
             )
-        provider: ModelProvider = LiteLLMProvider(api_base=resolved.api_base)
-        model = resolved.route
+        try:
+            resolved = catalog.resolve(args.model)
+        except UnknownAliasError:
+            raise SystemExit(
+                f"unknown model alias {args.model!r}; known aliases: "
+                f"{', '.join(catalog.aliases()) or '(none)'}"
+            )
+        # the catalog-aware provider resolves endpoint+key per call from the alias,
+        # so the model string carried through dispatch is the ALIAS, not the route
+        provider: ModelProvider = CatalogProvider(catalog)
+        model = ModelId(args.model)
         pricing = resolved.pricing_dict() or None
+        pricing_for = _make_pricing_for(catalog)
+        model_pinned = True  # an explicit --model is a pin (routing-exempt)
+    elif routing_rules is not None and routing_rules.default is not None:
+        # no explicit --model, but a routing config declares a routable baseline:
+        # run the default alias UNpinned so per-turn rules can rewrite it
+        from harness.catalog import Catalog, UnknownAliasError
+        from harness.provider_litellm import CatalogProvider
+
+        try:
+            catalog = Catalog.load(args.catalog)
+        except FileNotFoundError:
+            raise SystemExit(
+                f"routing default {routing_rules.default!r} needs a catalog; "
+                f"none at {args.catalog} (pass --catalog <path>)"
+            )
+        try:
+            resolved = catalog.resolve(routing_rules.default)
+        except UnknownAliasError:
+            raise SystemExit(
+                f"routing default {routing_rules.default!r} is not a known alias; "
+                f"known aliases: {', '.join(catalog.aliases()) or '(none)'}"
+            )
+        provider = CatalogProvider(catalog)
+        model = ModelId(routing_rules.default)
+        pricing = resolved.pricing_dict() or None
+        pricing_for = _make_pricing_for(catalog)
     elif args.prompt is not None:
         provider = FakeProvider([text_turn(f"echo: {args.prompt}")])
         model = ModelId("fake:echo")
@@ -428,6 +511,9 @@ def _run_main() -> None:
             plugins=loaded_plugins,
             workspace_root=args.workspace,
             native_tools=True,
+            pricing_for=pricing_for,
+            routing_rules=routing_rules,
+            model_pinned=model_pinned,
         )
         asyncio.run(run_tui(kernel, catalog_path=args.catalog, ask=ask))
         return
@@ -436,6 +522,9 @@ def _run_main() -> None:
         base_dir=args.base_dir,
         model=model,
         pricing=pricing,
+        pricing_for=pricing_for,
+        routing_rules=routing_rules,
+        model_pinned=model_pinned,
         resume_session_id=resume_session_id,
         permissions=engine,
         tags=args.tag,

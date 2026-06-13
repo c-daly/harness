@@ -556,7 +556,15 @@ async def test_slash_model_switches_via_catalog(tmp_path):
         assert "alias-a" in lines and "alias-b" in lines
         await pilot.press(*"/model alias-b", "enter")
         await pilot.pause(0.3)  # switch runs in a worker now (lazy litellm import)
-        assert str(app.kernel.loop.model) == "local/model-b"
+        # the ALIAS now flows through dispatch; the CatalogProvider resolves the
+        # route per call. The route still shows in the confirmation line.
+        from harness.provider_litellm import CatalogProvider
+
+        assert str(app.kernel.loop.model) == "alias-b"
+        assert app.kernel.loop.model_pinned is True
+        assert isinstance(app.kernel.loop.provider, CatalogProvider)
+        lines = "\n".join(str(line) for line in app.query_one(RichLog).lines)
+        assert "local/model-b" in lines  # route surfaced in 'model → alias-b (route)'
         await pilot.press(*"/model nope", "enter")
         await pilot.pause(0.2)
         lines = "\n".join(str(line) for line in app.query_one(RichLog).lines)

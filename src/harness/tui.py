@@ -25,6 +25,7 @@ from harness.messages import Role
 from harness.provider import TextDelta, ThinkingDelta
 from harness.telemetry import TelemetrySubscriber, open_store_memory, run_rollup
 from harness.tui_support import HistoryRing, SlashCommand, expand_file_mentions, parse_slash_command
+from harness.types import ModelId
 
 _SNIPPET_CAP = 200
 
@@ -396,16 +397,19 @@ class HarnessApp(App[None]):
         except UnknownAliasError:
             self.say("! ", f"unknown alias: {alias}")
             return
-        # An in-flight turn finishes its current dispatch on the old provider and
-        # picks the new one up next iteration.
-        loop = self.kernel.loop
-        loop.model = resolved.route
-        loop.pricing = resolved.pricing_dict() or None
-        from harness.provider_litellm import LiteLLMProvider
+        # An in-flight turn finishes its current dispatch with the old alias and
+        # picks the new one up next iteration. The CatalogProvider resolves the
+        # endpoint per call from the ALIAS, so switching is just retargeting
+        # loop.model; the provider swap below only matters when upgrading out of
+        # echo mode (no --model). A CatalogProvider is concurrency-safe.
+        from harness.provider_litellm import CatalogProvider
 
-        # Subagents keep the provider captured at build time -- /model retargets
-        # the ROOT loop only (kernel fact; revisit with the plugin loader).
-        loop.provider = LiteLLMProvider(api_base=resolved.api_base)
+        loop = self.kernel.loop
+        loop.model = ModelId(alias)
+        loop.model_pinned = True  # an explicit /model is a pin (routing-exempt)
+        loop.pricing = resolved.pricing_dict() or None
+        if not isinstance(loop.provider, CatalogProvider):
+            loop.provider = CatalogProvider(catalog)
         self.say("", f"model → {alias} ({resolved.route})")
 
     def action_interrupt(self) -> None:
