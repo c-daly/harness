@@ -70,7 +70,8 @@ honest about being interchangeable.
 Harness is multi-model by design. Models are referenced by **alias**, resolved
 through a catalog file so you never hard-code a provider string into a command.
 
-Create `~/.config/harness/models.toml`:
+Create `~/.config/harness/models.toml`. Each alias is a `[models.<alias>]`
+table; only `route` is required:
 
 ```toml
 [models.sonnet]
@@ -80,7 +81,13 @@ route = "anthropic/claude-sonnet-4-6"
 route = "openai/gpt-4o"
 
 [models.local]
-route = "ollama/llama3"
+route = "openai/llama3"               # an OpenAI-compatible local server
+api_base = "http://localhost:11434/v1"
+input_cost_per_token = 0.0            # this model isn't in LiteLLM's cost map,
+output_cost_per_token = 0.0           #   so state its pricing here
+max_input_tokens = 8192
+tags = ["local", "cheap"]
+verified = true
 ```
 
 Then:
@@ -92,7 +99,41 @@ uv run harness --model gpt -p "..."
 
 The `route` is a [LiteLLM](https://docs.litellm.ai/) model string, so any
 provider LiteLLM supports works: Anthropic, OpenAI-compatible endpoints, local
-Ollama, and so on. Point at a different catalog with `--catalog PATH`.
+servers, and so on. Point at a different catalog with `--catalog PATH`.
+
+### Catalog fields
+
+| Field | Meaning |
+|---|---|
+| `route` (required) | The LiteLLM model string the alias maps to. |
+| `api_base` | Custom endpoint base URL — for OpenAI-compatible or local servers. |
+| `api_key_env` | Name of the env var holding the API key (a *name*, never the key itself). |
+| `tags` | Free-form capability labels you can use to organize aliases. |
+| `input_cost_per_token` / `output_cost_per_token` | Pricing overrides. |
+| `max_input_tokens` | Context-window override. |
+| `verified` | Whether this model has passed a conformance run (default `false`). |
+
+**Pricing and context windows are not your job to maintain.** When you give only
+`route`, the harness looks the model up in **LiteLLM's maintained cost map** and
+pulls per-token cost and context size from there automatically. You only restate
+those fields for models LiteLLM doesn't know — typically local ones. Resolved
+pricing flows into the event log, which is what makes cost a telemetry query
+(`harness stats`).
+
+**API keys come from the environment, not the catalog.** LiteLLM reads provider
+credentials from its conventional variables (`ANTHROPIC_API_KEY`,
+`OPENAI_API_KEY`, …). The catalog records routes, endpoints, and metadata — never
+secrets — consistent with the harness's never-store-literals rule.
+
+**`verified` is an honesty flag, not a gate.** It defaults to `false` because
+"LiteLLM routes there" is not "the harness works there" — a model stays
+unverified until a conformance suite has passed against recorded real streams.
+You can run an unverified model; the flag just records what's been checked.
+
+If you don't pass `--model`, the harness runs a built-in **echo provider** (a
+deterministic stand-in for demos and tests), not a real model — so a real
+session always needs `--model <alias>`. An unknown alias or a missing catalog
+file fails with a message telling you how to fix it.
 
 > Switching providers is a first-class operation, not a workaround. The same
 > applies inside plugins and subagents — model choice is data, not code.
