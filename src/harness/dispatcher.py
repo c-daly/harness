@@ -171,6 +171,8 @@ class Dispatcher:
         messages: list[Message],
         tools: tuple[ToolSpec, ...],
         pricing: dict[str, float] | None = None,
+        pricing_for: Callable[[ModelId], dict[str, float]] | None = None,
+        pinned: bool = False,
         on_chunk: Callable[[Chunk], None] | None = None,
     ) -> tuple[Message, Usage]:
         """Dispatch a model call through hooks, permissions, and the provider.
@@ -178,8 +180,12 @@ class Dispatcher:
         Retries on retryable ProviderError up to len(retry_delays) times.
         Each retry restarts the whole provider call from scratch; any partial
         stream already yielded by a previous attempt is discarded.
+
+        `pinned` marks the model as an explicit choice (routing-exempt). When
+        `pricing_for` is given, the ModelCallCompleted is stamped with pricing
+        for the EFFECTIVE (post-routing) model so per-model cost stays accurate.
         """
-        call = ProposedModelCall(call_id=new_call_id(), model=model)
+        call = ProposedModelCall(call_id=new_call_id(), model=model, pinned=pinned)
         self.session.append(ModelCallProposed(call_id=call.call_id, model=model))
         effective, denial = await self._run_chain(call)
         if denial is not None:
@@ -214,6 +220,7 @@ class Dispatcher:
                 )
                 await asyncio.sleep(delay)  # yields the loop: the bus pump renders
                 # RetryAttempted (and the TUI resets its tail) before the next attempt streams
+        stamped_pricing = pricing_for(effective.model) if pricing_for is not None else (pricing or {})
         self.session.append(
             ModelCallCompleted(
                 call_id=call.call_id,
@@ -221,7 +228,7 @@ class Dispatcher:
                 message=message.model_dump(),
                 usage=usage.as_dict(),
                 stop_reason=stop_reason,
-                pricing=pricing or {},
+                pricing=stamped_pricing,
                 duration_ms=int((time.monotonic() - started) * 1000),
             )
         )

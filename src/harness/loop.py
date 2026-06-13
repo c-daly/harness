@@ -37,6 +37,8 @@ class AgentLoop:
         max_iterations: int = 20,
         history: list[Message] | None = None,
         pricing: dict[str, float] | None = None,
+        pricing_for: Callable[[ModelId], dict[str, float]] | None = None,
+        pinned: bool = False,
         redact: StringRedactor = identity_redact,
     ) -> None:
         self.session = session
@@ -48,6 +50,8 @@ class AgentLoop:
         self.max_iterations = max_iterations
         self.history: list[Message] = list(history) if history else []
         self.pricing = pricing
+        self.pricing_for = pricing_for
+        self.model_pinned = pinned
         self.dispatcher = Dispatcher(
             session=session, registry=registry, hooks=hooks, resolver=resolver, redact=redact
         )
@@ -95,6 +99,8 @@ class AgentLoop:
                 messages=messages,
                 tools=self.registry.specs(),
                 pricing=self.pricing,
+                pricing_for=self.pricing_for,
+                pinned=self.model_pinned,
                 on_chunk=self.on_chunk,
             )
             self.history.append(assistant)
