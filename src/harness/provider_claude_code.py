@@ -8,7 +8,10 @@ complete() call == one CC agent turn (stateless v1: full history re-rendered;
 --resume is a follow-up)."""
 
 import asyncio
+import contextlib
 import json
+import os
+import signal
 import tempfile
 from pathlib import Path
 from typing import AsyncIterator, Sequence
@@ -45,6 +48,18 @@ def _render_prompt(messages: Sequence[Message]) -> str:
             lines.append(f"[{m.role.value}]: {text}")
     lines.append("[assistant]:")
     return "\n".join(lines)
+
+
+def _kill_process_group(proc: "asyncio.subprocess.Process") -> None:
+    """Best-effort SIGKILL to the whole process group. proc was spawned with
+    start_new_session=True, so its pgid equals its own pid; this reaches any
+    subprocesses CC itself may have spawned, not just the claude binary."""
+    try:
+        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    except OSError:
+        proc.kill()
 
 
 class ClaudeCodeProvider:
@@ -103,48 +118,70 @@ class ClaudeCodeProvider:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             stdin=asyncio.subprocess.DEVNULL,
+            start_new_session=True,  # own process group: timeout/abandonment kills the whole tree
         )
+        assert proc.stderr is not None
+        # Drain stderr concurrently: with --verbose the child can fill the pipe
+        # and block mid-turn on a full buffer, which would otherwise masquerade
+        # as a spurious timeout while we are only reading stdout.
+        stderr_task = asyncio.create_task(proc.stderr.read())
         saw_result = False
+        timed_out = False
         try:
-            async with asyncio.timeout(self.timeout_s):
-                assert proc.stdout is not None
-                async for raw in proc.stdout:
-                    line = raw.decode("utf-8", errors="replace").strip()
-                    if not line:
-                        continue
-                    try:
-                        event = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue  # CC may interleave non-JSON noise
-                    if event.get("type") == "assistant":
-                        for block in event.get("message", {}).get("content", []):
-                            if block.get("type") == "text" and block.get("text"):
-                                yield TextDelta(text=block["text"])
-                    elif event.get("type") == "result":
-                        saw_result = True
-                        if event.get("is_error"):
-                            raise ProviderError(
-                                f"claude-code turn failed: {event.get('result') or event.get('subtype')}"
+            try:
+                async with asyncio.timeout(self.timeout_s):
+                    assert proc.stdout is not None
+                    async for raw in proc.stdout:
+                        line = raw.decode("utf-8", errors="replace").strip()
+                        if not line:
+                            continue
+                        try:
+                            event = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue  # CC may interleave non-JSON noise
+                        if event.get("type") == "assistant":
+                            for block in event.get("message", {}).get("content", []):
+                                if block.get("type") == "text" and block.get("text"):
+                                    yield TextDelta(text=block["text"])
+                        elif event.get("type") == "result":
+                            saw_result = True
+                            if event.get("is_error"):
+                                raise ProviderError(
+                                    f"claude-code turn failed: "
+                                    f"{event.get('result') or event.get('subtype')}"
+                                )
+                            u = event.get("usage") or {}
+                            yield UsageReport(
+                                usage=Usage(
+                                    input_tokens=u.get("input_tokens", 0),
+                                    output_tokens=u.get("output_tokens", 0),
+                                    cache_read_tokens=u.get("cache_read_input_tokens", 0),
+                                    cache_write_tokens=u.get("cache_creation_input_tokens", 0),
+                                )
                             )
-                        u = event.get("usage") or {}
-                        yield UsageReport(
-                            usage=Usage(
-                                input_tokens=u.get("input_tokens", 0),
-                                output_tokens=u.get("output_tokens", 0),
-                                cache_read_tokens=u.get("cache_read_input_tokens", 0),
-                                cache_write_tokens=u.get("cache_creation_input_tokens", 0),
-                            )
-                        )
-                        yield StreamStop(stop_reason=event.get("stop_reason") or "end_turn")
+                            yield StreamStop(stop_reason=event.get("stop_reason") or "end_turn")
+                    await proc.wait()
+            except TimeoutError:
+                timed_out = True
+        finally:
+            # Runs on normal completion, on timeout, AND on GeneratorExit (the
+            # consumer abandoning the stream mid-turn): the only path that
+            # guarantees the child, and anything it spawned, does not leak.
+            if proc.returncode is None:
+                _kill_process_group(proc)
                 await proc.wait()
-        except TimeoutError:
-            proc.kill()
-            await proc.wait()
-            raise ProviderError(f"claude-code turn timed out after {self.timeout_s}s") from None
+            if not stderr_task.done():
+                stderr_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await stderr_task
+
+        if timed_out:
+            raise ProviderError(f"claude-code turn timed out after {self.timeout_s}s")
         if proc.returncode not in (0, None) and not saw_result:
             stderr = b""
-            if proc.stderr is not None:
-                stderr = await proc.stderr.read()
+            if stderr_task.done() and not stderr_task.cancelled():
+                with contextlib.suppress(Exception):
+                    stderr = stderr_task.result()
             raise ProviderError(
                 f"claude-code exited {proc.returncode}: "
                 f"{stderr.decode('utf-8', errors='replace')[-500:].strip() or 'no stderr'}"

@@ -1,15 +1,17 @@
 """ClaudeCodeProvider against fake `claude` executables emitting captured
 stream-json shapes (CC v2.1.233). No real CLI, no subscription use."""
 
+import asyncio
 import json
+import os
 import stat
 
 import pytest
 
 from harness.dispatcher import ToolOutcome
-from harness.errors import ProviderError
+from harness.errors import MalformedStreamError, ProviderError
 from harness.messages import Message, Role, TextBlock
-from harness.provider import collect
+from harness.provider import TextDelta, collect
 from harness.provider_claude_code import DISALLOWED_BUILTINS, ClaudeCodeProvider
 from harness.types import ModelId
 
@@ -45,6 +47,20 @@ CRASH = r"""
 import sys
 sys.stderr.write("boom: something broke\n")
 sys.exit(2)
+"""
+
+NO_RESULT = r"""
+import json
+print(json.dumps({"type": "system", "subtype": "init", "session_id": "s-4", "tools": []}))
+"""
+
+ONE_DELTA_THEN_SLEEP = r"""
+import json, os, sys, time
+open(sys.argv[0] + ".pid", "w").write(str(os.getpid()))
+print(json.dumps({"type": "assistant", "message": {"model": "claude-opus-5",
+    "content": [{"type": "text", "text": "partial"}],
+    "usage": {"input_tokens": 1, "output_tokens": 1}}, "session_id": "s-3"}), flush=True)
+time.sleep(60)
 """
 
 USER = [Message(role=Role.USER, blocks=(TextBlock(text="say pong"),))]
@@ -133,3 +149,39 @@ async def test_timeout_kills_subprocess(tmp_path):
         await collect(
             provider.complete(model=ModelId("claude-code/default"), messages=USER, tools=())
         )
+
+
+async def test_eof_without_result_raises_malformed_stream_error(tmp_path):
+    binary = _fake_claude(tmp_path, NO_RESULT)
+    provider = _provider(binary)
+    with pytest.raises(MalformedStreamError):
+        await collect(
+            provider.complete(model=ModelId("claude-code/default"), messages=USER, tools=())
+        )
+
+
+async def test_abandoning_stream_kills_subprocess(tmp_path):
+    binary = _fake_claude(tmp_path, ONE_DELTA_THEN_SLEEP)
+    provider = _provider(binary, timeout_s=30.0)
+    gen = provider.complete(model=ModelId("claude-code/default"), messages=USER, tools=())
+    first = await gen.__anext__()
+    assert isinstance(first, TextDelta)
+    await gen.aclose()
+
+    pid_path = binary + ".pid"
+    for _ in range(50):
+        if os.path.exists(pid_path):
+            break
+        await asyncio.sleep(0.05)
+    assert os.path.exists(pid_path), "fake claude never wrote its pid file"
+    pid = int(open(pid_path).read())
+
+    dead = False
+    for _ in range(50):
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            dead = True
+            break
+        await asyncio.sleep(0.05)
+    assert dead, "subprocess still running after the stream was abandoned"
