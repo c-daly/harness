@@ -56,8 +56,11 @@ The source is flat under `src/harness/`. Grouped by role:
 
 **Providers**
 - `provider.py` — `ModelProvider` protocol, typed error family, `EchoProvider`.
-- `provider_litellm.py` — the LiteLLM-backed provider (multi-model).
-- `catalog.py` — model alias → route resolution.
+- `provider_litellm.py` — the LiteLLM-backed provider (multi-model) and
+  `CatalogProvider`, which multiplexes per call on the catalog entry's `backend`.
+- `provider_claude_code.py` — subscription-CLI backend: one turn = one headless
+  `claude -p` subprocess, with harness tools served to it over `mcp_serve.py`.
+- `catalog.py` — model alias → route/backend resolution.
 
 **Permissions & telemetry**
 - `permissions.py` — rule model + `PermissionEngine` (the innermost hook).
@@ -66,6 +69,9 @@ The source is flat under `src/harness/`. Grouped by role:
 **MCP**
 - `mcp_config.py` — layered `mcp.toml` config.
 - `mcp_host.py` — server lifecycle, tool namespacing, restart budget.
+- `mcp_serve.py` — the inverse of `mcp_host.py`: the harness's own tool registry
+  served *outward* over streamable-HTTP MCP, every call routed through the
+  dispatcher (used per-turn by the claude-code backend).
 - `mcp_import.py` — `.mcp.json` → `mcp.toml` importer with refusal rules.
 
 **Native tools & workspace**
@@ -211,10 +217,15 @@ outermost (lowest-precedence) layer.
 
 `ModelProvider` is a small protocol: take messages + tool specs, stream typed
 chunks back. `provider_litellm.py` implements it over LiteLLM, so any provider
-LiteLLM supports is reachable by a catalog alias. Provider errors normalize to a
-typed family (rate-limit, overloaded, context-overflow, auth, network) at the
-boundary; retry/backoff lives in the kernel and is itself recorded as
-`RetryAttempted` events. `EchoProvider` is a deterministic fake for tests.
+LiteLLM supports is reachable by a catalog alias; `CatalogProvider` dispatches
+per call on the entry's `backend` field, so an alias can instead resolve to
+`provider_claude_code.py` — a subscription-CLI backend where one `complete()`
+call spawns one headless `claude -p` turn, with the harness's tools mounted
+into it via `mcp_serve.py` and every tool call still flowing through the
+dispatcher. Provider errors normalize to a typed family (rate-limit,
+overloaded, context-overflow, auth, network) at the boundary; retry/backoff
+lives in the kernel and is itself recorded as `RetryAttempted` events.
+`EchoProvider` is a deterministic fake for tests.
 
 Multi-model is not a feature bolted on — it's the default posture. A subagent
 can run a different model; a plugin can request one; adversarial review across

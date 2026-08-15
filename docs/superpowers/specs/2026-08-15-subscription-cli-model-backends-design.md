@@ -156,3 +156,39 @@ a free-tier `GEMINI_API_KEY` (catalog entry + verification only).
   by design; revisit only if routing rules need intra-turn control.
 - **Rate limits:** Max-plan weekly limits govern throughput; mixture
   strategies fanning out over `claude` should be used deliberately.
+
+## As built (appendix, 2026-08-15)
+
+Implemented on `multimodel`, commits `05523e4..c5a09ef`. Deviations from the
+design above, each ruled during execution (spec-conformance or review-driven):
+
+- **Stateless v1, no `--resume`.** `ModelProvider.complete()` carries no session
+  identity, and stateless is the correct behavior for concurrent subagent
+  turns; the full history is re-rendered each call. Session resume remains a
+  follow-up optimization.
+- **Prompt over stdin, not argv.** Argv exposed the transcript via `ps` and
+  hard-caps at MAX_ARG_STRLEN (~128KB) — guaranteed failure for long sessions.
+  `-p` is passed with no argument; the prompt is written to the child's stdin.
+- **No `--input-format stream-json`** (not needed for single-shot stdin turns).
+- **Additional flags:** `--allowedTools mcp__harness` (CC's client-side gate
+  otherwise blocks MCP tools in `-p` mode; the harness engine remains the real
+  gate), `--setting-sources ""` (isolates user hooks/plugins/settings),
+  `--no-session-persistence`, `--verbose` (required for stream-json output).
+- **Sanitized child env:** `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`,
+  `ANTHROPIC_BASE_URL`, `CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CODE_USE_VERTEX`,
+  `OPENAI_API_KEY`, `GEMINI_API_KEY` are stripped so CC can only use
+  subscription auth and no unrelated secrets leak into the child.
+- **Process-group kill** (`start_new_session=True` + `killpg`) on timeout and
+  on any generator exit, with deterministic cleanup (`complete()` explicitly
+  `aclose()`s the inner turn generator before stopping the MCP server).
+- **ContextVar dispatch binding:** `dispatcher.current_dispatch_tool` is set
+  around each model call, so claude-backed subagent turns event into their own
+  session; `bind_dispatcher` (main loop) is the fallback.
+- **Per-turn `McpToolServer`** (one per `complete()` call) rather than a shared
+  instance — scopes the served specs to the turn and isolates concurrent turns.
+
+Known items deliberately deferred at merge time: stdin write/drain happens
+before the timeout window (a stuck child + >64KB prompt can hang a turn — top
+fast-follow); MCP server has no auth token (localhost, per-turn lifetime);
+CC likely still ingests host/project CLAUDE.md (`--bare` would prevent it but
+disables subscription auth); CC version not yet logged from the init event.

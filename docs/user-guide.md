@@ -108,6 +108,7 @@ servers, and so on. Point at a different catalog with `--catalog PATH`.
 | `route` (required) | The LiteLLM model string the alias maps to. |
 | `api_base` | Custom endpoint base URL — for OpenAI-compatible or local servers. |
 | `api_key_env` | Name of the env var holding the API key (a *name*, never the key itself). |
+| `backend` | Selects a non-LiteLLM provider implementation. Currently `"claude-code"`: turns run through the local, logged-in Claude Code CLI on subscription auth, and `route` becomes `claude-code/<model>` instead of a LiteLLM string (see [Claude on your Claude Code subscription](#claude-on-your-claude-code-subscription)). Absent → the LiteLLM route above. |
 | `tags` | Free-form capability labels you can use to organize aliases. |
 | `input_cost_per_token` / `output_cost_per_token` | Pricing overrides. |
 | `max_input_tokens` | Context-window override. |
