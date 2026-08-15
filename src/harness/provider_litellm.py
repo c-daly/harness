@@ -7,7 +7,7 @@ litellm except through catalog (cost map) and this module.
 import json
 import os
 from dataclasses import dataclass
-from typing import Any, AsyncIterator, Sequence
+from typing import TYPE_CHECKING, Any, AsyncIterator, Sequence
 
 from harness.catalog import Catalog, UnknownAliasError
 from harness.errors import (
@@ -38,6 +38,9 @@ from harness.provider import (
 )
 from harness.tools import ToolSpec
 from harness.types import CallId, ModelId, ToolName
+
+if TYPE_CHECKING:
+    from harness.provider_claude_code import ClaudeCodeProvider
 
 _FINISH_REASON = {"stop": "end_turn", "tool_calls": "tool_use", "length": "max_tokens"}
 
@@ -259,9 +262,15 @@ class LiteLLMProvider:
 class CatalogProvider:
     """Resolves endpoint + key per call from the model string via the catalog,
     so any catalog model is reachable in one session. The model string is an
-    ALIAS; an unknown alias falls back to a literal route on ambient env."""
+    ALIAS; an unknown alias falls back to a literal route on ambient env.
+    Entries with backend="claude-code" route to the subscription-CLI provider."""
 
     catalog: "Catalog"
+    claude_code: "ClaudeCodeProvider | None" = None
+
+    def bind_dispatcher(self, dispatcher) -> None:
+        if self.claude_code is not None:
+            self.claude_code.bind_dispatcher(dispatcher)
 
     async def complete(
         self,
@@ -275,6 +284,16 @@ class CatalogProvider:
         except UnknownAliasError:
             # not a catalog alias: treat the string as a literal route on ambient env
             async for chunk in _acomplete(model=model, messages=messages, tools=tools):
+                yield chunk
+            return
+        if resolved.backend == "claude-code":
+            if self.claude_code is None:
+                raise ProviderError(
+                    f"model {model!r} needs the claude-code backend, which is not wired"
+                )
+            async for chunk in self.claude_code.complete(
+                model=resolved.route, messages=messages, tools=tools
+            ):
                 yield chunk
             return
         api_key = os.environ.get(resolved.api_key_env) if resolved.api_key_env else None

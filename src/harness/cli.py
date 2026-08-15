@@ -175,6 +175,8 @@ def build_kernel(
     if transcript is not None:
         loop_kwargs["history"] = transcript
     loop = AgentLoop(**loop_kwargs)
+    if hasattr(provider, "bind_dispatcher"):
+        provider.bind_dispatcher(loop.dispatcher)
     if routing_rules is not None:
         from harness.messages import Role
         from harness.routing import RoutingContext, RoutingEngine
@@ -410,7 +412,9 @@ def _run_main() -> None:
             )
         # the catalog-aware provider resolves endpoint+key per call from the alias,
         # so the model string carried through dispatch is the ALIAS, not the route
-        provider: ModelProvider = CatalogProvider(catalog)
+        from harness.provider_claude_code import ClaudeCodeProvider
+
+        provider: ModelProvider = CatalogProvider(catalog, claude_code=ClaudeCodeProvider())
         model = ModelId(args.model)
         pricing = resolved.pricing_dict() or None
         pricing_for = _make_pricing_for(catalog)
@@ -435,7 +439,9 @@ def _run_main() -> None:
                 f"routing default {routing_rules.default!r} is not a known alias; "
                 f"known aliases: {', '.join(catalog.aliases()) or '(none)'}"
             )
-        provider = CatalogProvider(catalog)
+        from harness.provider_claude_code import ClaudeCodeProvider
+
+        provider = CatalogProvider(catalog, claude_code=ClaudeCodeProvider())
         model = ModelId(routing_rules.default)
         pricing = resolved.pricing_dict() or None
         pricing_for = _make_pricing_for(catalog)

@@ -335,3 +335,26 @@ uv run harness outcome SESSION_ID ok --score 0.9 --note "shipped"
 Override the session/data root with `--base-dir`. Resume a past session with
 `--resume SESSION_ID`. Tag a run for later querying with `--tag NAME`
 (repeatable).
+
+---
+
+## Claude on your Claude Code subscription
+
+Entries with `backend = "claude-code"` run turns through your locally
+installed, logged-in Claude Code CLI (headless `claude -p`) instead of an
+API. The harness serves its own tools to Claude over MCP and disables
+Claude Code's built-ins, so permissions and the event log behave exactly as
+with API models. The harness never handles claude.ai credentials — log in
+with `claude` once and the backend uses that.
+
+```toml
+[models.claude]
+backend = "claude-code"
+route = "claude-code/default"   # "claude-code/<model>" passes --model <model>
+input_cost_per_token = 0.0      # subscription: flat-rate, no per-token cost
+output_cost_per_token = 0.0
+tags = ["anthropic", "subscription", "tool-calling", "frontier"]
+```
+
+Requirements: `claude` on PATH and logged in (Pro/Max). One harness turn is
+one Claude Code agent turn; Max-plan rate limits apply.
