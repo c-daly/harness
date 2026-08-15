@@ -16,6 +16,7 @@ import tempfile
 from pathlib import Path
 from typing import AsyncIterator, Sequence
 
+from harness.dispatcher import current_dispatch_tool
 from harness.errors import MalformedStreamError, ProviderError
 from harness.mcp_serve import McpToolServer
 from harness.messages import Message
@@ -36,6 +37,26 @@ DISALLOWED_BUILTINS = ",".join(
         ]
     )
 )
+
+# Model-provider secrets the child never needs: subscription auth lives inside
+# Claude Code itself, not in env vars. Leaking these would let CC silently
+# talk to a different backend or account than the one the harness is using.
+_SECRET_ENV_KEYS = (
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_AUTH_TOKEN",
+    "ANTHROPIC_BASE_URL",
+    "CLAUDE_CODE_USE_BEDROCK",
+    "CLAUDE_CODE_USE_VERTEX",
+    "OPENAI_API_KEY",
+    "GEMINI_API_KEY",
+)
+
+
+def _sanitized_env() -> dict[str, str]:
+    env = dict(os.environ)
+    for key in _SECRET_ENV_KEYS:
+        env.pop(key, None)
+    return env
 
 
 def _render_prompt(messages: Sequence[Message]) -> str:
@@ -78,27 +99,41 @@ class ClaudeCodeProvider:
         messages: Sequence[Message],
         tools: Sequence[ToolSpec] = (),
     ) -> AsyncIterator[Chunk]:
-        if self._dispatch is None:
+        # A claude-code-backed subagent turn runs inside dispatch_model, which sets
+        # this ContextVar to the dispatch_tool of whichever dispatcher is doing the
+        # dispatching, for the duration of the provider call. That lets a subagent
+        # turn event its tool calls into the subagent session instead of the
+        # top-level one bound via bind_dispatcher below.
+        dispatch = current_dispatch_tool.get() or self._dispatch
+        if dispatch is None:
             raise ProviderError(
                 "claude-code backend has no dispatcher bound; "
                 "build_kernel wires this via bind_dispatcher"
             )
-        server = McpToolServer(specs=tools, dispatch=self._dispatch)
+        server = McpToolServer(specs=tools, dispatch=dispatch)
         await server.start()
+        gen = None
         try:
             with tempfile.TemporaryDirectory(prefix="harness-cc-") as tmp:
                 cfg = Path(tmp) / "mcp.json"
                 cfg.write_text(
                     json.dumps({"mcpServers": {"harness": {"type": "http", "url": server.url}}})
                 )
-                async for chunk in self._run_turn(model=model, messages=messages, cfg=cfg):
+                gen = self._run_turn(model=model, messages=messages, cfg=cfg)
+                async for chunk in gen:
                     yield chunk
         finally:
+            # Kill-then-stop, deterministically: closing gen here (rather than
+            # letting an abandoned async generator fall to GC finalization)
+            # guarantees the subprocess is gone before the MCP server it was
+            # talking to disappears out from under it.
+            if gen is not None:
+                await gen.aclose()
             await server.stop()
 
-    def _argv(self, *, model: ModelId, prompt: str, cfg: Path) -> list[str]:
+    def _argv(self, *, model: ModelId, cfg: Path) -> list[str]:
         argv = [
-            self.binary, "-p", prompt,
+            self.binary, "-p",
             "--output-format", "stream-json", "--verbose",
             "--setting-sources", "",
             "--strict-mcp-config", "--mcp-config", str(cfg),
@@ -114,13 +149,28 @@ class ClaudeCodeProvider:
     async def _run_turn(
         self, *, model: ModelId, messages: Sequence[Message], cfg: Path
     ) -> AsyncIterator[Chunk]:
-        proc = await asyncio.create_subprocess_exec(
-            *self._argv(model=model, prompt=_render_prompt(messages), cfg=cfg),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            stdin=asyncio.subprocess.DEVNULL,
-            start_new_session=True,  # own process group: timeout/abandonment kills the whole tree
-        )
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *self._argv(model=model, cfg=cfg),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                stdin=asyncio.subprocess.PIPE,
+                start_new_session=True,  # own process group: timeout/abandonment kills the whole tree
+                env=_sanitized_env(),
+            )
+        except OSError as exc:
+            raise ProviderError(f"claude-code spawn failed: {exc}") from exc
+
+        # Prompt travels over stdin, never argv: a long transcript can overflow
+        # MAX_ARG_STRLEN, and argv is visible to any local user via ps.
+        assert proc.stdin is not None
+        try:
+            proc.stdin.write(_render_prompt(messages).encode())
+            await proc.stdin.drain()
+            proc.stdin.close()
+        except BrokenPipeError:
+            pass  # child may already be gone; the normal error paths below catch it
+
         assert proc.stderr is not None
         # Drain stderr concurrently: with --verbose the child can fill the pipe
         # and block mid-turn on a full buffer, which would otherwise masquerade
