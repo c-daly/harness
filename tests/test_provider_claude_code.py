@@ -104,6 +104,8 @@ async def test_flag_contract(tmp_path):
     assert "--mcp-config" in argv
     assert "--disallowedTools" in argv
     assert argv[argv.index("--disallowedTools") + 1] == DISALLOWED_BUILTINS
+    assert "--allowedTools" in argv
+    assert argv[argv.index("--allowedTools") + 1] == "mcp__harness"
     assert "--model" not in argv  # "default" suffix means no override
 
 

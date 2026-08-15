@@ -103,6 +103,7 @@ class ClaudeCodeProvider:
             "--setting-sources", "",
             "--strict-mcp-config", "--mcp-config", str(cfg),
             "--disallowedTools", DISALLOWED_BUILTINS,
+            "--allowedTools", "mcp__harness",
             "--no-session-persistence",
         ]
         suffix = str(model).split("/", 1)[-1]
