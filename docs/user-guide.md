@@ -273,6 +273,16 @@ tools_allow = ["workflow__*", "experiment__*", "router__*"]  # its unique famili
 default_enabled = false  # present in the checklist, dormant unless opted in
 ```
 
+### Session-start server checklist
+
+Before any MCP server is dispatchable, the TUI shows a checkbox per configured
+server, pre-checked from `default_enabled`. Enter accepts the selection (Space
+toggles a box). A server you leave unchecked never starts for that session --
+its transport is never launched, it holds no connection, and it registers no
+tools, so it cannot be reached even by a permission rule that would otherwise
+match it. Headless (`-p`) runs skip the checklist -- there is no one to ask --
+and start whatever `default_enabled` says for every configured server.
+
 Skip MCP entirely for a run with `--no-mcp`, or point at one explicit file with
 `--mcp-config PATH`.
 

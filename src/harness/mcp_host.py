@@ -292,6 +292,13 @@ class McpHost:
         self._pending: list[CustomEvent] | None = []  # None once flushed
         self._started = False  # single-use latch; survives stop() clearing connections
 
+    @property
+    def specs(self) -> tuple[McpServerSpec, ...]:
+        """Configured server specs, in construction order -- available before
+        start() so callers (the TUI checklist, headless default filtering)
+        can inspect them without constructing any connection."""
+        return self._specs
+
     def _emit(self, name: str, data: dict) -> None:
         if self._session.closed:
             return  # teardown race: dropping informational events beats masking real errors
@@ -308,12 +315,17 @@ class McpHost:
         for event in pending:
             self._session.append(event)
 
-    async def start(self) -> list[str]:
-        """Connect everything; per-server failures become warnings, never crashes."""
+    async def start(self, only: set[str] | None = None) -> list[str]:
+        """Connect servers named in `only` (or every configured spec when
+        `only` is None). A spec whose name is not in `only` is never
+        constructed or launched -- it holds zero resources (no transport
+        factory call, no process, no registry entries). Per-server connect
+        failures become warnings, never crashes."""
         if self._started:
             raise RuntimeError("McpHost.start() already called; McpHost is single-use")
         self._started = True  # set immediately: even a failed start burns the latch
         warnings: list[str] = []
+        specs = self._specs if only is None else tuple(s for s in self._specs if s.name in only)
         conns = [
             ServerConnection(
                 spec,
@@ -321,7 +333,7 @@ class McpHost:
                 on_event=self._emit,
                 errlog=self.errlog,
             )
-            for spec in self._specs
+            for spec in specs
         ]
         results = await asyncio.gather(*(c.start() for c in conns), return_exceptions=True)
         taken = {str(s.name) for s in self._registry.specs()}

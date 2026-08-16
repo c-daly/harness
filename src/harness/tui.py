@@ -13,7 +13,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
 from textual.screen import ModalScreen
-from textual.widgets import Input, RichLog, Static
+from textual.widgets import Checkbox, Input, RichLog, Static
 from textual.worker import WorkerCancelled, WorkerFailed
 
 from harness.cli import Kernel
@@ -21,6 +21,7 @@ from harness.frontmatter import CommandDef
 from harness.events import CustomEvent, RetryAttempted, ToolCallCompleted, ToolCallProposed
 from harness.hooks import ProposedToolCall
 from harness.interaction import PermissionRequest
+from harness.mcp_host import McpHost
 from harness.messages import Role
 from harness.provider import TextDelta, ThinkingDelta
 from harness.telemetry import TelemetrySubscriber, open_store_memory, run_rollup
@@ -110,6 +111,43 @@ class PermissionScreen(ModalScreen[str]):
 
     def action_answer(self, result: str) -> None:
         self.dismiss(result)
+
+
+class ServerChecklistScreen(ModalScreen[set[str]]):
+    """Session-start checklist: one row per configured MCP server, pre-checked
+    from spec.default_enabled. Enter dismisses with the checked server names;
+    McpHost.start(only=...) never constructs or launches the rest -- unchecked
+    servers hold zero resources and register zero tools for this session."""
+
+    # priority=True: Checkbox itself binds enter/space to toggle, and the first
+    # checkbox holds initial focus -- without priority this binding would never
+    # fire (mirrors HarnessApp's own priority Escape binding for the same class
+    # of focused-widget-vs-modal conflict). Space still toggles a checkbox.
+    BINDINGS = [Binding("enter", "accept", "start selected servers", priority=True)]
+
+    def __init__(self, mcp: McpHost) -> None:
+        super().__init__()
+        self._specs = mcp.specs
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="checklist-box"):
+            yield Static(_plain("MCP servers -- uncheck any you don't want this session"))
+            for spec in self._specs:
+                target = spec.command or spec.url or ""
+                yield Checkbox(
+                    f"{spec.name}  ({target})",
+                    value=spec.default_enabled,
+                    id=f"chk-{spec.name}",
+                )
+            yield Static(_plain("[enter] start selected servers"))
+
+    def action_accept(self) -> None:
+        selected = {
+            spec.name
+            for spec in self._specs
+            if self.query_one(f"#chk-{spec.name}", Checkbox).value
+        }
+        self.dismiss(selected)
 
 
 class HistoryInput(Input):
@@ -209,7 +247,8 @@ class HarnessApp(App[None]):
             errlog_path.parent.mkdir(parents=True, exist_ok=True)
             self._mcp_errlog = errlog_path.open("a")
             kernel.mcp.errlog = self._mcp_errlog
-            for warning in await kernel.mcp.start():
+            selected = await self.push_screen_wait(ServerChecklistScreen(kernel.mcp))
+            for warning in await kernel.mcp.start(only=selected):
                 self.say("! ", warning)
         if not kernel.resumed:
             await kernel.loop.start()

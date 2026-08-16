@@ -1,11 +1,16 @@
 """Textual app: headless pilot tests. Each test builds a kernel on tmp_path."""
 
 import asyncio
+from contextlib import asynccontextmanager
 
+import anyio
+from mcp.shared.memory import create_client_server_memory_streams
 from textual.widgets import Input, RichLog, Static
 
 from harness.cli import build_kernel
 from harness.log import read_session
+from harness.mcp_config import McpServerSpec
+from harness.mcp_host import McpHost
 from harness.permissions import PermissionEngine, PermissionRule, RuleSet
 from harness.provider import (
     EchoProvider,
@@ -20,10 +25,10 @@ from harness.provider import (
     text_turn,
 )
 from harness.tools import ToolSpec
-from harness.tui import AppBoundAsk, HarnessApp, PermissionScreen
+from harness.tui import AppBoundAsk, HarnessApp, PermissionScreen, ServerChecklistScreen
 from harness.tui_support import TuiResolver
 from harness.types import CallId, ModelId, ToolName
-from tests.conftest import fixture_stdio_spec
+from tests.conftest import fixture_stdio_spec, load_fixture_server
 
 from harness.plugins import load_plugins
 
@@ -640,6 +645,8 @@ async def test_tui_pipes_mcp_child_stderr_to_file(tmp_path):
     )
     app = HarnessApp(kernel)
     async with app.run_test() as pilot:
+        await pilot.pause(0.5)  # checklist mounts
+        await pilot.press("enter")  # accept defaults -- default_enabled=True
         await pilot.pause(0.5)  # mcp start + session driver
         await pilot.click("#prompt")
         await pilot.press(*"hi", "enter")
@@ -807,3 +814,140 @@ async def test_slash_model_upgrade_wires_claude_code_backend(tmp_path):
         provider = app.kernel.loop.provider
         assert isinstance(provider, CatalogProvider)
         assert provider.claude_code is not None  # claude-code entries dispatchable
+
+
+# ---------------------------------------------------------------------------
+# Task 2: session-start MCP server checklist
+# ---------------------------------------------------------------------------
+
+
+@asynccontextmanager
+async def _checklist_memory_transport(fastmcp):
+    """Same in-memory stream transport as test_mcp_host.py's memory_transport,
+    duplicated here per the existing per-file convention (test_tools_allow.py
+    duplicates it too as well) rather than importing across test modules."""
+    async with create_client_server_memory_streams() as (client_streams, server_streams):
+        client_read, client_write = client_streams
+        server_read, server_write = server_streams
+        lowlevel = fastmcp._mcp_server
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(
+                lambda: lowlevel.run(
+                    server_read,
+                    server_write,
+                    lowlevel.create_initialization_options(),
+                    raise_exceptions=True,
+                )
+            )
+            try:
+                yield (client_read, client_write)
+            finally:
+                tg.cancel_scope.cancel()
+
+
+class _CountingTransportFactory:
+    """Counts invocations so a test can prove a server's transport was (or was
+    never) constructed -- the lossless-OFF half of the checklist invariant."""
+
+    def __init__(self, fastmcp):
+        self._fastmcp = fastmcp
+        self.calls = 0
+
+    def __call__(self, spec):
+        self.calls += 1
+        return _checklist_memory_transport(self._fastmcp)
+
+
+def _build_checklist_kernel(tmp_path):
+    """Kernel with two fake MCP servers wired over in-memory streams:
+    'on-server' (default_enabled True, tools_allow restricts it to 'add')
+    and 'off-server' (default_enabled False). Returns
+    (kernel, on_counter, off_counter)."""
+    on_spec = McpServerSpec(
+        name="on-server",
+        transport="stdio",
+        command="unused",
+        tools_allow=("add",),
+        default_enabled=True,
+    )
+    off_spec = McpServerSpec(
+        name="off-server",
+        transport="stdio",
+        command="unused",
+        default_enabled=False,
+    )
+    on_counter = _CountingTransportFactory(load_fixture_server())
+    off_counter = _CountingTransportFactory(load_fixture_server())
+    counters = {"on-server": on_counter, "off-server": off_counter}
+
+    def transport_factory(spec):
+        return counters[spec.name](spec)
+
+    kernel = build_kernel(provider=EchoProvider(), base_dir=tmp_path, model=ModelId("echo"))
+    kernel.mcp = McpHost(
+        [on_spec, off_spec],
+        registry=kernel.registry,
+        hooks=kernel.hooks,
+        session=kernel.session,
+        transport_factory=transport_factory,
+    )
+    return kernel, on_counter, off_counter
+
+
+async def test_checklist_lists_servers_with_defaults(tmp_path):
+    kernel, on_counter, off_counter = _build_checklist_kernel(tmp_path)
+    app = HarnessApp(kernel)
+    try:
+        async with app.run_test() as pilot:
+            await pilot.pause(0.3)
+            screen = app.screen
+            assert isinstance(screen, ServerChecklistScreen)
+            assert screen.query_one("#chk-on-server").value is True
+            assert screen.query_one("#chk-off-server").value is False
+            await pilot.press("enter")
+            await pilot.pause(0.3)
+    finally:
+        if app._mcp_errlog is not None:
+            app._mcp_errlog.close()
+        await kernel.mcp.stop()
+        kernel.session.close()
+
+
+async def test_unchecked_server_never_starts(tmp_path):
+    kernel, on_counter, off_counter = _build_checklist_kernel(tmp_path)
+    app = HarnessApp(kernel)
+    async with app.run_test() as pilot:
+        await pilot.pause(0.3)
+        await pilot.press("enter")  # accept defaults: off-server stays unchecked
+        await pilot.pause(0.3)
+    try:
+        assert off_counter.calls == 0  # transport factory never invoked
+        names = {str(s.name) for s in kernel.registry.specs()}
+        assert not any(n.startswith("mcp__off-server__") for n in names)
+        assert "off-server" not in kernel.mcp.connections
+    finally:
+        if app._mcp_errlog is not None:
+            app._mcp_errlog.close()
+        await kernel.mcp.stop()
+        kernel.session.close()
+
+
+async def test_checked_server_full_capability(tmp_path):
+    kernel, on_counter, off_counter = _build_checklist_kernel(tmp_path)
+    app = HarnessApp(kernel)
+    async with app.run_test() as pilot:
+        await pilot.pause(0.3)
+        await pilot.press("enter")  # accept defaults: on-server stays checked
+        await pilot.pause(0.3)
+    try:
+        assert on_counter.calls == 1
+        names = {str(s.name) for s in kernel.registry.specs()}
+        assert "mcp__on-server__add" in names
+        assert "mcp__on-server__fail" not in names  # tools_allow restricts to 'add'
+        result = await kernel.registry.get(ToolName("mcp__on-server__add"))({"a": 2, "b": 2})
+        assert result == "4"
+    finally:
+        if app._mcp_errlog is not None:
+            app._mcp_errlog.close()
+        await kernel.mcp.stop()
+        kernel.session.close()

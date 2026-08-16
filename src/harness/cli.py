@@ -218,7 +218,10 @@ async def run_once(kernel: Kernel, prompt: str) -> str:
     pump_tasks: list = []
     try:
         if kernel.mcp is not None:
-            for warning in await kernel.mcp.start():
+            # Headless never shows the TUI checklist -- there is no one to ask,
+            # so only the servers pre-checked by default_enabled ever start.
+            only = {s.name for s in kernel.mcp.specs if s.default_enabled}
+            for warning in await kernel.mcp.start(only=only):
                 print(f"warning: {warning}", file=sys.stderr)
         if not kernel.resumed:
             await kernel.loop.start()

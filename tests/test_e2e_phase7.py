@@ -73,6 +73,8 @@ async def test_memory_plugin_full_session_in_tui(tmp_path, monkeypatch):
     )
     try:
         async with app.run_test() as pilot:
+            await pilot.pause(0.5)  # checklist mounts
+            await pilot.press("enter")  # accept defaults -- default_enabled=True
             await pilot.pause(0.8)
             assert "# Memory" in app.kernel.loop.system_prompt
             # The skills-inventory lifecycle hook injects this header; assert it
