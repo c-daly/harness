@@ -18,19 +18,33 @@ from textual.screen import ModalScreen
 from textual.widgets import Checkbox, Input, RichLog, Static
 from textual.worker import WorkerCancelled, WorkerFailed
 
-from harness.cli import Kernel
+from harness.cli import Kernel, build_kernel
 from harness.frontmatter import CommandDef
-from harness.events import CustomEvent, RetryAttempted, ToolCallCompleted, ToolCallProposed
+from harness.events import (
+    CompactionApplied,
+    CustomEvent,
+    RetryAttempted,
+    ToolCallCompleted,
+    ToolCallProposed,
+)
+from harness.fold import fold
 from harness.hooks import ProposedToolCall
 from harness.interaction import PermissionRequest
+from harness.log import read_session
 from harness.mcp_host import McpHost
-from harness.messages import Role
-from harness.provider import TextDelta, ThinkingDelta
+from harness.messages import Message, Role
+from harness.provider import TextDelta, ThinkingDelta, collect
 from harness.telemetry import TelemetrySubscriber, open_store_memory, run_rollup
 from harness.tui_support import HistoryRing, SlashCommand, expand_file_mentions, parse_slash_command
-from harness.types import ModelId
+from harness.types import ModelId, SessionId
 
 _SNIPPET_CAP = 200
+
+_COMPACT_INSTRUCTION = (
+    "Summarize the conversation above in a concise handoff paragraph: key facts, "
+    "decisions made, and any open threads or next steps. Respond with the summary "
+    "text only, no preamble."
+)
 
 # A constrained model is one that either self-identifies as "local" (small,
 # self-hosted) or advertises a small context window; the threshold and
@@ -205,14 +219,29 @@ class HarnessApp(App[None]):
     _THOUGHT_MODES = ("collapse", "full", "off")
 
     def __init__(
-        self, kernel: Kernel, *, catalog_path=None, ask: "AppBoundAsk | None" = None
+        self,
+        kernel: Kernel,
+        *,
+        catalog_path=None,
+        ask: "AppBoundAsk | None" = None,
+        native_tools: bool = False,
+        workspace_root: "Path | None" = None,
+        routing_rules=None,
     ) -> None:
         super().__init__()
         self.kernel = kernel
         self.catalog_path = catalog_path
+        # Startup inputs a kernel rebuild (/clear, /resume) needs that are NOT
+        # recoverable from the Kernel object itself. Everything else -- provider,
+        # model, pricing, tags, plugins, resolver, and (via resolver.engine) the
+        # permission engine -- is read back off self.kernel in _rebuild_kernel.
+        self._native_tools = native_tools
+        self._workspace_root = workspace_root
+        self._routing_rules = routing_rules
         self._turn_worker = None
         self._interrupting = False
         self._ended = False
+        self._bus_pump_worker = None
         self._stream_buffer = ""
         # /thoughts mode: session-local, not persisted; not reset per turn.
         self._thought_mode = "collapse"  # "collapse" | "full" | "off"
@@ -363,7 +392,9 @@ class HarnessApp(App[None]):
                         group="driver",
                         exit_on_error=False,
                     )
-        self.run_worker(self._bus_pump(_bus_queue), group="driver", exit_on_error=False)
+        self._bus_pump_worker = self.run_worker(
+            self._bus_pump(_bus_queue), group="driver", exit_on_error=False
+        )
         self.set_interval(1.0, self.refresh_stats)
 
     def _render_resumed_history(self) -> None:
@@ -372,6 +403,66 @@ class HarnessApp(App[None]):
             if text:
                 prefix = "> " if message.role == Role.USER else ""
                 self.say(prefix, text)
+
+    async def _rebuild_kernel(self, resume_session_id: "SessionId | None" = None) -> None:
+        """Tear down the current kernel/session cleanly and rebuild in place:
+        same provider instance, same permission engine, same resolver/ask
+        wiring -- then rewire chunk streaming, event rendering, and stats onto
+        the new session. Backs /clear (resume_session_id=None) here; /resume
+        passes a session id to reopen instead of starting fresh (Task 4).
+
+        Callers own the "no turn running" guard -- this assumes it's safe to
+        tear down the current kernel.
+        """
+        old_kernel = self.kernel
+        try:
+            await old_kernel.loop.end()
+        except RuntimeError:
+            pass  # already ended elsewhere
+        except Exception as exc:
+            self.say("! ", f"session end failed: {exc}")
+        old_kernel.session.close()
+
+        # McpHost specs carry over so the rebuilt kernel keeps the same server
+        # set wired in principle; actually restarting/re-prompting the
+        # checklist is out of scope here (v1 gap -- see task report).
+        mcp_specs = old_kernel.mcp.specs if old_kernel.mcp is not None else None
+        kernel = build_kernel(
+            provider=old_kernel.provider,
+            base_dir=old_kernel.session.base,
+            model=old_kernel.loop.model,
+            pricing=old_kernel.loop.pricing,
+            pricing_for=old_kernel.loop.pricing_for,
+            resume_session_id=resume_session_id,
+            permissions=getattr(old_kernel.runner.resolver, "engine", None),
+            tags=old_kernel.tags,
+            resolver=old_kernel.runner.resolver,
+            plugins=old_kernel.plugins,
+            mcp=mcp_specs,
+            workspace_root=self._workspace_root,
+            native_tools=self._native_tools,
+            routing_rules=self._routing_rules,
+            model_pinned=old_kernel.loop.model_pinned,
+        )
+        self.kernel = kernel
+        kernel.loop.on_chunk = self._on_chunk
+
+        # Re-subscribe stats BEFORE start()/resumed-render so SessionStarted (or
+        # SessionResumed) lands in the fresh queue -- mirrors _session_driver's
+        # mount-time ordering.
+        self._stats_queue = kernel.session.bus.subscribe(maxsize=4096)
+
+        _bus_queue = kernel.session.bus.subscribe()
+        if self._bus_pump_worker is not None:
+            self._bus_pump_worker.cancel()
+        self._bus_pump_worker = self.run_worker(
+            self._bus_pump(_bus_queue), group="driver", exit_on_error=False
+        )
+
+        if not kernel.resumed:
+            await kernel.loop.start()
+        else:
+            self._render_resumed_history()
 
     async def _bus_pump(self, queue) -> None:
         while True:
@@ -460,12 +551,47 @@ class HarnessApp(App[None]):
         self._clear_live()
         self.say("", reply)
 
+    async def _run_compact(self) -> None:
+        """One summarize completion through the CURRENT model/provider over
+        the whole transcript; on success, replace loop.history with the
+        summary as a system message -- exactly what CompactionApplied's fold
+        replay produces (fold.py:89-97), so a later resume/read-back matches.
+        """
+        kernel = self.kernel
+        loop = kernel.loop
+        state = fold(read_session(kernel.session.base, kernel.session.id, repair=True))
+        if not state._msg_seqs:
+            self.say("! ", "nothing to compact")
+            return
+        from_seq, to_seq = state._msg_seqs[0], state._msg_seqs[-1]
+        messages = [
+            Message.system_text(loop.system_prompt),
+            *loop.history,
+            Message.user_text(_COMPACT_INSTRUCTION),
+        ]
+        try:
+            # Issued directly against the provider (bypassing the dispatcher)
+            # so this admin call does not itself become a message-bearing log
+            # event that CompactionApplied's fold would need to also collapse.
+            summary_message, _usage, _stop = await collect(
+                loop.provider.complete(model=loop.model, messages=messages, tools=())
+            )
+        except Exception as exc:
+            self.say("! ", f"compact failed: {exc}")
+            return
+        summary = summary_message.text()
+        kernel.session.append(
+            CompactionApplied(from_seq=from_seq, to_seq=to_seq, summary=summary, model=loop.model)
+        )
+        loop.history = [Message.system_text(f"Summary of earlier conversation: {summary}")]
+        self.say("", f"compacted {len(state.messages)} messages -> 1 summary")
+
     async def _run_command(self, command: SlashCommand) -> None:
         if command.name == "help":
             self.say(
                 "",
-                "/help  /model [alias]  /thoughts [collapse|full|off]  /tools  /quit  "
-                "— @/path attaches a file",
+                "/help  /model [alias]  /thoughts [collapse|full|off]  /clear  /compact  "
+                "/tools  /quit  — @/path attaches a file",
             )
             if self._plugin_commands:
                 self.say(
@@ -484,6 +610,21 @@ class HarnessApp(App[None]):
             self.run_worker(self._switch_model(command.arg), group="driver", exit_on_error=False)
         elif command.name == "thoughts":
             self._set_thought_mode(command.arg.strip())
+        elif command.name == "clear":
+            if self._turn_worker is not None and self._turn_worker.is_running:
+                self.say("! ", "a turn is already running -- Esc to interrupt it first")
+                return
+            await self._rebuild_kernel()
+            self._clear_live()
+            self.query_one("#transcript", RichLog).clear()
+            self.say("", f"cleared -- new session {self.kernel.session.id}")
+        elif command.name == "compact":
+            if self._turn_worker is not None and self._turn_worker.is_running:
+                self.say("! ", "a turn is already running -- Esc to interrupt it first")
+                return
+            self._turn_worker = self.run_worker(
+                self._run_compact(), group="agent", exit_on_error=False
+            )
         elif command.name in self._plugin_commands:
             body = self._plugin_commands[command.name].body
             prompt = body.replace("$ARGUMENTS", command.arg)
@@ -659,14 +800,32 @@ class HarnessApp(App[None]):
         await self._finish()
 
 
-async def run_tui(kernel: Kernel, *, catalog_path=None, ask: "AppBoundAsk | None" = None) -> None:
-    app = HarnessApp(kernel, catalog_path=catalog_path, ask=ask)
+async def run_tui(
+    kernel: Kernel,
+    *,
+    catalog_path=None,
+    ask: "AppBoundAsk | None" = None,
+    native_tools: bool = False,
+    workspace_root=None,
+    routing_rules=None,
+) -> None:
+    app = HarnessApp(
+        kernel,
+        catalog_path=catalog_path,
+        ask=ask,
+        native_tools=native_tools,
+        workspace_root=workspace_root,
+        routing_rules=routing_rules,
+    )
     try:
         await app.run_async()
     finally:
-        if kernel.mcp is not None:
-            await kernel.mcp.stop()
-            kernel.mcp.flush_events()
+        # app.kernel, not the `kernel` param -- /clear may have rebuilt it in
+        # place, and the live kernel at exit is the one that needs teardown.
+        live = app.kernel
+        if live.mcp is not None:
+            await live.mcp.stop()
+            live.mcp.flush_events()
         if app._mcp_errlog is not None:
             app._mcp_errlog.close()
-        kernel.session.close()
+        live.session.close()

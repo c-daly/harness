@@ -56,6 +56,19 @@ tool calls, and answer permission prompts inline. Key bindings:
   mode. The mode is session-local and not persisted across restarts. This is
   what makes a reasoning-heavy local model (e.g. a local Qwen3.6 quant) show
   visible progress instead of appearing hung during a long thinking phase.
+- `/clear` — end the current session cleanly and start a fresh one: new
+  session id, empty history, but the same provider instance, permission
+  engine, and resolver wiring the app started with (kernel rebuild-in-place,
+  not a process restart). Refused with a message while a turn is running.
+- `/compact` — fold the whole transcript into one summary. Issues a single
+  completion through the CURRENT model asking for a handoff-quality summary,
+  then replaces `loop.history` with that summary as a system message and
+  records a `CompactionApplied` event in the session log. It's event-sourced
+  and resume-safe: reading the session back later (including via `--resume`)
+  reconstructs the same collapsed state, because the fold applies the exact
+  same replacement on replay. On failure (the summarize call errors) history
+  is left untouched, nothing is logged, and the error is shown. Refused while
+  a turn is running.
 
 The bottom line shows live token counts and stats for the session.
 

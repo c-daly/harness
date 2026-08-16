@@ -543,7 +543,16 @@ def _run_main() -> None:
             routing_rules=routing_rules,
             model_pinned=model_pinned,
         )
-        asyncio.run(run_tui(kernel, catalog_path=args.catalog, ask=ask))
+        asyncio.run(
+            run_tui(
+                kernel,
+                catalog_path=args.catalog,
+                ask=ask,
+                native_tools=True,
+                workspace_root=args.workspace,
+                routing_rules=routing_rules,
+            )
+        )
         return
     kernel = build_kernel(
         provider=provider,

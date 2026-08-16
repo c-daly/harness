@@ -505,10 +505,16 @@ def test_mcp_import_writes_scope_file_and_warns(tmp_path, capsys):
 def test_no_prompt_routes_to_tui(tmp_path, monkeypatch):
     launched: dict = {}
 
-    async def fake_run_tui(kernel, *, catalog_path=None, ask=None):
+    async def fake_run_tui(
+        kernel, *, catalog_path=None, ask=None, native_tools=False, workspace_root=None,
+        routing_rules=None,
+    ):
         launched["kernel"] = kernel
         launched["catalog_path"] = catalog_path
         launched["ask"] = ask
+        launched["native_tools"] = native_tools
+        launched["workspace_root"] = workspace_root
+        launched["routing_rules"] = routing_rules
 
     monkeypatch.setattr("harness.tui.run_tui", fake_run_tui)
     run_cli("--base-dir", str(tmp_path))  # no -p
@@ -516,6 +522,9 @@ def test_no_prompt_routes_to_tui(tmp_path, monkeypatch):
     assert kernel.loop.dispatcher.resolver.name == "tui"
     assert type(kernel.provider).__name__ == "EchoProvider"
     assert launched["ask"] is not None  # AppBoundAsk threaded through
+    # threaded through so a /clear kernel rebuild can reproduce the same
+    # build_kernel(native_tools=..., workspace_root=..., routing_rules=...) call
+    assert launched["native_tools"] is True
     kernel.session.close()  # fake_run_tui skipped teardown
 
 

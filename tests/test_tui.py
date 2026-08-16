@@ -8,9 +8,11 @@ from mcp.shared.memory import create_client_server_memory_streams
 from textual.widgets import Input, RichLog, Static
 
 from harness.cli import build_kernel
+from harness.fold import fold
 from harness.log import read_session
 from harness.mcp_config import McpServerSpec
 from harness.mcp_host import McpHost
+from harness.messages import Role
 from harness.permissions import PermissionEngine, PermissionRule, RuleSet
 from harness.provider import (
     EchoProvider,
@@ -86,6 +88,9 @@ def make_app(tmp_path, catalog_path=None, plugins=None, **kernel_kwargs) -> Harn
       engine: PermissionEngine -- when given, wires up AppBoundAsk + TuiResolver.
       catalog_path: Path -- when given, forwarded to HarnessApp for /model.
       plugins: LoadedPlugins -- when given, forwarded to build_kernel.
+      native_tools/workspace_root/routing_rules -- forwarded to BOTH build_kernel
+      (initial kernel) and HarnessApp (so a /clear rebuild reuses them too,
+      mirroring cli.py's run_tui(..., native_tools=True, workspace_root=..., ...)).
     """
     engine = kernel_kwargs.pop("engine", None)
     ask: AppBoundAsk | None = None
@@ -93,6 +98,9 @@ def make_app(tmp_path, catalog_path=None, plugins=None, **kernel_kwargs) -> Harn
     if engine is not None:
         ask = AppBoundAsk()
         resolver = TuiResolver(ask=ask, engine=engine)
+    native_tools = kernel_kwargs.pop("native_tools", False)
+    workspace_root = kernel_kwargs.pop("workspace_root", None)
+    routing_rules = kernel_kwargs.pop("routing_rules", None)
     build_kwargs: dict = dict(
         provider=kernel_kwargs.pop("provider", EchoProvider()),
         base_dir=tmp_path,
@@ -104,9 +112,22 @@ def make_app(tmp_path, catalog_path=None, plugins=None, **kernel_kwargs) -> Harn
         build_kwargs["permissions"] = engine
     if plugins is not None:
         build_kwargs["plugins"] = plugins
+    if native_tools:
+        build_kwargs["native_tools"] = True
+    if workspace_root is not None:
+        build_kwargs["workspace_root"] = workspace_root
+    if routing_rules is not None:
+        build_kwargs["routing_rules"] = routing_rules
     build_kwargs.update(kernel_kwargs)
     kernel = build_kernel(**build_kwargs)
-    return HarnessApp(kernel, catalog_path=catalog_path, ask=ask)
+    return HarnessApp(
+        kernel,
+        catalog_path=catalog_path,
+        ask=ask,
+        native_tools=native_tools,
+        workspace_root=workspace_root,
+        routing_rules=routing_rules,
+    )
 
 
 async def test_submit_renders_user_line_and_reply(tmp_path):
@@ -1183,3 +1204,163 @@ async def test_context_toast_fires_for_constrained_model_not_for_unconstrained(t
         await pilot.press(*"/model big-cloud", "enter")
         await pilot.pause(0.4)
         assert not app._notifications  # unconstrained model: no toast at all
+
+
+# --- /clear ---
+
+
+async def test_clear_rebuilds_kernel_fresh_session_same_wiring(tmp_path):
+    engine = PermissionEngine(
+        [RuleSet(rules=[PermissionRule(action="deny", tool="nonexistent_tool")], default="allow")]
+    )
+    provider = FakeProvider([text_turn("hi there")])
+    app = make_app(tmp_path, provider=provider, model=ModelId("fake:echo"), engine=engine)
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        await pilot.click("#prompt")
+        await pilot.press(*"hello", "enter")
+        await pilot.pause(0.2)
+        old_session_id = app.kernel.session.id
+        old_provider = app.kernel.provider
+        await pilot.press(*"/clear", "enter")
+        await pilot.pause(0.2)
+        assert app.kernel.session.id != old_session_id
+        assert app.kernel.loop.history == []
+        assert app.kernel.provider is old_provider
+        assert app.kernel.loop.provider is old_provider
+        assert app.kernel.runner.resolver.engine is engine
+        lines = "\n".join(str(line) for line in app.query_one(RichLog).lines)
+        assert "cleared" in lines
+
+
+async def test_clear_refused_while_turn_running(tmp_path):
+    provider = GatedProvider()
+    app = make_app(tmp_path, provider=provider, model=ModelId("gated"))
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        await pilot.click("#prompt")
+        await pilot.press(*"stuck", "enter")
+        await pilot.pause(0.1)  # turn parked at the gate
+        old_session_id = app.kernel.session.id
+        await pilot.press(*"/clear", "enter")
+        await pilot.pause(0.1)
+        lines = "\n".join(str(line) for line in app.query_one(RichLog).lines)
+        assert "already running" in lines
+        assert app.kernel.session.id == old_session_id
+        provider.release.set()  # let the first turn finish before teardown
+        await pilot.pause(0.3)
+
+
+async def test_turn_after_clear_completes_normally(tmp_path):
+    app = make_app(tmp_path)  # default EchoProvider
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        await pilot.click("#prompt")
+        await pilot.press(*"before", "enter")
+        await pilot.pause(0.2)
+        await pilot.press(*"/clear", "enter")
+        await pilot.pause(0.2)
+        await pilot.press(*"after", "enter")
+        await pilot.pause(0.2)
+        lines = "\n".join(str(line) for line in app.query_one(RichLog).lines)
+        assert "echo: after" in lines
+
+
+# --- /compact ---
+
+
+async def test_compact_summarizes_history_and_round_trips(tmp_path):
+    provider = FakeProvider(
+        [text_turn("first reply"), text_turn("second reply"), text_turn("SUMMARY-TEXT")]
+    )
+    app = make_app(tmp_path, provider=provider, model=ModelId("fake:echo"))
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        await pilot.click("#prompt")
+        await pilot.press(*"one", "enter")
+        await pilot.pause(0.2)
+        await pilot.press(*"two", "enter")
+        await pilot.pause(0.2)
+        await pilot.press(*"/compact", "enter")
+        await pilot.pause(0.3)
+        loop = app.kernel.loop
+        assert len(loop.history) == 1
+        assert loop.history[0].role == Role.SYSTEM
+        assert "SUMMARY-TEXT" in loop.history[0].text()
+
+    envelopes = read_session(tmp_path, app.kernel.session.id)
+    compaction_envs = [e for e in envelopes if e.event.type == "compaction_applied"]
+    assert len(compaction_envs) == 1  # among the log's LAST events, ahead of the app's own SessionEnded
+    compaction = compaction_envs[0].event
+    assert compaction.summary == "SUMMARY-TEXT"
+    msg_bearing = [
+        e
+        for e in envelopes
+        if e.seq < compaction_envs[0].seq
+        and e.event.type in ("user_message", "model_call_completed")
+    ]
+    assert len(msg_bearing) == 4  # 2 user turns + 2 assistant replies
+    assert compaction.from_seq == msg_bearing[0].seq
+    assert compaction.to_seq == msg_bearing[-1].seq
+
+    folded = fold(envelopes)
+    assert len(folded.messages) == 1
+    assert folded.messages[0].role == Role.SYSTEM
+    assert folded.messages[0].text() == "Summary of earlier conversation: SUMMARY-TEXT"
+
+
+class _FailOnNthCallProvider:
+    """Serves ok_script turns normally; the Nth .complete() call raises."""
+
+    def __init__(self, ok_script, fail_at):
+        self._ok = list(ok_script)
+        self._fail_at = fail_at
+        self._n = 0
+
+    async def complete(self, *, model, messages, tools=()):
+        self._n += 1
+        if self._n == self._fail_at:
+            raise RuntimeError("summarize boom")
+        for chunk in self._ok.pop(0):
+            yield chunk
+
+
+async def test_compact_failure_leaves_history_untouched_and_no_event(tmp_path):
+    provider = _FailOnNthCallProvider(
+        [text_turn("first reply"), text_turn("second reply")], fail_at=3
+    )
+    app = make_app(tmp_path, provider=provider, model=ModelId("fake:echo"))
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        await pilot.click("#prompt")
+        await pilot.press(*"one", "enter")
+        await pilot.pause(0.2)
+        await pilot.press(*"two", "enter")
+        await pilot.pause(0.2)
+        history_before = list(app.kernel.loop.history)
+        await pilot.press(*"/compact", "enter")
+        await pilot.pause(0.3)
+        assert app.kernel.loop.history == history_before
+        lines = "\n".join(str(line) for line in app.query_one(RichLog).lines)
+        assert "compact failed" in lines
+
+    envelopes = read_session(tmp_path, app.kernel.session.id)
+    assert "compaction_applied" not in [e.event.type for e in envelopes]
+
+
+async def test_compact_refused_while_turn_running(tmp_path):
+    provider = GatedProvider()
+    app = make_app(tmp_path, provider=provider, model=ModelId("gated"))
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        await pilot.click("#prompt")
+        await pilot.press(*"stuck", "enter")
+        await pilot.pause(0.1)  # turn parked at the gate
+        history_before = list(app.kernel.loop.history)
+        await pilot.press(*"/compact", "enter")
+        await pilot.pause(0.1)
+        lines = "\n".join(str(line) for line in app.query_one(RichLog).lines)
+        assert "already running" in lines
+        assert app.kernel.loop.history == history_before
+        provider.release.set()  # let the first turn finish before teardown
+        await pilot.pause(0.3)
