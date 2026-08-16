@@ -1806,6 +1806,86 @@ async def test_compact_refused_while_turn_running(tmp_path):
         await pilot.pause(0.3)
 
 
+class _GateOnNthCallProvider:
+    """Serves ok_script turns normally; the Nth .complete() call parks on a
+    gate until the test releases it -- deterministic in-flight /compact."""
+
+    def __init__(self, ok_script, gate_at):
+        self._ok = list(ok_script)
+        self._gate_at = gate_at
+        self._n = 0
+        self.release = asyncio.Event()
+
+    async def complete(self, *, model, messages, tools=()):
+        self._n += 1
+        if self._n == self._gate_at:
+            await self.release.wait()
+        for chunk in self._ok.pop(0):
+            yield chunk
+
+
+async def test_esc_during_compact_cancels_cleanly_without_user_interrupt(tmp_path):
+    """Esc-during-/compact must NOT write a UserInterrupt fact -- in an
+    event-sourced log that would be a false fact: /compact is an internal
+    admin call, not a user turn being interrupted. The compact worker gets
+    its own cancellation path (not routed through _after_interrupt's
+    loop.interrupt_turn()): history untouched, no UserInterrupt envelope,
+    'compact cancelled' shown instead of 'interrupted'."""
+    provider = _GateOnNthCallProvider(
+        [text_turn("first reply"), text_turn("SUMMARY-TEXT")], gate_at=2
+    )
+    app = make_app(tmp_path, provider=provider, model=ModelId("gated"))
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        await pilot.click("#prompt")
+        await pilot.press(*"one", "enter")
+        await pilot.pause(0.2)
+        history_before = list(app.kernel.loop.history)
+
+        await pilot.press(*"/compact", "enter")
+        await pilot.pause(0.1)  # parked at the gate inside _run_compact's summarize call
+        assert app._compact_worker is not None and app._compact_worker.is_running
+
+        await pilot.press("escape")
+        await pilot.pause(0.2)
+
+        lines = "\n".join(str(line) for line in app.query_one(RichLog).lines)
+        assert "compact cancelled" in lines
+        assert "interrupted" not in lines  # NOT the turn-interrupt path
+        assert app.kernel.loop.history == history_before
+
+    envelopes = read_session(tmp_path, app.kernel.session.id)
+    event_types = [e.event.type for e in envelopes]
+    assert "user_interrupt" not in event_types
+    assert "compaction_applied" not in event_types
+
+
+async def test_compact_worker_blocks_other_commands_while_running(tmp_path):
+    """The busy guard must ALSO check the (separately tracked) compact
+    worker -- /compact still blocks other commands while it's running, even
+    though it's no longer tracked in _turn_worker (item 8)."""
+    provider = _GateOnNthCallProvider(
+        [text_turn("first reply"), text_turn("SUMMARY-TEXT")], gate_at=2
+    )
+    app = make_app(tmp_path, provider=provider, model=ModelId("gated"))
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        await pilot.click("#prompt")
+        await pilot.press(*"one", "enter")
+        await pilot.pause(0.2)
+
+        await pilot.press(*"/compact", "enter")
+        await pilot.pause(0.1)  # parked at the gate
+
+        await pilot.press(*"sneaky", "enter")
+        await pilot.pause(0.1)
+        lines = "\n".join(str(line) for line in app.query_one(RichLog).lines)
+        assert "already running" in lines
+
+        provider.release.set()
+        await pilot.pause(0.3)
+
+
 # --- /resume ---
 
 

@@ -94,7 +94,11 @@ tool calls, and answer permission prompts inline. Key bindings:
   reconstructs the same collapsed state, because the fold applies the exact
   same replacement on replay. On failure (the summarize call errors) history
   is left untouched, nothing is logged, and the error is shown. Refused while
-  a turn is running.
+  a turn (or another `/compact`) is running. Esc cancels an in-flight
+  `/compact` cleanly -- history untouched, nothing logged -- without writing
+  a `UserInterrupt` event: unlike interrupting a real turn, a `/compact` is
+  an internal admin call, not a user turn, so no interrupt fact belongs in
+  the log for it.
 - `/resume` — pick a prior session and reopen it in place (same kernel
   rebuild `/clear` uses, but reopening instead of starting fresh). Shows a
   picker listing every other session under `--base-dir`, newest first, each

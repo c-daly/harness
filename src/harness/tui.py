@@ -446,6 +446,13 @@ class HarnessApp(App[None]):
         self._workspace_root = workspace_root
         self._routing_rules = routing_rules
         self._turn_worker = None
+        # /compact's own worker (item 8): tracked SEPARATELY from
+        # _turn_worker so Esc during /compact takes its own cancellation
+        # path (_after_compact_interrupt) rather than _after_interrupt's
+        # loop.interrupt_turn() -- /compact is an internal admin call, not
+        # a user turn, and a UserInterrupt envelope for it would be a false
+        # fact in the event-sourced log.
+        self._compact_worker = None
         self._interrupting = False
         # True for the full span of a kernel rebuild (/clear, /resume) --
         # set at entry to _rebuild_kernel, cleared in its finally. A turn
@@ -1000,13 +1007,17 @@ class HarnessApp(App[None]):
     def _refuse_if_busy(self) -> bool:
         """Shared guard for anything that would touch the kernel or start a
         turn: refuses (with a visible message) while a kernel rebuild is
-        mid-flight, then while a turn is already running. Returns True if
-        the caller should bail out without acting."""
+        mid-flight, then while a turn is already running, then while a
+        /compact is already running (tracked separately -- item 8). Returns
+        True if the caller should bail out without acting."""
         if self._rebuild_in_progress:
             self.say("! ", "a session rebuild is in progress -- try again in a moment")
             return True
         if self._turn_worker is not None and self._turn_worker.is_running:
             self.say("! ", "a turn is already running -- Esc to interrupt it first")
+            return True
+        if self._compact_worker is not None and self._compact_worker.is_running:
+            self.say("! ", "a /compact is already running -- Esc to cancel it first")
             return True
         return False
 
@@ -1275,7 +1286,10 @@ class HarnessApp(App[None]):
         elif command.name == "compact":
             if self._refuse_if_busy():
                 return
-            self._turn_worker = self.run_worker(
+            # NOT _turn_worker (item 8): /compact gets its own cancellation
+            # path via action_interrupt/_after_compact_interrupt, so Esc
+            # here never routes through loop.interrupt_turn()'s UserInterrupt.
+            self._compact_worker = self.run_worker(
                 self._run_compact(), group="agent", exit_on_error=False
             )
         elif command.name == "resume":
@@ -1445,6 +1459,18 @@ class HarnessApp(App[None]):
             # (loop.end/mcp.stop/mcp.start) is not safe to cancel, so Esc is
             # a no-op here rather than tearing down a half-built kernel.
             return
+        # item 8: /compact's own worker takes priority over _turn_worker --
+        # it's tracked separately precisely so Esc during a /compact never
+        # routes through _after_interrupt's loop.interrupt_turn() (a
+        # UserInterrupt would be a false fact for an internal admin call).
+        compact_worker = self._compact_worker
+        if compact_worker is not None and not compact_worker.is_finished and not self._interrupting:
+            self._interrupting = True
+            compact_worker.cancel()
+            self.run_worker(
+                self._after_compact_interrupt(compact_worker), group="driver", exit_on_error=False
+            )
+            return
         worker = self._turn_worker
         if worker is None or worker.is_finished or self._interrupting:
             return
@@ -1453,6 +1479,21 @@ class HarnessApp(App[None]):
         self._interrupting = True
         worker.cancel()
         self.run_worker(self._after_interrupt(worker), group="driver", exit_on_error=False)
+
+    async def _after_compact_interrupt(self, worker) -> None:
+        """Esc-during-/compact's own cancellation path (item 8): cancels the
+        summarize call cleanly withOUT loop.interrupt_turn()'s UserInterrupt
+        -- /compact never touched loop.history yet at cancellation time (it
+        only replaces it on a SUCCESSFUL summarize, after this worker would
+        already be finished), so there's nothing to repair either."""
+        try:
+            try:
+                await worker.wait()
+            except (WorkerCancelled, WorkerFailed):
+                pass
+            self.say("! ", "compact cancelled")
+        finally:
+            self._interrupting = False
 
     async def _after_interrupt(self, worker) -> None:
         try:
