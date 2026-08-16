@@ -2234,6 +2234,49 @@ async def test_resume_build_kernel_failure_falls_back_to_fresh_session(tmp_path,
         assert "turn failed" not in lines
 
 
+async def test_resume_and_fresh_fallback_both_failing_shows_both_errors(tmp_path, monkeypatch):
+    """Belt-and-braces on the belt-and-braces: the FALLBACK rebuild
+    (`await self._rebuild_kernel()` with no resume_session_id) is its own
+    build_kernel call and can fail too. That must not escape _run_resume
+    silently (it runs as a worker with exit_on_error=False) leaving
+    app.kernel pointing at the already-torn-down kernel from the first
+    attempt with the user none the wiser -- the second error must be shown
+    plainly, not swallowed."""
+    await _write_seed_session(tmp_path, "hello from the past")
+
+    app = make_app(tmp_path)
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        await pilot.click("#prompt")
+
+        import harness.tui as tui_module
+
+        def always_flaky_build_kernel(*args, **kwargs):
+            if kwargs.get("resume_session_id") is not None:
+                raise RuntimeError("resume boom")
+            raise RuntimeError("fallback boom")
+
+        monkeypatch.setattr(tui_module, "build_kernel", always_flaky_build_kernel)
+
+        await pilot.press(*"/resume", "enter")
+        await pilot.pause(0.2)
+        assert isinstance(app.screen, SessionPickerScreen)
+        await pilot.press("enter")
+        await pilot.pause(0.3)  # both attempts have now failed
+
+        # .text (not str(line), which is Strip's debug repr): the long
+        # second message word-wraps across RichLog lines at this width, and
+        # a str(line)-joined check would splice a Strip repr boundary
+        # between "fallback" and "boom", false-negativing a plain substring
+        # check even with no separator.
+        lines = "".join(line.text for line in app.query_one(RichLog).lines)
+        assert "resume boom" in lines  # the first error is visible
+        assert "fallback boom" in lines  # the second error is ALSO visible
+        # no exception escaped the worker, and the rebuild flag is cleared
+        # even though both attempts failed
+        assert app._rebuild_in_progress is False
+
+
 # --- I-3 + parked-1: sync blocking work must not run on the event loop ---
 
 

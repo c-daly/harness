@@ -1236,7 +1236,20 @@ class HarnessApp(App[None]):
                 "! ",
                 f"resume of {chosen} failed ({exc}) -- falling back to a fresh session",
             )
-            await self._rebuild_kernel()
+            try:
+                await self._rebuild_kernel()
+            except Exception as exc2:
+                # The fallback is itself a build_kernel call and can fail too
+                # -- this must not escape silently (_run_resume runs as a
+                # worker with exit_on_error=False) and leave app.kernel
+                # pointing at the already-torn-down kernel from the first
+                # attempt with no visible sign anything is wrong.
+                self.say(
+                    "! ",
+                    f"resume failed: {exc}; fresh-session fallback also failed: {exc2}"
+                    " -- restart the app",
+                )
+                return
             self.say("", f"started fresh session {self.kernel.session.id}")
             return
         self.say("", f"resumed session {self.kernel.session.id}")
