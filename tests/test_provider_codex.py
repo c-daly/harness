@@ -2,6 +2,7 @@
 JSON-RPC surface (captured live from codex-cli 0.147.0). No subscription use."""
 
 import json
+import os
 import stat
 
 import pytest
@@ -22,6 +23,11 @@ def send(m):
 assert sys.argv[1] == "mcp-server", sys.argv
 open(sys.argv[0] + ".argv", "w").write(json.dumps(sys.argv[1:]))
 open(sys.argv[0] + ".env", "w").write(json.dumps(sorted(os.environ.keys())))
+_codex_home = os.environ.get("CODEX_HOME")
+open(sys.argv[0] + ".codexhome", "w").write(json.dumps({
+    "value": _codex_home,
+    "has_auth_json": bool(_codex_home) and os.path.isfile(os.path.join(_codex_home, "auth.json")),
+}))
 for line in sys.stdin:
     msg = json.loads(line)
     m = msg.get("method")
@@ -49,6 +55,18 @@ ERROR_CODEX = FAKE_CODEX.replace(
 )
 
 USER = [Message(role=Role.USER, blocks=(TextBlock(text="say pong"),))]
+
+
+@pytest.fixture(autouse=True)
+def _isolated_codex_home(tmp_path, monkeypatch):
+    """Every CodexProvider turn copies auth.json out of $CODEX_HOME (or
+    ~/.codex if unset) into a fresh scratch dir. Default CODEX_HOME to an
+    empty directory with no auth.json so tests never touch this machine's
+    real ChatGPT credentials as a side effect; test_call_contract overrides
+    this to exercise the copy explicitly."""
+    empty = tmp_path / "no-codex-home"
+    empty.mkdir()
+    monkeypatch.setenv("CODEX_HOME", str(empty))
 
 
 def _fake(tmp_path, body: str) -> str:
@@ -81,6 +99,12 @@ async def test_happy_turn_maps_text(tmp_path):
 async def test_call_contract(tmp_path, monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    # A fake "user" CODEX_HOME with a real auth.json, so this test can prove
+    # it gets copied into the isolated scratch home the child actually sees.
+    fake_user_home = tmp_path / "fake-user-codex-home"
+    fake_user_home.mkdir()
+    (fake_user_home / "auth.json").write_text('{"fake": "auth"}')
+    monkeypatch.setenv("CODEX_HOME", str(fake_user_home))
     binary = _fake(tmp_path, FAKE_CODEX)
     provider = _provider(binary)
     await collect(provider.complete(model=ModelId("codex/default"), messages=USER, tools=()))
@@ -93,12 +117,20 @@ async def test_call_contract(tmp_path, monkeypatch):
     assert args["approval-policy"] == "never"
     assert "say pong" in args["prompt"]
     assert "model" not in args  # "default" suffix means no override
+    assert args["base-instructions"]  # non-empty orientation block
+    assert "mcp__harness" in args["base-instructions"]
     url = args["config"]["mcp_servers"]["harness"]["url"]
     assert url.startswith("http://127.0.0.1")  # harness's per-turn McpToolServer
     assert json.loads(open(binary + ".cwdcheck").read()) is True  # existing, empty scratch dir
     env_keys = json.loads(open(binary + ".env").read())
     assert "OPENAI_API_KEY" not in env_keys and "ANTHROPIC_API_KEY" not in env_keys
     assert "PATH" in env_keys
+    assert "CODEX_HOME" in env_keys
+    codex_home = json.loads(open(binary + ".codexhome").read())
+    # isolated: the child's CODEX_HOME is a scratch dir, not the user's real one
+    assert codex_home["value"] not in (None, str(fake_user_home))
+    assert codex_home["has_auth_json"] is True  # auth.json carried over from the fake source
+    assert not os.path.exists(codex_home["value"])  # torn down after the turn
 
 
 async def test_model_suffix_becomes_override(tmp_path):

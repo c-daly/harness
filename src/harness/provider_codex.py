@@ -3,17 +3,27 @@ child driven over MCP. The harness's tools reach codex via the `codex` tool
 call's own `config.mcp_servers` argument, not a spawn-time `-c` override:
 live verification against codex-cli 0.147.0 showed `-c mcp_servers=...` is
 inert for conversation MCP servers, so the per-turn McpToolServer's url
-travels inside the tool call arguments instead. sandbox=read-only,
-approval-policy=never, and a fresh, empty per-turn scratch `cwd`: the harness
-permission engine is the only gate. Codex's built-in shell is not disabled
-(tool parity is additive, documented in the guide) -- pointing its cwd at an
-empty scratch directory rather than the real workspace is what keeps the
-harness's MCP tools the only path back to real files.
+travels inside the tool call arguments instead -- but that per-call config
+MERGES with the user's own ~/.codex/config.toml rather than replacing it
+(live-verified: the user's own configured MCP servers started too), so each
+turn also spawns with an isolated, scratch CODEX_HOME (only auth.json
+carried over) to keep those out of the conversation entirely. sandbox=
+read-only, approval-policy=never, and a fresh, empty per-turn scratch `cwd`:
+the harness permission engine is the only gate. Codex's built-in shell is
+not disabled (tool parity is additive, documented in the guide) -- pointing
+its cwd at an empty scratch directory rather than the real workspace is
+what keeps the harness's MCP tools the only path back to real files. A
+`base-instructions` argument orients the model to that fact explicitly:
+live verification showed codex trusting its (intentionally empty) scratch
+cwd at face value and declaring files missing without ever trying the
+harness tools.
 """
 
 import asyncio
+import os
 import shutil
 import tempfile
+from pathlib import Path
 from typing import AsyncIterator, Sequence
 
 import anyio
@@ -30,6 +40,38 @@ from harness.provider import Chunk, StreamStop, TextDelta, Usage, UsageReport
 from harness.provider_claude_code import _render_prompt, _sanitized_env
 from harness.tools import ToolSpec
 from harness.types import ModelId
+
+# Told once per turn via the "base-instructions" tool argument: live
+# verification showed codex otherwise trusting its (intentionally empty)
+# scratch cwd at face value -- e.g. declaring "pyproject.toml is missing"
+# without ever calling a harness tool to check.
+_BASE_INSTRUCTIONS = (
+    "You are running as a model backend inside an agent harness, not as an "
+    "interactive coding assistant with direct workspace access. All file, "
+    "directory, and system access must go through the mcp__harness__* MCP "
+    "tools; they are the only real view of the user's project. Your local "
+    "cwd is an intentionally empty scratch directory and proves nothing "
+    "about what files exist -- never conclude a file or directory is "
+    "missing without checking via the harness tools first. Your own shell "
+    "is for pure computation only, not for inspecting or locating project "
+    "files."
+)
+
+
+def _scratch_codex_home() -> str:
+    """A fresh, isolated CODEX_HOME with only auth.json carried over from the
+    user's real one ($CODEX_HOME if set, else ~/.codex) -- so the per-call
+    `config` override above doesn't merge with the user's own
+    config.toml/MCP servers (live-verified: it merges, it does not
+    replace)."""
+    home = tempfile.mkdtemp(prefix="harness-codex-home-")
+    os.chmod(home, 0o700)
+    override = os.environ.get("CODEX_HOME")
+    source = Path(override) if override else Path.home() / ".codex"
+    source_auth = source / "auth.json"
+    if source_auth.is_file():
+        shutil.copy2(source_auth, Path(home) / "auth.json")
+    return home
 
 
 class CodexProvider:
@@ -61,13 +103,23 @@ class CodexProvider:
         # must not be the real workspace -- the harness's MCP tools are meant
         # to be the only path back to real files.
         scratch = tempfile.mkdtemp(prefix="harness-codex-")
+        # An isolated CODEX_HOME (see _scratch_codex_home): the per-call
+        # `config` injection merges with the user's own config.toml rather
+        # than replacing it, so without this their own configured MCP
+        # servers start alongside the harness's.
+        codex_home = _scratch_codex_home()
         try:
             async for chunk in self._run_turn(
-                model=model, messages=messages, url=server.url, cwd=scratch
+                model=model,
+                messages=messages,
+                url=server.url,
+                cwd=scratch,
+                codex_home=codex_home,
             ):
                 yield chunk
         finally:
             shutil.rmtree(scratch, ignore_errors=True)
+            shutil.rmtree(codex_home, ignore_errors=True)
             await server.stop()
 
     def _arguments(self, *, model: ModelId, prompt: str, url: str, cwd: str) -> dict:
@@ -76,6 +128,7 @@ class CodexProvider:
             "sandbox": "read-only",
             "approval-policy": "never",
             "cwd": cwd,
+            "base-instructions": _BASE_INSTRUCTIONS,
             # The spawn-time `-c mcp_servers=...` override is inert for
             # conversation MCP servers (live-verified against codex-cli
             # 0.147.0); the per-call config argument is the path that works.
@@ -87,12 +140,20 @@ class CodexProvider:
         return args
 
     async def _run_turn(
-        self, *, model: ModelId, messages: Sequence[Message], url: str, cwd: str
+        self,
+        *,
+        model: ModelId,
+        messages: Sequence[Message],
+        url: str,
+        cwd: str,
+        codex_home: str,
     ) -> AsyncIterator[Chunk]:
+        env = _sanitized_env()
+        env["CODEX_HOME"] = codex_home
         params = StdioServerParameters(
             command=self.binary,
             args=["mcp-server"],
-            env=_sanitized_env(),
+            env=env,
         )
         try:
             async with asyncio.timeout(self.timeout_s):
