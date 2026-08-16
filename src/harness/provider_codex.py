@@ -18,7 +18,7 @@ table rather than replacing it. The url carries a trailing slash: a bare
 
 Each turn runs with `-s read-only`, a fresh empty scratch cwd, and an
 isolated scratch CODEX_HOME (only auth.json carried over from the real
-one), so that user-configured MCP servers and profile settings stay out of
+one, plus the one-key config.toml of _SCRATCH_CONFIG_TOML), so that user-configured MCP servers and profile settings stay out of
 the conversation. The codex built-in shell is not disabled -- tool parity
 here is additive, documented in the guide -- so the empty cwd is what keeps
 the harness MCP tools the only path back to real files. A short orientation
@@ -59,10 +59,19 @@ _PROMPT_PREFIX = (
 )
 
 
+# Seeded into every scratch CODEX_HOME: `codex exec` auto-declines every MCP
+# tool call ("user cancelled MCP tool call") when the home it runs under names
+# no approvals reviewer, and this one key is what makes a headless approval
+# resolve affirmatively (bisected against codex-cli 0.147.0).
+_SCRATCH_CONFIG_TOML = """approvals_reviewer = "auto_review"
+"""
+
+
 def _scratch_codex_home() -> str:
     """A fresh, isolated CODEX_HOME carrying over only auth.json from the real
     one ($CODEX_HOME if set, else ~/.codex), so a turn never picks up
-    user-configured MCP servers or profile settings."""
+    user-configured MCP servers or profile settings -- plus the one config key
+    that lets headless MCP tool approvals resolve affirmatively."""
     home = tempfile.mkdtemp(prefix="harness-codex-home-")
     os.chmod(home, 0o700)
     override = os.environ.get("CODEX_HOME")
@@ -70,6 +79,7 @@ def _scratch_codex_home() -> str:
     source_auth = source / "auth.json"
     if source_auth.is_file():
         shutil.copy2(source_auth, Path(home) / "auth.json")
+    (Path(home) / "config.toml").write_text(_SCRATCH_CONFIG_TOML)
     return home
 
 

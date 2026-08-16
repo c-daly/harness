@@ -28,6 +28,7 @@ _here = sys.argv[0]
 _prompt = sys.stdin.read()
 _cwd = os.getcwd()
 _home = os.environ.get("CODEX_HOME")
+_config = os.path.join(_home or "", "config.toml")
 open(_here + ".argv", "w").write(json.dumps(sys.argv[1:]))
 open(_here + ".stdin", "w").write(_prompt)
 open(_here + ".env", "w").write(json.dumps(sorted(os.environ.keys())))
@@ -35,6 +36,7 @@ open(_here + ".cwd", "w").write(json.dumps({"path": _cwd, "empty": not os.listdi
 open(_here + ".codexhome", "w").write(json.dumps({
     "value": _home,
     "has_auth_json": bool(_home) and os.path.isfile(os.path.join(_home, "auth.json")),
+    "config_toml": open(_config).read() if os.path.isfile(_config) else None,
 }))
 
 
@@ -91,6 +93,12 @@ open(_here + ".pid", "w").write(str(os.getpid()))
 emit({"type": "item.completed", "item": {"id": "item_0", "type": "agent_message",
       "text": "partial"}})
 time.sleep(60)
+"""
+
+# The scratch CODEX_HOME the provider builds must carry exactly this, byte for
+# byte: codex exec resolves an MCP tool approval affirmatively only when the
+# home it runs under names an approvals reviewer.
+EXPECTED_CONFIG_TOML = """approvals_reviewer = "auto_review"
 """
 
 USER = [Message(role=Role.USER, blocks=(TextBlock(text="say pong"),))]
@@ -199,6 +207,9 @@ async def test_flag_contract(tmp_path, monkeypatch):
     codex_home = json.loads(open(binary + ".codexhome").read())
     assert codex_home["value"] not in (None, str(fake_user_home))  # isolated scratch home
     assert codex_home["has_auth_json"] is True  # auth.json carried over from the fake source
+    # Without this key seeded into the scratch home, codex exec auto-declines
+    # every MCP tool call ("user cancelled MCP tool call") -- live-bisected.
+    assert codex_home["config_toml"] == EXPECTED_CONFIG_TOML
     assert not os.path.exists(codex_home["value"])  # torn down after the turn
 
 
