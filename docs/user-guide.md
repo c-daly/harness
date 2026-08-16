@@ -46,6 +46,7 @@ tool calls, and answer permission prompts inline. Key bindings:
 - **Tab** — with an `@token` under the cursor, complete it against workspace
   files (repeated Tab cycles through matches); otherwise Tab behaves as
   normal (moves focus).
+- **F2** — toggle the activity panel (same as `/panel`; see below).
 - `@path/to/file` — mention a file. Tab-complete it (see above), or just
   type it out; a bare relative path like `@alpha.py` works, no `./` needed.
   The mention itself is read through the same dispatcher path — and the
@@ -106,6 +107,23 @@ tool calls, and answer permission prompts inline. Key bindings:
   empty. Escape cancels and leaves the current session untouched. Refused
   while a turn is running. If there is nothing else to resume, says so and
   never opens the picker.
+- `/panel` (or **F2**) — toggle the activity panel, a sidebar hidden by
+  default with three tabs: **Files** (every path read/written/edited this
+  session, newest-touched first, with `R`/`W`/`E` markers), **Agents**
+  (every `dispatch_agent` call and every expert an `ensemble` /
+  `consult_panel` / `escalate` call fanned out to, with a running/done/error
+  status), and **Workflows** (the same coordination calls grouped by run,
+  plus an agent-swarm section). Opening or closing the panel is purely
+  local — it reads only what this session has already logged, writes
+  nothing itself, and never interrupts a turn in flight. The agent-swarm
+  section exists only when an MCP server named `agent-swarm` is enabled for
+  the session (see [Session-start server checklist](#session-start-server-checklist));
+  with it disabled the Workflows tab still shows the coordination-run
+  section, just not that one. When present, it fetches the server's
+  workflow state through the same dispatcher and permission gate a
+  model-issued tool call takes — on first opening the Workflows tab and on
+  pressing **r** while the panel has focus, never on a timer — and shows a
+  fetch failure inline instead of crashing the panel.
 
 The bottom line shows live token counts and stats for the session. Just above
 the prompt, a persistent status bar tracks the running session at a glance:

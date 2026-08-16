@@ -4,9 +4,12 @@ import asyncio
 from contextlib import asynccontextmanager
 
 import anyio
+import pytest
+from mcp.server.fastmcp import FastMCP
 from mcp.shared.memory import create_client_server_memory_streams
 from rich.markdown import Markdown
 from rich.text import Text
+from textual.css.query import NoMatches
 from textual.widgets import Input, OptionList, RichLog, Static
 
 from harness.cli import build_kernel
@@ -37,6 +40,7 @@ from harness.tui import (
     SessionPickerScreen,
     _schema_token_estimate,
 )
+from harness.tui_panel import ActivityPanel
 from harness.tui_support import TuiResolver
 from harness.types import CallId, ModelId, ToolName
 from tests.conftest import fixture_stdio_spec, load_fixture_server
@@ -1992,3 +1996,276 @@ async def test_at_mention_missing_file_passes_through_as_literal_text_no_error(t
     assert provider.calls
     joined = "\n".join(m.text() for m in provider.calls[0])
     assert "see @nope.txt" in joined
+
+
+# ---------------------------------------------------------------------------
+# Task 8: activity panel -- Files / Agents / Workflows
+# ---------------------------------------------------------------------------
+
+
+async def test_panel_hidden_by_default_and_mounted(tmp_path):
+    app = make_app(tmp_path)
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        panel = app.query_one(ActivityPanel)
+        assert panel.display is False
+
+
+async def test_panel_toggle_shows_and_hides_and_does_not_disturb_running_turn(tmp_path):
+    provider = GatedProvider()
+    app = make_app(tmp_path, provider=provider, model=ModelId("gated"))
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        panel = app.query_one(ActivityPanel)
+        await pilot.click("#prompt")
+        await pilot.press(*"one", "enter")
+        await pilot.pause(0.1)  # turn parked at the gate
+
+        await pilot.press(*"/panel", "enter")
+        await pilot.pause(0.1)
+        assert panel.display is True
+        await pilot.press(*"/panel", "enter")
+        await pilot.pause(0.1)
+        assert panel.display is False
+
+        provider.release.set()  # let the parked turn finish
+        await pilot.pause(0.3)
+        lines = "\n".join(str(line) for line in app.query_one(RichLog).lines)
+        assert "gated done" in lines  # toggling mid-turn never derailed it
+
+
+async def test_panel_open_writes_nothing_to_the_event_log(tmp_path):
+    app = make_app(tmp_path)
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        before = len(read_session(tmp_path, app.kernel.session.id))
+        await pilot.press(*"/panel", "enter")
+        await pilot.pause(0.1)
+        after = len(read_session(tmp_path, app.kernel.session.id))
+        assert after == before
+
+
+async def test_panel_files_tab_shows_row_after_turn_reads_a_file(tmp_path):
+    (tmp_path / "alpha.py").write_text("print(1)\n")
+    provider = FakeProvider(
+        script=[
+            tool_call_turn("reading", ToolName("read_file"), {"file_path": "alpha.py"}),
+            text_turn("done"),
+        ]
+    )
+    app = make_app(
+        tmp_path,
+        provider=provider,
+        model=ModelId("fake"),
+        native_tools=True,
+        workspace_root=tmp_path,
+    )
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        await pilot.click("#prompt")
+        await pilot.press(*"read it", "enter")
+        await pilot.pause(0.3)
+        panel = app.query_one(ActivityPanel)
+        body = str(panel.query_one("#files-body", Static).content)
+        assert "alpha.py" in body
+        assert "R" in body
+
+
+async def test_panel_workflows_tab_has_mixture_section_but_no_agent_swarm_section_when_disabled(
+    tmp_path,
+):
+    app = make_app(tmp_path)
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        panel = app.query_one(ActivityPanel)
+        panel.query_one("#workflows-mixture")  # always present
+        with pytest.raises(NoMatches):
+            panel.query_one("#workflows-agent-swarm")  # absent, not merely empty
+
+
+# --- Step 5/6: agent-swarm section (fake MCP server, dispatcher-gated fetch) ---
+
+_agent_swarm_fixture = FastMCP("agent-swarm", instructions="fake agent-swarm workflow state")
+
+
+@_agent_swarm_fixture.tool()
+def workflow__workflow_get_state() -> str:
+    """Return the current coordination workflow state."""
+    return "phase=implement task=8/8"
+
+
+_agent_swarm_failing_fixture = FastMCP("agent-swarm-failing", instructions="always errors")
+
+
+@_agent_swarm_failing_fixture.tool()
+def workflow__workflow_get_state_failing() -> str:
+    """Always raises."""
+    raise RuntimeError("workflow backend down")
+
+
+@asynccontextmanager
+async def _agent_swarm_memory_transport(fastmcp):
+    """Same in-memory stream transport idiom as test_tools_allow.py's
+    memory_transport / test_tui.py's _checklist_memory_transport."""
+    async with create_client_server_memory_streams() as (client_streams, server_streams):
+        client_read, client_write = client_streams
+        server_read, server_write = server_streams
+        lowlevel = fastmcp._mcp_server
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(
+                lambda: lowlevel.run(
+                    server_read,
+                    server_write,
+                    lowlevel.create_initialization_options(),
+                    raise_exceptions=True,
+                )
+            )
+            try:
+                yield (client_read, client_write)
+            finally:
+                tg.cancel_scope.cancel()
+
+
+def _build_agent_swarm_kernel(tmp_path, *, fastmcp):
+    spec = McpServerSpec(
+        name="agent-swarm", transport="stdio", command="unused", default_enabled=True
+    )
+
+    def transport_factory(_spec):
+        return _agent_swarm_memory_transport(fastmcp)
+
+    kernel = build_kernel(provider=EchoProvider(), base_dir=tmp_path, model=ModelId("echo"))
+    kernel.mcp = McpHost(
+        [spec],
+        registry=kernel.registry,
+        hooks=kernel.hooks,
+        session=kernel.session,
+        transport_factory=transport_factory,
+    )
+    return kernel
+
+
+async def test_panel_agent_swarm_section_present_and_fetches_through_dispatcher_on_tab_open(
+    tmp_path,
+):
+    kernel = _build_agent_swarm_kernel(tmp_path, fastmcp=_agent_swarm_fixture)
+    app = HarnessApp(kernel)
+    try:
+        async with app.run_test() as pilot:
+            await pilot.pause(0.3)
+            assert isinstance(app.screen, ServerChecklistScreen)
+            await pilot.press("enter")  # accept default: agent-swarm stays checked
+            await pilot.pause(0.3)
+
+            panel = app.query_one(ActivityPanel)
+            panel.query_one("#workflows-agent-swarm")  # present when the server is enabled
+
+            before = len(read_session(tmp_path, kernel.session.id))
+            tabs = panel.query_one("#activity-tabs")
+            tabs.active = "tab-workflows"  # tab-open triggers the fetch
+            await pilot.pause(0.3)
+            after = len(read_session(tmp_path, kernel.session.id))
+            assert after > before  # the fetch went through the dispatcher: evented
+
+            body = str(panel.query_one("#workflows-agent-swarm", Static).content)
+            assert "phase=implement" in body
+
+            envelopes = read_session(tmp_path, kernel.session.id)
+            proposed = [
+                e.event
+                for e in envelopes
+                if e.event.type == "tool_call_proposed"
+                and str(e.event.tool) == "mcp__agent-swarm__workflow__workflow_get_state"
+            ]
+            assert len(proposed) == 1  # gated through dispatch_tool, not a raw MCP call
+    finally:
+        if app._mcp_errlog is not None:
+            app._mcp_errlog.close()
+        await kernel.mcp.stop()
+        kernel.session.close()
+
+
+async def test_panel_agent_swarm_refresh_key_refetches(tmp_path):
+    kernel = _build_agent_swarm_kernel(tmp_path, fastmcp=_agent_swarm_fixture)
+    app = HarnessApp(kernel)
+    try:
+        async with app.run_test() as pilot:
+            await pilot.pause(0.3)
+            await pilot.press("enter")
+            await pilot.pause(0.3)
+            panel = app.query_one(ActivityPanel)
+            panel.query_one("#activity-tabs").active = "tab-workflows"
+            await pilot.pause(0.3)
+            before = len(read_session(tmp_path, kernel.session.id))
+            panel.focus()
+            await pilot.press("r")  # explicit refresh key
+            await pilot.pause(0.3)
+            after = len(read_session(tmp_path, kernel.session.id))
+            assert after > before  # a second, explicit dispatcher-gated fetch
+    finally:
+        if app._mcp_errlog is not None:
+            app._mcp_errlog.close()
+        await kernel.mcp.stop()
+        kernel.session.close()
+
+
+async def test_panel_agent_swarm_fetch_failure_shows_error_without_crashing(tmp_path):
+    kernel = _build_agent_swarm_kernel(tmp_path, fastmcp=_agent_swarm_failing_fixture)
+    app = HarnessApp(kernel)
+    try:
+        async with app.run_test() as pilot:
+            await pilot.pause(0.3)
+            await pilot.press("enter")
+            await pilot.pause(0.3)
+            panel = app.query_one(ActivityPanel)
+            panel.query_one("#activity-tabs").active = "tab-workflows"
+            await pilot.pause(0.3)
+            body = str(panel.query_one("#workflows-agent-swarm", Static).content)
+            assert "error" in body.lower()
+            # the panel (and app) survived the failure -- still queryable/responsive
+            assert app.query_one(ActivityPanel) is panel
+    finally:
+        if app._mcp_errlog is not None:
+            app._mcp_errlog.close()
+        await kernel.mcp.stop()
+        kernel.session.close()
+
+
+async def test_panel_survives_clear_rebuild_and_resets_local_state(tmp_path):
+    (tmp_path / "alpha.py").write_text("x")
+    provider = FakeProvider(
+        script=[
+            tool_call_turn("reading", ToolName("read_file"), {"file_path": "alpha.py"}),
+            text_turn("done"),
+            tool_call_turn("reading", ToolName("read_file"), {"file_path": "alpha.py"}),
+            text_turn("done again"),
+        ]
+    )
+    app = make_app(
+        tmp_path,
+        provider=provider,
+        model=ModelId("fake"),
+        native_tools=True,
+        workspace_root=tmp_path,
+    )
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        await pilot.click("#prompt")
+        await pilot.press(*"read it", "enter")
+        await pilot.pause(0.3)
+        panel = app.query_one(ActivityPanel)
+        body = str(panel.query_one("#files-body", Static).content)
+        assert "alpha.py" in body
+
+        await pilot.press(*"/clear", "enter")
+        await pilot.pause(0.3)
+        # same panel widget instance, reset for the new (empty) session
+        assert app.query_one(ActivityPanel) is panel
+        body = str(panel.query_one("#files-body", Static).content)
+        assert "alpha.py" not in body
+
+        # the subscription survived the rebuild: a new turn's read shows up again
+        await pilot.press(*"read again", "enter")
+        await pilot.pause(0.3)
+        body = str(panel.query_one("#files-body", Static).content)
+        assert "alpha.py" in body

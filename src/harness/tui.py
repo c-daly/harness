@@ -43,10 +43,21 @@ from harness.messages import Message, Role
 from harness.provider import TextDelta, ThinkingDelta, collect
 from harness.sessions import SessionSummary, list_sessions
 from harness.telemetry import TelemetrySubscriber, open_store_memory, run_rollup
+from harness.tui_panel import ActivityPanel
 from harness.tui_support import HistoryRing, SlashCommand, parse_slash_command
 from harness.types import ModelId, SessionId, ToolName, new_call_id
 
 _SNIPPET_CAP = 200
+
+# Task 8: the activity panel's agent-swarm section exists only when a server
+# by exactly this name is among the enabled MCP servers (the checklist
+# selection) -- absent otherwise, a named test contract rather than an
+# empty placeholder. The state tool name mirrors McpHost's own
+# `mcp__{server}__{tool}` registration convention (mcp_host.py) for a
+# server exposing a workflow-shaped tool literally named
+# "workflow__workflow_get_state".
+_AGENT_SWARM_SERVER_NAME = "agent-swarm"
+_AGENT_SWARM_STATE_TOOL = "mcp__agent-swarm__workflow__workflow_get_state"
 
 # @-mentions (Task 6): a mention is "@" at the start of a token (start-of-string
 # or preceded by whitespace) -- this is what lets a bare relative path like
@@ -396,7 +407,14 @@ class HarnessApp(App[None]):
     #statusbar { dock: bottom; height: 1; }
     #prompt { dock: bottom; }
     """
-    BINDINGS = [Binding("escape", "interrupt", "Interrupt", priority=True)]
+    BINDINGS = [
+        Binding("escape", "interrupt", "Interrupt", priority=True),
+        # f2: an unbound function key, safe from collision with normal typing
+        # in the prompt Input (unlike a printable key) -- priority=True mirrors
+        # Escape above so it fires regardless of which widget currently has
+        # focus, same "focused-widget-vs-modal conflict" class of reasoning.
+        Binding("f2", "toggle_panel", "Activity panel", priority=True),
+    ]
     _THOUGHT_MODES = ("collapse", "full", "off")
     _MARKDOWN_MODES = ("on", "off")
 
@@ -456,6 +474,11 @@ class HarnessApp(App[None]):
         # The checklist selection (or headless default set) from the FIRST mount
         # -- a /clear rebuild restarts exactly these servers, never re-prompting.
         self._mcp_enabled: "set[str] | None" = None
+        # Task 8: the activity panel. Mounted once, after _mcp_enabled is known
+        # (_mount_panel), and persists across a /clear rebuild -- only its bus
+        # subscription and local event history are torn down/reset then.
+        self._panel: "ActivityPanel | None" = None
+        self._panel_pump_worker = None
         if ask is not None:
             ask.app = self
         # Build plugin command lookup: name -> CommandDef (from all loaded plugins).
@@ -570,6 +593,9 @@ class HarnessApp(App[None]):
             self._mcp_enabled = selected  # a /clear rebuild restarts exactly this set
             for warning in await kernel.mcp.start(only=selected):
                 self.say("! ", warning)
+        # _mcp_enabled is final now (whether or not kernel.mcp exists) -- safe
+        # to decide the agent-swarm section's presence and mount the panel.
+        self._mount_panel(kernel)
         # Registry is final now (MCP registration above already ran, if any) --
         # safe to estimate the tool-schema footprint against it.
         await self._warn_context_at_mount()
@@ -628,6 +654,69 @@ class HarnessApp(App[None]):
                 )
                 self._plugin_pump_workers.append(worker)
 
+    def _mount_panel(self, kernel: Kernel) -> None:
+        """Mount the (hidden) activity panel once _mcp_enabled is known, and
+        start its bus subscription. Called once, at first mount only -- a
+        /clear rebuild reuses this same widget (see _rebuild_kernel_body),
+        it just re-subscribes and resets local state, exactly like a plugin
+        pump but for one dedicated, always-on "subscriber"."""
+        enabled = self._mcp_enabled or set()
+        panel = ActivityPanel(
+            agent_swarm_enabled=_AGENT_SWARM_SERVER_NAME in enabled,
+            fetch_agent_swarm_state=self._fetch_agent_swarm_state,
+            id="activity-panel",
+        )
+        self._panel = panel
+        self.mount(panel)
+        self._start_panel_subscriber(kernel)
+
+    def _start_panel_subscriber(self, kernel: Kernel) -> None:
+        """Same bus-subscription mechanism _start_plugin_subscribers uses:
+        one queue off kernel.session.bus, one pump worker in the driver
+        group. Called at mount (_mount_panel) AND again after every kernel
+        rebuild, since a rebuilt kernel's session owns a brand-new bus."""
+        if self._panel is None:
+            return
+        queue = kernel.session.bus.subscribe(maxsize=1024)
+        self._panel_pump_worker = self.run_worker(
+            self._panel_pump(queue), group="driver", exit_on_error=False
+        )
+
+    async def _panel_pump(self, queue) -> None:
+        while True:
+            envelope = await queue.get()
+            if self._panel is not None:
+                self._panel.record(envelope)
+
+    async def _fetch_agent_swarm_state(self) -> str:
+        """Evented, permission-gated fetch through the CURRENT kernel's
+        dispatcher -- resolved at call time (not captured at panel-mount
+        time) so a /clear rebuild's new dispatcher is picked up for free,
+        the same reason _inject_mentions reads self.kernel.loop.dispatcher
+        fresh on every call rather than binding it once."""
+        dispatcher = self.kernel.loop.dispatcher
+        outcome = await dispatcher.dispatch_tool(
+            ProposedToolCall(call_id=new_call_id(), tool=ToolName(_AGENT_SWARM_STATE_TOOL), args={})
+        )
+        if outcome.is_error:
+            raise RuntimeError(outcome.text or "agent-swarm state fetch failed")
+        return outcome.text or ""
+
+    def _toggle_panel(self) -> None:
+        panel = self._panel
+        if panel is None:
+            return  # not mounted yet (very early in startup) -- no-op
+        panel.display = not panel.display
+        if panel.display:
+            panel.refresh_files_and_agents()
+        # Deliberately leaves focus on #prompt: opening the panel must not
+        # interrupt typing flow. Interacting with the panel (e.g. the "r"
+        # refresh-workflows key) needs a click/Tab into it first, same as
+        # any other Textual sidebar widget.
+
+    def action_toggle_panel(self) -> None:
+        self._toggle_panel()
+
     def _render_resumed_history(self) -> None:
         for message in self.kernel.loop.history:
             text = message.text()
@@ -667,6 +756,9 @@ class HarnessApp(App[None]):
         for worker in self._plugin_pump_workers:
             worker.cancel()
         self._plugin_pump_workers = []
+        if self._panel_pump_worker is not None:
+            self._panel_pump_worker.cancel()
+            self._panel_pump_worker = None
         try:
             await old_kernel.loop.end()
         except RuntimeError:
@@ -763,6 +855,12 @@ class HarnessApp(App[None]):
             kernel.mcp.flush_events()
 
         self._start_plugin_subscribers(kernel)
+        # Same widget, new session: reset its local event history BEFORE
+        # re-subscribing (so nothing from the fresh bus is wiped by the
+        # reset) -- mirrors _last_rollup's reset just above for the status bar.
+        if self._panel is not None:
+            self._panel.reset()
+        self._start_panel_subscriber(kernel)
         self._refresh_statusbar()
 
     async def _bus_pump(self, queue) -> None:
@@ -969,6 +1067,8 @@ class HarnessApp(App[None]):
             self.say("", self._thought_buffer, style="dim")
         self._clear_live()
         self.query_one("#transcript", RichLog).write(self._render_reply(reply))
+        if self._panel is not None:
+            self._panel.refresh_files_and_agents()
 
     async def _run_compact(self) -> None:
         """One summarize completion through the CURRENT model/provider over
@@ -1037,8 +1137,8 @@ class HarnessApp(App[None]):
             self.say(
                 "",
                 "/help  /model [alias]  /thoughts [collapse|full|off]  /markdown [on|off]  "
-                "/clear  /compact  /resume  /tools  /quit  — @path mentions a file (Tab "
-                "completes), read for the model only",
+                "/clear  /compact  /resume  /panel  /tools  /quit  — @path mentions a file "
+                "(Tab completes), read for the model only; F2 also toggles the activity panel",
             )
             if self._plugin_commands:
                 self.say(
@@ -1079,6 +1179,10 @@ class HarnessApp(App[None]):
             # unlike /clear and /compact, this command needs a modal answer
             # before it can act, so the picker + rebuild both live in one.
             self.run_worker(self._run_resume(), group="driver", exit_on_error=False)
+        elif command.name == "panel":
+            # Deliberately NOT gated by _refuse_if_busy: toggling a UI panel
+            # is harmless mid-turn (same reasoning as /quit above).
+            self._toggle_panel()
         elif command.name in self._plugin_commands:
             body = self._plugin_commands[command.name].body
             prompt = body.replace("$ARGUMENTS", command.arg)

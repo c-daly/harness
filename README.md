@@ -29,12 +29,13 @@ uv run harness -p "summarize the README"    # one-shot, headless
   prompt).
 - **Native tools.** `read_file`, `write_file`, `edit_file`, `glob`, `grep`,
   `bash`, `todo` — workspace-confined, with teaching error messages.
-- **A TUI built for long sessions.** Streamed thinking (`/thoughts`), in-place
-  `/clear` and `/compact`, `/resume` to reopen a prior session, a persistent
-  status bar (model · context % · cost · tools), and `@file` mentions with
-  Tab completion — a mention reads through the same dispatcher and
-  permission gate a model-issued read does, but only the literal text you
-  typed is ever logged as your message.
+- **A TUI built for long sessions.** Streamed thinking (`/thoughts`), markdown
+  replies (`/markdown`), in-place `/clear` and `/compact`, `/resume` to
+  reopen a prior session, a persistent status bar (model · context % · cost ·
+  tools), `@file` mentions with Tab completion — a mention reads through the
+  same dispatcher and permission gate a model-issued read does, but only the
+  literal text you typed is ever logged as your message — and a toggleable
+  activity panel (`/panel` or F2) with Files / Agents / Workflows tabs.
 - **Plugins.** Eight primitives (skills, commands, agents, dispatch/lifecycle
   hooks, subscribers, MCP servers, emitters) validated at load time.
 - **Claude Code importer.** `harness import` converts a Claude Code plugin to a
@@ -57,7 +58,7 @@ in the project vault at `vault/10-projects/harness/`.
 
 The core is built: event spine and kernel, provider layer, permissions,
 telemetry, MCP, the Textual TUI, the plugin loader, the native tool inventory,
-and the Claude Code importer. The suite runs ~790 tests.
+and the Claude Code importer. The suite runs ~830 tests.
 
 > Secondary docs drift from code. Where this README or anything under `docs/`
 > disagrees with the source, the source is right — please fix the doc.
