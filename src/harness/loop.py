@@ -49,6 +49,12 @@ class AgentLoop:
         self.system_prompt = system_prompt
         self.max_iterations = max_iterations
         self.history: list[Message] = list(history) if history else []
+        # Per-turn, non-persisted context (e.g. @-mention file contents from the
+        # TUI): consumed at model-call assembly in run_turn and cleared once the
+        # turn ends, win or lose -- never written to history or the session log,
+        # so the persisted user message always stays the literal text the user
+        # typed (task-6 contract: mentions expand for the model, not the log).
+        self.turn_context: list[Message] = []
         self.pricing = pricing
         self.pricing_for = pricing_for
         self.model_pinned = pinned
@@ -58,6 +64,12 @@ class AgentLoop:
         self.on_chunk: Callable[[Chunk], None] | None = None
         self._ended = False
         self._turn_outcomes: dict[CallId, ToolOutcome] = {}
+
+    def set_turn_context(self, messages: list[Message]) -> None:
+        """Install extra context for the NEXT run_turn call. Read at the start of
+        every dispatch_model within that turn, then cleared -- a later turn (or a
+        turn with nothing to inject) never sees a stale carry-over."""
+        self.turn_context = list(messages)
 
     async def _apply_contributions(self, point: LifecyclePoint, ctx: dict) -> None:
         contributions, warnings = await self.hooks.run_lifecycle(point, ctx)
@@ -91,57 +103,64 @@ class AgentLoop:
     async def run_turn(self, user_text: str) -> str:
         self.session.append(UserMessage(text=user_text))
         self.history.append(Message.user_text(user_text))
-        for _ in range(self.max_iterations):
-            messages = [Message.system_text(self.system_prompt), *self.history]
-            assistant, _usage = await self.dispatcher.dispatch_model(
-                provider=self.provider,
-                model=self.model,
-                messages=messages,
-                tools=self.registry.specs(),
-                pricing=self.pricing,
-                pricing_for=self.pricing_for,
-                pinned=self.model_pinned,
-                on_chunk=self.on_chunk,
-            )
-            self.history.append(assistant)
-            calls = assistant.tool_calls()
-            if not calls:
-                return assistant.text()
-            self._turn_outcomes.clear()
-
-            async def _run_one(call):
-                outcome = await self.dispatcher.dispatch_tool(
-                    ProposedToolCall(call_id=call.call_id, tool=call.tool, args=call.args)
+        try:
+            for _ in range(self.max_iterations):
+                messages = [
+                    Message.system_text(self.system_prompt),
+                    *self.turn_context,
+                    *self.history,
+                ]
+                assistant, _usage = await self.dispatcher.dispatch_model(
+                    provider=self.provider,
+                    model=self.model,
+                    messages=messages,
+                    tools=self.registry.specs(),
+                    pricing=self.pricing,
+                    pricing_for=self.pricing_for,
+                    pinned=self.model_pinned,
+                    on_chunk=self.on_chunk,
                 )
-                self._turn_outcomes[call.call_id] = outcome
-                return outcome
+                self.history.append(assistant)
+                calls = assistant.tool_calls()
+                if not calls:
+                    return assistant.text()
+                self._turn_outcomes.clear()
 
-            try:
-                outcomes = await asyncio.gather(*[_run_one(c) for c in calls])
-            except Exception as exc:
+                async def _run_one(call):
+                    outcome = await self.dispatcher.dispatch_tool(
+                        ProposedToolCall(call_id=call.call_id, tool=call.tool, args=call.args)
+                    )
+                    self._turn_outcomes[call.call_id] = outcome
+                    return outcome
+
                 try:
-                    self.session.append(
-                        ErrorRaised(
-                            where="loop:tool_dispatch",
-                            message=f"{type(exc).__name__}: {exc}",
+                    outcomes = await asyncio.gather(*[_run_one(c) for c in calls])
+                except Exception as exc:
+                    try:
+                        self.session.append(
+                            ErrorRaised(
+                                where="loop:tool_dispatch",
+                                message=f"{type(exc).__name__}: {exc}",
+                            )
+                        )
+                    except Exception:
+                        pass
+                    raise
+                for call, outcome in zip(calls, outcomes):
+                    self.history.append(
+                        Message.tool_result(
+                            call.call_id,
+                            text=outcome.text,
+                            blob=outcome.blob,
+                            is_error=outcome.is_error,
                         )
                     )
-                except Exception:
-                    pass
-                raise
-            for call, outcome in zip(calls, outcomes):
-                self.history.append(
-                    Message.tool_result(
-                        call.call_id,
-                        text=outcome.text,
-                        blob=outcome.blob,
-                        is_error=outcome.is_error,
-                    )
-                )
-        self.session.append(
-            ErrorRaised(where="loop", message=f"max iterations ({self.max_iterations}) reached")
-        )
-        return f"[stopped: max iterations ({self.max_iterations}) reached]"
+            self.session.append(
+                ErrorRaised(where="loop", message=f"max iterations ({self.max_iterations}) reached")
+            )
+            return f"[stopped: max iterations ({self.max_iterations}) reached]"
+        finally:
+            self.turn_context = []
 
     def repair_turn(self) -> int:
         repaired = 0

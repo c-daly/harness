@@ -43,7 +43,21 @@ tool calls, and answer permission prompts inline. Key bindings:
 - **Esc** — interrupt the turn in flight (the model stops, in-flight tool
   calls are cancelled cleanly, and you get the prompt back).
 - **Up / Down** — walk your input history.
-- `@path/to/file` — mention a file; the path is expanded into your message.
+- **Tab** — with an `@token` under the cursor, complete it against workspace
+  files (repeated Tab cycles through matches); otherwise Tab behaves as
+  normal (moves focus).
+- `@path/to/file` — mention a file. Tab-complete it (see above), or just
+  type it out; a bare relative path like `@alpha.py` works, no `./` needed.
+  The mention itself is read through the same dispatcher path — and the
+  same permission gate — a model-issued `read_file` call takes, so it shows
+  up in the event log and an `ask`/`deny` rule on `read_file` applies to it
+  too. The file's content is handed to the model as extra context for that
+  turn only; what gets logged as *your* message, and what a later turn or
+  `/resume` sees, is always the literal text you typed, `@token` included.
+  A path that doesn't resolve to a real file is left as plain text, silently
+  — no error, nothing sent. A file over 16 KiB is truncated (with a note)
+  before it's attached; use offset/limit on `read_file` yourself (or ask
+  the model to) for more.
 - `/help` — list slash commands, including any your plugins add.
 - `/thoughts [collapse|full|off]` — control how a reasoning model's thinking
   is shown while it streams. `collapse` (the default) streams the live

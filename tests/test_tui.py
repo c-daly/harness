@@ -1719,3 +1719,159 @@ async def test_rebuild_in_progress_refuses_turn_and_clear_and_ignores_esc(tmp_pa
         texts = [m.text() for m in app.kernel.loop.history]
         assert any("hello from the past" in t for t in texts)
         assert not any("sneaky" in t for t in texts)  # no interleaved turn
+
+
+# --- Task 6: @-file mentions (Tab completion + dispatcher-gated injection) ---
+
+
+async def test_tab_completes_at_mention_and_cycles_through_matches(tmp_path):
+    (tmp_path / "alpha.py").write_text("a")
+    (tmp_path / "alpha_beta.py").write_text("b")
+    app = make_app(tmp_path, native_tools=True, workspace_root=tmp_path)
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        await pilot.click("#prompt")
+        await pilot.press(*"see @alp")
+        await pilot.press("tab")
+        await pilot.pause(0.05)
+        assert app.query_one("#prompt", Input).value == "see @alpha.py"
+        await pilot.press("tab")
+        await pilot.pause(0.05)
+        assert app.query_one("#prompt", Input).value == "see @alpha_beta.py"
+        # cycling wraps back around to the first match
+        await pilot.press("tab")
+        await pilot.pause(0.05)
+        assert app.query_one("#prompt", Input).value == "see @alpha.py"
+
+
+async def test_tab_without_at_token_is_not_a_regression_on_history(tmp_path):
+    app = make_app(tmp_path)
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        await pilot.click("#prompt")
+        await pilot.press(*"plain text")
+        await pilot.press("tab")
+        await pilot.pause(0.05)
+        # Tab with no @ token never mutates the input
+        assert app.query_one("#prompt", Input).value == "plain text"
+        await pilot.click("#prompt")
+        await pilot.press("enter")
+        await pilot.pause(0.2)
+        await pilot.press(*"second", "enter")
+        await pilot.pause(0.2)
+        # history (up/down) is unaffected by the intervening Tab press
+        await pilot.press("up")
+        await pilot.pause(0.05)
+        assert app.query_one("#prompt", Input).value == "second"
+        await pilot.press("up")
+        await pilot.pause(0.05)
+        assert app.query_one("#prompt", Input).value == "plain text"
+
+
+async def test_at_mention_injects_file_content_keeps_literal_user_message_and_clears_after_turn(
+    tmp_path,
+):
+    (tmp_path / "alpha.py").write_text("print('hello world')\n")
+    provider = FakeProvider(script=[text_turn("ok"), text_turn("ok2")])
+    app = make_app(
+        tmp_path,
+        provider=provider,
+        model=ModelId("fake"),
+        native_tools=True,
+        workspace_root=tmp_path,
+    )
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        await pilot.click("#prompt")
+        await pilot.press(*"explain @alpha.py", "enter")
+        await pilot.pause(0.2)
+        # a second, mention-free turn must NOT see the first turn's injected
+        # file content -- turn_context is per-turn, cleared after run_turn
+        await pilot.press(*"anything else", "enter")
+        await pilot.pause(0.2)
+
+    assert len(provider.calls) == 2
+    first_call_text = "\n".join(m.text() for m in provider.calls[0])
+    assert "print('hello world')" in first_call_text
+    assert "explain @alpha.py" in first_call_text
+    user_msgs = [m for m in provider.calls[0] if m.role == Role.USER]
+    assert any(m.text() == "explain @alpha.py" for m in user_msgs)
+
+    second_call_text = "\n".join(m.text() for m in provider.calls[1])
+    assert "print('hello world')" not in second_call_text
+
+    app.kernel.session.close()
+    envelopes = read_session(tmp_path, app.kernel.session.id)
+    user_events = [e.event for e in envelopes if e.event.type == "user_message"]
+    assert len(user_events) == 2
+    assert user_events[0].text == "explain @alpha.py"  # persisted message stays literal
+
+
+async def test_at_mention_denied_by_permission_rule_is_visible_and_turn_still_runs(tmp_path):
+    (tmp_path / "secret.txt").write_text("top secret")
+    engine = PermissionEngine(
+        [RuleSet(rules=[PermissionRule(action="deny", tool="read_file", match={"file_path": "*secret*"})])]
+    )
+    app = make_app(tmp_path, permissions=engine, native_tools=True, workspace_root=tmp_path)
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        await pilot.click("#prompt")
+        await pilot.press(*"peek @secret.txt", "enter")
+        await pilot.pause(0.2)
+        lines = "\n".join(str(line) for line in app.query_one(RichLog).lines)
+        assert "peek @secret.txt" in lines  # literal text still shown
+        assert "denied" in lines.lower() or "blocked" in lines.lower()  # refusal is visible
+        assert "echo: peek @secret.txt" in lines  # turn still ran, on the literal text
+
+    app.kernel.session.close()
+    envelopes = read_session(tmp_path, app.kernel.session.id)
+    types = [e.event.type for e in envelopes]
+    assert "tool_call_proposed" in types  # the read was dispatched (evented), not skipped
+    assert "tool_call_completed" in types
+
+
+async def test_at_mention_oversized_file_is_truncated_with_a_note(tmp_path):
+    content = ("x" * 40 + "\n") * 500  # formatted body clears the 16 KiB injection cap
+    (tmp_path / "big.txt").write_text(content)
+    provider = FakeProvider(script=[text_turn("ok")])
+    app = make_app(
+        tmp_path,
+        provider=provider,
+        model=ModelId("fake"),
+        native_tools=True,
+        workspace_root=tmp_path,
+    )
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        await pilot.click("#prompt")
+        await pilot.press(*"look @big.txt", "enter")
+        await pilot.pause(0.3)
+
+    assert provider.calls
+    joined = "\n".join(m.text() for m in provider.calls[0])
+    assert "truncat" in joined.lower()
+    assert len(joined.encode()) < len(content.encode())
+
+
+async def test_at_mention_missing_file_passes_through_as_literal_text_no_error(tmp_path):
+    provider = FakeProvider(script=[text_turn("ok")])
+    app = make_app(
+        tmp_path,
+        provider=provider,
+        model=ModelId("fake"),
+        native_tools=True,
+        workspace_root=tmp_path,
+    )
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        await pilot.click("#prompt")
+        await pilot.press(*"see @nope.txt", "enter")
+        await pilot.pause(0.2)
+        lines = "\n".join(str(line) for line in app.query_one(RichLog).lines)
+        assert "see @nope.txt" in lines
+        assert "denied" not in lines.lower()
+        assert "blocked" not in lines.lower()
+
+    assert provider.calls
+    joined = "\n".join(m.text() for m in provider.calls[0])
+    assert "see @nope.txt" in joined

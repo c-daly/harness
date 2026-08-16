@@ -6,6 +6,9 @@ lifecycle calls that mirror run_once's ordering contract."""
 
 import asyncio
 import json
+import os
+import re
+import subprocess
 import time
 from pathlib import Path
 
@@ -19,6 +22,7 @@ from textual.widgets import Checkbox, Input, OptionList, RichLog, Static
 from textual.widgets.option_list import Option
 from textual.worker import WorkerCancelled, WorkerFailed
 
+from harness.blobs import INLINE_THRESHOLD
 from harness.cli import Kernel, build_kernel
 from harness.frontmatter import CommandDef
 from harness.events import (
@@ -37,10 +41,64 @@ from harness.messages import Message, Role
 from harness.provider import TextDelta, ThinkingDelta, collect
 from harness.sessions import SessionSummary, list_sessions
 from harness.telemetry import TelemetrySubscriber, open_store_memory, run_rollup
-from harness.tui_support import HistoryRing, SlashCommand, expand_file_mentions, parse_slash_command
-from harness.types import ModelId, SessionId
+from harness.tui_support import HistoryRing, SlashCommand, parse_slash_command
+from harness.types import ModelId, SessionId, ToolName, new_call_id
 
 _SNIPPET_CAP = 200
+
+# @-mentions (Task 6): a mention is "@" at the start of a token (start-of-string
+# or preceded by whitespace) -- this is what lets a bare relative path like
+# "@alpha.py" mention without a path-prefix requirement, while an embedded "@"
+# in "bob@example.com" is never even considered a candidate. A token that does
+# not resolve to a real file (a handle, a typo) simply fails the dispatcher
+# read and passes through as plain text (contract d) -- no separate
+# email/handle heuristic is needed.
+_MENTION_TOKEN_RE = re.compile(r"(?:^|(?<=\s))@(\S+)")
+_MENTION_TRAILING_PUNCT = ".,!?;:'\")}]"
+# Reuses the blob-spill threshold (harness.blobs.INLINE_THRESHOLD, 16 KiB) as the
+# injected-context cap: dispatch_tool already spills a read_file result above this
+# size to a blob, so "outcome.blob is not None" IS the >16 KiB signal (see
+# _inject_mentions) -- no separate constant to keep in sync with the tool.
+_MENTION_CONTEXT_CAP = INLINE_THRESHOLD
+
+# Tab-completion candidate listing (Task 6): directories that are never useful
+# @-mention targets and are worth skipping outright in the non-git fallback walk.
+_MENTION_WALK_SKIP_DIRS = {
+    ".git", "node_modules", "__pycache__", ".venv", "venv", ".mypy_cache", ".pytest_cache", ".tox",
+}
+_MENTION_WALK_CAP = 5000  # bounded os.walk: cap file count, not just depth
+
+
+def _list_workspace_files(root: Path) -> list[str]:
+    """@-mention Tab-completion candidates, relative to root, tracked files
+    first. `git ls-files` (+ untracked-non-ignored) when root is a git worktree;
+    a bounded, sorted os.walk otherwise (no git binary, or not a repo)."""
+    try:
+        tracked = subprocess.run(
+            ["git", "ls-files"], cwd=root, capture_output=True, text=True, timeout=2
+        )
+        if tracked.returncode == 0:
+            files = [line for line in tracked.stdout.splitlines() if line]
+            untracked = subprocess.run(
+                ["git", "ls-files", "--others", "--exclude-standard"],
+                cwd=root, capture_output=True, text=True, timeout=2,
+            )
+            if untracked.returncode == 0:
+                files += [line for line in untracked.stdout.splitlines() if line]
+            return files
+    except (OSError, subprocess.SubprocessError):
+        pass
+    found: list[str] = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [
+            d for d in dirnames if d not in _MENTION_WALK_SKIP_DIRS and not d.startswith(".")
+        ]
+        for name in filenames:
+            found.append(os.path.relpath(os.path.join(dirpath, name), root))
+            if len(found) >= _MENTION_WALK_CAP:
+                return sorted(found)
+    return sorted(found)
+
 
 _COMPACT_INSTRUCTION = (
     "Summarize the conversation above in a concise handoff paragraph: key facts, "
@@ -253,11 +311,21 @@ class HistoryInput(Input):
     BINDINGS = [
         Binding("up", "history_prev", show=False),
         Binding("down", "history_next", show=False),
+        Binding("tab", "complete_mention", show=False),
     ]
 
-    def __init__(self, **kwargs) -> None:
+    def __init__(self, *, workspace_root: "Path | None" = None, **kwargs) -> None:
         super().__init__(**kwargs)
         self.history = HistoryRing()
+        self.workspace_root = workspace_root
+        # Candidate file list: shelled out to git (or walked) at most once per
+        # prompt -- reset_mention_cache() (called on submit) starts the next
+        # prompt-session fresh so a file created/removed mid-session is picked up.
+        self._mention_files: "list[str] | None" = None
+        # In-progress Tab cycle: {"start": word-start index, "matches": [...],
+        # "index": which match is currently applied}. Reset whenever Tab is
+        # pressed somewhere that isn't a continuation of this same cycle.
+        self._mention_cycle: "dict | None" = None
 
     def action_history_prev(self) -> None:
         self.value = self.history.prev(self.value)
@@ -266,6 +334,57 @@ class HistoryInput(Input):
     def action_history_next(self) -> None:
         self.value = self.history.next(self.value)
         self.cursor_position = len(self.value)
+
+    def reset_mention_cache(self) -> None:
+        self._mention_files = None
+        self._mention_cycle = None
+
+    def _word_bounds(self) -> tuple[int, int]:
+        """The whitespace-delimited word touching the cursor -- the token Tab
+        would complete if it starts with '@'."""
+        text, pos = self.value, self.cursor_position
+        start = pos
+        while start > 0 and not text[start - 1].isspace():
+            start -= 1
+        end = pos
+        while end < len(text) and not text[end].isspace():
+            end += 1
+        return start, end
+
+    def _mention_matches(self, prefix: str) -> list[str]:
+        if self._mention_files is None:
+            root = self.workspace_root or Path.cwd()
+            self._mention_files = _list_workspace_files(root)
+        needle = prefix.lower()
+        return [f for f in self._mention_files if needle in f.lower()]
+
+    def action_complete_mention(self) -> None:
+        start, end = self._word_bounds()
+        word = self.value[start:end]
+        cyc = self._mention_cycle
+        if cyc is not None and cyc["start"] == start and word == "@" + cyc["matches"][cyc["index"]]:
+            # Continuing an in-progress cycle: advance to the next match (wraps).
+            cyc["index"] = (cyc["index"] + 1) % len(cyc["matches"])
+            self._apply_mention_completion(start, end, cyc["matches"][cyc["index"]])
+            return
+        if not word.startswith("@"):
+            # No @-token under the cursor -- fall through to the pre-Task-6
+            # default (focus-next) instead of swallowing Tab silently, since a
+            # Binding here would otherwise shadow Screen's own "tab" binding.
+            self._mention_cycle = None
+            self.screen.focus_next()
+            return
+        matches = self._mention_matches(word[1:])
+        if not matches:
+            self._mention_cycle = None
+            return  # nothing to complete; stay put rather than jump focus
+        self._mention_cycle = {"start": start, "matches": matches, "index": 0}
+        self._apply_mention_completion(start, end, matches[0])
+
+    def _apply_mention_completion(self, start: int, end: int, replacement: str) -> None:
+        new_word = "@" + replacement
+        self.value = self.value[:start] + new_word + self.value[end:]
+        self.cursor_position = start + len(new_word)
 
 
 class HarnessApp(App[None]):
@@ -345,7 +464,11 @@ class HarnessApp(App[None]):
             yield Static(id="live")
         yield Static(id="stats")
         yield Static(id="statusbar")
-        yield HistoryInput(id="prompt", placeholder="prompt (/help for commands)")
+        yield HistoryInput(
+            id="prompt",
+            placeholder="prompt (/help for commands)",
+            workspace_root=self._workspace_root,
+        )
 
     def say(self, prefix: str, text: str, *, style: str | None = None) -> None:
         line = Text(prefix)
@@ -732,10 +855,12 @@ class HarnessApp(App[None]):
     @on(Input.Submitted, "#prompt")
     async def _submitted(self, event: Input.Submitted) -> None:
         text = event.value.strip()
+        prompt_input = self.query_one("#prompt", HistoryInput)
         event.input.clear()
+        prompt_input.reset_mention_cache()  # next prompt re-lists workspace files
         if not text:
             return
-        self.query_one("#prompt", HistoryInput).history.remember(text)
+        prompt_input.history.remember(text)
         command = parse_slash_command(text)
         if command is not None:
             # Commands are deliberately NOT blocked mid-turn: /quit during a
@@ -746,17 +871,71 @@ class HarnessApp(App[None]):
             return
         if self._refuse_if_busy():
             return
-        expanded, attached, errors = expand_file_mentions(text)
-        if errors:
-            for error in errors:
-                self.say("! ", error)
-            return
-        for path in attached:
-            self.say("+ ", f"attached {path}")
         self.say("> ", text)
+        # @-mentions expand for the MODEL, never for the log: the literal text
+        # (with its @tokens) is what run_turn persists as the user message;
+        # any file content a mention resolves to rides in per-turn context
+        # (loop.set_turn_context) that dispatch_model sees but history never
+        # does. Awaited here, before the worker starts, so a permission
+        # prompt for a mentioned read (same dispatcher path a model-issued
+        # read_file takes) can be answered before the turn itself begins.
+        context = await self._inject_mentions(text)
+        self.kernel.loop.set_turn_context(context)
         self._turn_worker = self.run_worker(
-            self._run_turn(expanded), group="agent", exit_on_error=False
+            self._run_turn(text), group="agent", exit_on_error=False
         )
+
+    async def _inject_mentions(self, text: str) -> list[Message]:
+        """Dispatch a read_file call for each @-mention in text through
+        kernel.loop.dispatcher -- evented and permission-gated exactly like a
+        model-initiated read. A denial is shown (turn still runs on the literal
+        text); a missing/unreadable path or an unregistered read tool (native
+        tools off) passes through silently as plain text (no error)."""
+        seen: set[str] = set()
+        tokens: list[str] = []
+        for raw in _MENTION_TOKEN_RE.findall(text):
+            token = raw.rstrip(_MENTION_TRAILING_PUNCT)
+            if token and token not in seen:
+                seen.add(token)
+                tokens.append(token)
+        if not tokens:
+            return []
+        dispatcher = self.kernel.loop.dispatcher
+        blocks: list[str] = []
+        for token in tokens:
+            outcome = await dispatcher.dispatch_tool(
+                ProposedToolCall(
+                    call_id=new_call_id(), tool=ToolName("read_file"), args={"file_path": token}
+                )
+            )
+            if outcome.is_error:
+                reason = outcome.text or ""
+                # dispatch_tool's own execution-failure text is always prefixed
+                # "tool error: " (missing file, not-a-tool, ...) -- anything
+                # else here is a policy denial (Block reason / "denied by
+                # user" / a permission-channel error), which contract (b)
+                # requires to be visible even though the turn still runs.
+                if not reason.startswith("tool error:"):
+                    self.say("! ", f"@{token}: {reason}")
+                continue
+            content = outcome.text
+            if content is None and outcome.blob is not None:
+                content = self.kernel.session.blobs.get(outcome.blob).decode(
+                    "utf-8", errors="replace"
+                )
+            content = content or ""
+            encoded = content.encode()
+            if len(encoded) > _MENTION_CONTEXT_CAP:
+                content = encoded[:_MENTION_CONTEXT_CAP].decode("utf-8", errors="replace")
+                content += f"\n... [truncated to {_MENTION_CONTEXT_CAP} bytes]"
+            blocks.append(f"--- @{token} ---\n{content}")
+        if not blocks:
+            return []
+        return [
+            Message.system_text(
+                "Context from @-mentions in the user's message:\n\n" + "\n\n".join(blocks)
+            )
+        ]
 
     async def _run_turn(self, prompt: str) -> None:
         self._clear_live()
@@ -843,7 +1022,8 @@ class HarnessApp(App[None]):
             self.say(
                 "",
                 "/help  /model [alias]  /thoughts [collapse|full|off]  /clear  /compact  "
-                "/resume  /tools  /quit  — @/path attaches a file",
+                "/resume  /tools  /quit  — @path mentions a file (Tab completes), read for "
+                "the model only",
             )
             if self._plugin_commands:
                 self.say(
