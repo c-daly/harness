@@ -102,7 +102,10 @@ async def ensemble(
     results = list(await asyncio.gather(*[_run(runner, parent, prompt, e) for e in experts]))
     if judge is None:
         return majority_vote(results)
-    answers = "\n\n".join(f"[{i + 1}] {a}" for i, a in enumerate(results))
+    usable = [a for a in results if not _is_error(a)]
+    if not usable:
+        return f"{_SUBAGENT_ERROR} all experts failed"
+    answers = "\n\n".join(f"[{i + 1}] {a}" for i, a in enumerate(usable))
     return await _run(runner, parent, _SYNTH_PROMPT.format(task=prompt, answers=answers), judge)
 
 
@@ -117,6 +120,8 @@ async def panel(
     """Proposer drafts; independent critics (ideally on different models) review
     concurrently. Accept iff no critic vetoes; otherwise return the critiques."""
     proposal = await _run(runner, parent, prompt, proposer)
+    if _is_error(proposal):
+        return proposal  # never fan out critics over an error message
     if not critics:
         return proposal
     review_prompt = _CRITIC_PROMPT.format(task=prompt, proposal=proposal)
@@ -138,6 +143,8 @@ async def draft_refine(
 ) -> str:
     """Cheap/local expert drafts, then a strong expert refines (sequential)."""
     draft = await _run(runner, parent, prompt, drafter)
+    if _is_error(draft):
+        return draft  # never ask the refiner to improve an error
     return await _run(runner, parent, _REFINE_PROMPT.format(task=prompt, draft=draft), refiner)
 
 
@@ -153,8 +160,10 @@ async def escalate(
     """Cheap expert first; a verify gate decides whether to escalate to premium.
     With no verify expert the gate is 'did the cheap call error?'."""
     answer = await _run(runner, parent, prompt, cheap)
-    if verify is None:
-        passed = not _is_error(answer)
+    if _is_error(answer):
+        passed = False  # escalate straight to premium; never run verify on an error
+    elif verify is None:
+        passed = True
     else:
         verdict = await _run(runner, parent, _VERIFY_PROMPT.format(task=prompt, answer=answer), verify)
         passed = verdict.strip().lower().startswith("pass")

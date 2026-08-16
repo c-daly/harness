@@ -65,6 +65,23 @@ async def test_ensemble_uses_judge_to_synthesize():
     assert out == "SYNTH::True"  # judge prompt carried both candidate answers
 
 
+async def test_ensemble_judge_path_filters_errors_from_candidates():
+    runner = FakeRunner({
+        "a": "[subagent error] boom",
+        "b": "y",
+        "j": lambda p: f"SYNTH::{('boom' not in p and 'y' in p)}",
+    })
+    out = await ensemble(runner, None, "Q", [Expert("a"), Expert("b")], judge=Expert("j"))
+    assert out == "SYNTH::True"  # the errored answer never reached the judge's prompt
+
+
+async def test_ensemble_judge_not_called_when_all_experts_error():
+    runner = FakeRunner({"a": "[subagent error] x", "b": "[subagent error] y", "j": "SYNTH"})
+    out = await ensemble(runner, None, "Q", [Expert("a"), Expert("b")], judge=Expert("j"))
+    assert out.startswith("[subagent error]")
+    assert "j" not in {m for m, _ in runner.calls}  # judge never invoked
+
+
 # --- _is_veto semantics (fail-closed; APPROVE-first-line protocol) ---
 
 def test_is_veto_neutral_text_vetoes():
@@ -100,6 +117,13 @@ async def test_panel_rejects_on_veto():
     assert "VETO: it is wrong" in out
 
 
+async def test_panel_proposer_error_short_circuits_critics():
+    runner = FakeRunner({"p": "[subagent error] boom", "c1": "APPROVE"})
+    out = await panel(runner, None, "Q", proposer=Expert("p"), critics=[Expert("c1")])
+    assert out == "[subagent error] boom"
+    assert [m for m, _ in runner.calls] == ["p"]  # critics never fanned out
+
+
 # --- draft_refine ---
 
 async def test_draft_refine_feeds_draft_to_refiner():
@@ -107,6 +131,13 @@ async def test_draft_refine_feeds_draft_to_refiner():
     out = await draft_refine(runner, None, "Q", drafter=Expert("d"), refiner=Expert("r"))
     assert out == "refined(True)"
     assert [m for m, _ in runner.calls] == ["d", "r"]
+
+
+async def test_draft_refine_draft_error_short_circuits_refiner():
+    runner = FakeRunner({"d": "[subagent error] boom", "r": "refined"})
+    out = await draft_refine(runner, None, "Q", drafter=Expert("d"), refiner=Expert("r"))
+    assert out == "[subagent error] boom"
+    assert [m for m, _ in runner.calls] == ["d"]  # refiner never invoked
 
 
 # --- escalate ---
@@ -141,6 +172,15 @@ async def test_escalate_verify_gate_pass_keeps_cheap():
     )
     assert out == "meh"
     assert [m for m, _ in runner.calls] == ["cheap", "v"]
+
+
+async def test_escalate_cheap_error_skips_verify_gate():
+    runner = FakeRunner({"cheap": "[subagent error] boom", "v": "PASS", "premium": "fixed"})
+    out = await escalate(
+        runner, None, "Q", cheap=Expert("cheap"), premium=Expert("premium"), verify=Expert("v")
+    )
+    assert out == "fixed"
+    assert [m for m, _ in runner.calls] == ["cheap", "premium"]  # verify never consulted
 
 
 # --- run_strategy positional convention ---
