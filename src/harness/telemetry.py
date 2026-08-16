@@ -142,6 +142,13 @@ def index_envelopes(conn: sqlite3.Connection, envelopes: list[Envelope]) -> None
                 (sid, ev.parent_session_id, ev.default_model, env.ts),
             )
         elif isinstance(ev, SessionResumed):
+            # A live/in-memory store (the TUI's stats queue) may see this
+            # without ever having seen the session's SessionStarted (it
+            # subscribes AFTER build_kernel's own resume_session() has
+            # already appended+published SessionResumed) -- an UPDATE alone
+            # would silently no-op against an absent row, leaving run_rollup
+            # KeyError-ing on this session_id forever (I-2).
+            conn.execute("INSERT OR IGNORE INTO sessions (session_id) VALUES (?)", (sid,))
             conn.execute(
                 "UPDATE sessions SET resumed_count = resumed_count + 1 WHERE session_id = ?",
                 (sid,),

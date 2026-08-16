@@ -1421,6 +1421,42 @@ async def test_statusbar_omits_ctx_and_cost_in_echo_mode(tmp_path):
         assert "$" not in bar
 
 
+async def test_statusbar_ctx_updates_after_a_turn_on_a_resumed_session(tmp_path):
+    """I-2: a session opened via --resume (kernel already resumed at mount,
+    before the live stats queue ever subscribes -- SessionResumed is always
+    published before that subscription exists, so run_rollup KeyErrors on
+    this session id for the session's entire life) must not freeze the
+    status bar forever on rebuild-time values. refresh_stats's KeyError
+    branch must still refresh ctx%, which is computed straight off
+    loop.history and needs no rollup."""
+    catalog_file = tmp_path / "models.toml"
+    catalog_file.write_text(MODELS_TOML_CONTEXT_TOAST)
+    seed_sid = await _write_seed_session(tmp_path, "hello from the past")
+    provider = FakeProvider([text_turn("x" * 5000)])  # big enough to move ctx%'s rounded value
+    app = make_app(
+        tmp_path,
+        catalog_path=catalog_file,
+        provider=provider,
+        model=ModelId("tiny-local"),
+        resume_session_id=seed_sid,
+    )
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        app.refresh_stats()  # poke instead of waiting 1s
+        await pilot.pause(0.1)
+        bar_before = str(app.query_one("#statusbar", Static).content)
+        assert "ctx" in bar_before and "%" in bar_before  # not frozen empty at mount either
+
+        await pilot.click("#prompt")
+        await pilot.press(*"go", "enter")
+        await pilot.pause(0.3)
+        app.refresh_stats()
+        await pilot.pause(0.1)
+        bar_after = str(app.query_one("#statusbar", Static).content)
+        assert "ctx" in bar_after and "%" in bar_after
+        assert bar_after != bar_before  # history grew -- ctx% must have moved
+
+
 async def test_statusbar_shows_new_alias_after_model_switch_without_a_turn(tmp_path):
     catalog_file = tmp_path / "models.toml"
     catalog_file.write_text(MODELS_TOML_TWO_ALIASES)

@@ -875,7 +875,16 @@ class HarnessApp(App[None]):
         try:
             rollup = run_rollup(self._stats_conn, str(self.kernel.session.id))
         except KeyError:
-            return  # nothing indexed yet (or resumed session: v1 stats stay blank)
+            # I-2: a resumed session's SessionStarted/SessionResumed always
+            # predates this app's own stats-queue subscription (build_kernel's
+            # resume_session() publishes it before _rebuild_kernel_body/
+            # _session_driver ever subscribes), so this session id never gets
+            # a `sessions` row in the LIVE store -- tool count/cost genuinely
+            # have no rollup to draw from and stay blank. ctx% does not: it's
+            # computed straight off loop.history, so the bar must still
+            # refresh here rather than freezing forever.
+            self._refresh_statusbar()
+            return
         cost = rollup["cost"]
         cost_text = f"${cost:.4f}" if cost is not None else "n/a"
         inp = rollup["input_tokens"]
