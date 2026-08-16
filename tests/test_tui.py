@@ -835,6 +835,56 @@ async def test_slash_model_upgrade_wires_claude_code_backend(tmp_path):
         assert provider.claude_code is not None  # claude-code entries dispatchable
 
 
+async def test_slash_model_upgrade_retargets_subagent_runner(tmp_path):
+    """PR #2 review: /model upgrading out of echo mode must retarget the
+    SubagentRunner too — it captured the build-time provider, so a swap that
+    touches only loop.provider leaves dispatch_agent and mixture experts on
+    the echo provider, with an unresolvable echo default_model."""
+    catalog_file = tmp_path / "models.toml"
+    catalog_file.write_text(MODELS_TOML_TWO_ALIASES)
+    app = make_app(tmp_path, catalog_path=catalog_file)
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        await pilot.click("#prompt")
+        await pilot.press(*"/model alias-b", "enter")
+        await pilot.pause(0.3)
+        runner = app.kernel.runner
+        assert runner.provider is app.kernel.loop.provider
+        assert app.kernel.provider is app.kernel.loop.provider
+        assert runner.default_model == ModelId("alias-b")
+        assert runner.pricing_for is app.kernel.loop.pricing_for
+
+
+async def test_slash_model_refreshes_catalog_snapshot_in_place(tmp_path):
+    """PR #2 review: with a CatalogProvider already live, /model must swap the
+    provider's catalog snapshot — otherwise a models.toml edit made mid-session
+    validates against the fresh catalog but dispatches against the startup one,
+    so a new alias falls through as a literal LiteLLM route. The provider
+    INSTANCE must survive (the subagent runner shares it)."""
+    catalog_file = tmp_path / "models.toml"
+    catalog_file.write_text(MODELS_TOML_TWO_ALIASES)
+    app = make_app(tmp_path, catalog_path=catalog_file)
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        await pilot.click("#prompt")
+        await pilot.press(*"/model alias-b", "enter")
+        await pilot.pause(0.3)
+        provider = app.kernel.loop.provider  # CatalogProvider after upgrade
+        catalog_file.write_text(
+            MODELS_TOML_TWO_ALIASES
+            + "\n[models.alias-new]\n"
+            + "route = 'local/model-new'\n"
+            + "input_cost_per_token = 0.0\n"
+            + "output_cost_per_token = 0.0\n"
+        )
+        await pilot.press(*"/model alias-new", "enter")
+        await pilot.pause(0.3)
+        assert app.kernel.loop.provider is provider  # same shared instance
+        assert provider.catalog.resolve("alias-new").route == "local/model-new"
+        assert app.kernel.loop.model == ModelId("alias-new")
+        assert app.kernel.runner.default_model == ModelId("alias-new")
+
+
 # ---------------------------------------------------------------------------
 # Task 2: session-start MCP server checklist
 # ---------------------------------------------------------------------------

@@ -32,12 +32,24 @@ class Kernel:
     registry: ToolRegistry
     hooks: HookBus
     provider: ModelProvider
+    runner: "SubagentRunner"
     resumed: bool = field(default=False)
     tags: list[str] = field(default_factory=list)
     mcp: McpHost | None = None
     plugins: "LoadedPlugins | None" = None
     plugin_warnings: list[str] = field(default_factory=list)
     _plugin_pumps: list = field(default_factory=list)
+
+    def set_provider(self, provider: ModelProvider) -> None:
+        """Single point for retargeting the model provider mid-session. The
+        loop, the subagent runner, and this kernel share one provider instance
+        by construction; a swap that touches only loop.provider leaves
+        dispatch_agent and mixture experts on the old one."""
+        self.provider = provider
+        self.loop.provider = provider
+        self.runner.provider = provider
+        if hasattr(provider, "bind_dispatcher"):
+            provider.bind_dispatcher(self.loop.dispatcher)
 
 
 def _make_pricing_for(catalog) -> "Callable[[ModelId], dict[str, float]]":
@@ -203,6 +215,7 @@ def build_kernel(
         registry=registry,
         hooks=hooks,
         provider=provider,
+        runner=runner,
         resumed=resumed,
         tags=tags or [],
         mcp=mcp_host,

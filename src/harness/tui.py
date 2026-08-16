@@ -506,25 +506,41 @@ class HarnessApp(App[None]):
             return
         # An in-flight turn finishes its current dispatch with the old alias and
         # picks the new one up next iteration. The CatalogProvider resolves the
-        # endpoint per call from the ALIAS, so switching is just retargeting
-        # loop.model; the provider swap below only matters when upgrading out of
-        # echo mode (no --model). A CatalogProvider is concurrency-safe.
+        # endpoint per call from the ALIAS against its catalog snapshot, so
+        # switching retargets loop.model AND refreshes that snapshot from the
+        # just-loaded catalog — otherwise a models.toml edit made mid-session
+        # validates here but dispatches against the startup catalog. A
+        # CatalogProvider is concurrency-safe.
+        from harness.cli import _make_pricing_for
         from harness.provider_litellm import CatalogProvider
 
         loop = self.kernel.loop
         loop.model = ModelId(alias)
         loop.model_pinned = True  # an explicit /model is a pin (routing-exempt)
         loop.pricing = resolved.pricing_dict() or None
-        if not isinstance(loop.provider, CatalogProvider):
+        provider = loop.provider
+        if isinstance(provider, CatalogProvider):
+            # Swap the snapshot on the SHARED instance: the loop, the subagent
+            # runner, and mixture tools all hold this one provider, so the
+            # refresh reaches delegated work too.
+            provider.catalog = catalog
+        else:
             from harness.provider_claude_code import ClaudeCodeProvider
             from harness.provider_codex import CodexProvider
 
-            # Match cli.py's construction: backend entries must be dispatchable.
-            # The dispatcher reaches the backend via current_dispatch_tool, so no
-            # bind is needed here.
-            loop.provider = CatalogProvider(
-                catalog, claude_code=ClaudeCodeProvider(), codex=CodexProvider()
+            # Upgrading out of echo mode (no --model): match cli.py's
+            # construction — backend entries must be dispatchable — and swap
+            # via the kernel so every holder (loop, subagent runner, kernel)
+            # gets the new provider, not just loop.provider.
+            self.kernel.set_provider(
+                CatalogProvider(catalog, claude_code=ClaudeCodeProvider(), codex=CodexProvider())
             )
+        # Unpinned subagents inherit the session's CURRENT model — the build-time
+        # default (in echo mode not even a catalog alias) would dispatch experts
+        # to the wrong place. Pricing lookups follow the fresh snapshot too.
+        self.kernel.runner.default_model = ModelId(alias)
+        self.kernel.runner.pricing = loop.pricing
+        self.kernel.runner.pricing_for = loop.pricing_for = _make_pricing_for(catalog)
         self.say("", f"model → {alias} ({resolved.route})")
         self._maybe_warn_context(resolved)
 
