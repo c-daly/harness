@@ -1590,3 +1590,65 @@ async def test_resume_with_no_prior_sessions_says_so(tmp_path):
         lines = "\n".join(str(line) for line in app.query_one(RichLog).lines)
         assert "no sessions" in lines.lower()
         assert not isinstance(app.screen, SessionPickerScreen)
+
+
+async def test_rebuild_in_progress_refuses_turn_and_clear_and_ignores_esc(tmp_path):
+    """A /resume rebuild genuinely parked mid-teardown (loop.end gated on a
+    real asyncio.Event -- not just pilot.pause()-past-everything) must
+    refuse a plain-text submit and a /clear, and Esc must not cancel it.
+    Once released, exactly the resumed session is live with no turn that
+    snuck in while the kernel was mid-swap."""
+    seed_sid = await _write_seed_session(tmp_path, "hello from the past")
+
+    app = make_app(tmp_path)
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        await pilot.click("#prompt")
+
+        gate = asyncio.Event()
+        real_end = app.kernel.loop.end
+
+        async def gated_end():
+            await gate.wait()
+            return await real_end()
+
+        app.kernel.loop.end = gated_end
+
+        try:
+            await pilot.press(*"/resume", "enter")
+            await pilot.pause(0.2)
+            assert isinstance(app.screen, SessionPickerScreen)
+            await pilot.press("enter")  # sole option -> _rebuild_kernel starts...
+            await pilot.pause(0.2)  # ...and is now parked in gated_end() on `gate`
+
+            assert app._rebuild_in_progress is True
+
+            # plain text is refused while the rebuild is in flight
+            await pilot.press(*"sneaky", "enter")
+            await pilot.pause(0.1)
+            lines = "\n".join(str(line) for line in app.query_one(RichLog).lines)
+            assert "in progress" in lines
+
+            # /clear is refused too -- it would try to tear down a kernel
+            # that's already mid-teardown
+            await pilot.press(*"/clear", "enter")
+            await pilot.pause(0.1)
+            lines = "\n".join(str(line) for line in app.query_one(RichLog).lines)
+            assert lines.count("in progress") == 2
+
+            # Esc during the rebuild is a no-op, not a cancel
+            await pilot.press("escape")
+            await pilot.pause(0.1)
+            assert app._rebuild_in_progress is True
+        finally:
+            # Always release the gate -- a mid-test assertion failure must
+            # not leave the parked rebuild (and app teardown, which awaits
+            # the same loop.end) hanging forever.
+            gate.set()
+        await pilot.pause(0.3)
+
+        assert app._rebuild_in_progress is False
+        assert app.kernel.session.id == seed_sid
+        texts = [m.text() for m in app.kernel.loop.history]
+        assert any("hello from the past" in t for t in texts)
+        assert not any("sneaky" in t for t in texts)  # no interleaved turn

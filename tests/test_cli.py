@@ -131,7 +131,7 @@ def test_continue_flag_with_no_sessions_raises_clear_system_exit(tmp_path, monke
     assert "no sessions" in str(exc.value).lower()
 
 
-def test_continue_and_resume_together_is_argparse_error(tmp_path, monkeypatch):
+def test_continue_and_resume_together_is_argparse_error(tmp_path, monkeypatch, capsys):
     import pytest
     import harness.cli as cli_mod
 
@@ -151,6 +151,16 @@ def test_continue_and_resume_together_is_argparse_error(tmp_path, monkeypatch):
     with pytest.raises(SystemExit) as exc:
         cli_mod.main()
     assert exc.value.code == 2  # argparse's own mutually-exclusive-group usage error
+    # An "unrecognized arguments: --continue" error is ALSO exit code 2, so
+    # that alone can't tell a real mutex conflict apart from --continue not
+    # being implemented at all -- pin the actual argparse mutex message.
+    err = capsys.readouterr().err
+    assert "not allowed with argument --continue" in err
+    assert "unrecognized arguments" not in err
+    # test_continue_flag_with_no_sessions_raises_clear_system_exit (above)
+    # already proves --continue alone parses fine and reaches resolution --
+    # together these two rule out "argparse just doesn't know --continue"
+    # as the reason this test passes.
 
 
 async def test_permission_engine_denies_through_kernel(tmp_path):

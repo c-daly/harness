@@ -299,6 +299,13 @@ class HarnessApp(App[None]):
         self._routing_rules = routing_rules
         self._turn_worker = None
         self._interrupting = False
+        # True for the full span of a kernel rebuild (/clear, /resume) --
+        # set at entry to _rebuild_kernel, cleared in its finally. A turn
+        # cannot start, another rebuild cannot start, and Esc cannot cancel
+        # while this is true: the old kernel/session may be mid-teardown
+        # (loop.end, mcp.stop) or the new one mid-startup (mcp.start), and
+        # none of those are safe to interleave with or interrupt.
+        self._rebuild_in_progress = False
         self._ended = False
         self._bus_pump_worker = None
         # One pump worker per plugin subscriber, tied to the CURRENT session's
@@ -492,7 +499,21 @@ class HarnessApp(App[None]):
 
         Callers own the "no turn running" guard -- this assumes it's safe to
         tear down the current kernel.
+
+        Sets _rebuild_in_progress for the full span (cleared in `finally`,
+        so it still clears if the rebuild itself raises): every "is
+        something running" guard -- plain-text submit, /clear, /compact,
+        /resume, plugin commands, and Esc -- refuses to interleave with a
+        kernel swap that's mid-teardown (loop.end/mcp.stop) or mid-startup
+        (mcp.start), rather than racing a half-torn-down kernel.
         """
+        self._rebuild_in_progress = True
+        try:
+            await self._rebuild_kernel_body(resume_session_id)
+        finally:
+            self._rebuild_in_progress = False
+
+    async def _rebuild_kernel_body(self, resume_session_id: "SessionId | None" = None) -> None:
         old_kernel = self.kernel
         old_mcp = old_kernel.mcp
         # These pumps are tied to the OLD session's bus; cancel them now so
@@ -633,6 +654,19 @@ class HarnessApp(App[None]):
             case _:
                 pass
 
+    def _refuse_if_busy(self) -> bool:
+        """Shared guard for anything that would touch the kernel or start a
+        turn: refuses (with a visible message) while a kernel rebuild is
+        mid-flight, then while a turn is already running. Returns True if
+        the caller should bail out without acting."""
+        if self._rebuild_in_progress:
+            self.say("! ", "a session rebuild is in progress -- try again in a moment")
+            return True
+        if self._turn_worker is not None and self._turn_worker.is_running:
+            self.say("! ", "a turn is already running -- Esc to interrupt it first")
+            return True
+        return False
+
     @on(Input.Submitted, "#prompt")
     async def _submitted(self, event: Input.Submitted) -> None:
         text = event.value.strip()
@@ -648,8 +682,7 @@ class HarnessApp(App[None]):
             # loop only between dispatches.
             await self._run_command(command)
             return
-        if self._turn_worker is not None and self._turn_worker.is_running:
-            self.say("! ", "a turn is already running -- Esc to interrupt it first")
+        if self._refuse_if_busy():
             return
         expanded, attached, errors = expand_file_mentions(text)
         if errors:
@@ -767,23 +800,20 @@ class HarnessApp(App[None]):
         elif command.name == "thoughts":
             self._set_thought_mode(command.arg.strip())
         elif command.name == "clear":
-            if self._turn_worker is not None and self._turn_worker.is_running:
-                self.say("! ", "a turn is already running -- Esc to interrupt it first")
+            if self._refuse_if_busy():
                 return
             await self._rebuild_kernel()
             self._clear_live()
             self.query_one("#transcript", RichLog).clear()
             self.say("", f"cleared -- new session {self.kernel.session.id}")
         elif command.name == "compact":
-            if self._turn_worker is not None and self._turn_worker.is_running:
-                self.say("! ", "a turn is already running -- Esc to interrupt it first")
+            if self._refuse_if_busy():
                 return
             self._turn_worker = self.run_worker(
                 self._run_compact(), group="agent", exit_on_error=False
             )
         elif command.name == "resume":
-            if self._turn_worker is not None and self._turn_worker.is_running:
-                self.say("! ", "a turn is already running -- Esc to interrupt it first")
+            if self._refuse_if_busy():
                 return
             # push_screen_wait must run from a worker (Textual requirement) --
             # unlike /clear and /compact, this command needs a modal answer
@@ -798,8 +828,7 @@ class HarnessApp(App[None]):
             # A plugin command IS a turn: route through the same guard as plain input.
             # (@file mentions deliberately do NOT expand inside command bodies v1 --
             # the body is the plugin author's text.)
-            if self._turn_worker is not None and self._turn_worker.is_running:
-                self.say("! ", "a turn is already running -- Esc to interrupt it first")
+            if self._refuse_if_busy():
                 return
             self.say("> ", prompt)
             self._turn_worker = self.run_worker(
@@ -926,6 +955,12 @@ class HarnessApp(App[None]):
             return
         if isinstance(self.screen, SessionPickerScreen):
             self.screen.dismiss(None)
+            return
+        if self._rebuild_in_progress:
+            # The picker is already dismissed by the time a rebuild starts,
+            # so neither branch above catches this: a kernel swap mid-flight
+            # (loop.end/mcp.stop/mcp.start) is not safe to cancel, so Esc is
+            # a no-op here rather than tearing down a half-built kernel.
             return
         worker = self._turn_worker
         if worker is None or worker.is_finished or self._interrupting:
