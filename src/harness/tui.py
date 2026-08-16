@@ -272,6 +272,7 @@ class HarnessApp(App[None]):
     CSS = """
     #live { height: auto; }
     #stats { dock: bottom; height: 1; }
+    #statusbar { dock: bottom; height: 1; }
     #prompt { dock: bottom; }
     """
     BINDINGS = [Binding("escape", "interrupt", "Interrupt", priority=True)]
@@ -321,6 +322,11 @@ class HarnessApp(App[None]):
         self._stats_conn = None
         self._stats_sub = None
         self._stats_queue = None
+        # Last rollup dict seen by refresh_stats -- the status bar's tool-count
+        # and cost segments reuse it instead of re-querying telemetry on every
+        # /model switch or kernel rebuild. Reset to None on a kernel rebuild
+        # (fresh session, stale counts would otherwise linger until the next tick).
+        self._last_rollup: "dict | None" = None
         self._mcp_errlog = None
         # The checklist selection (or headless default set) from the FIRST mount
         # -- a /clear rebuild restarts exactly these servers, never re-prompting.
@@ -338,6 +344,7 @@ class HarnessApp(App[None]):
             yield RichLog(id="transcript", wrap=True, markup=False, max_lines=10_000)
             yield Static(id="live")
         yield Static(id="stats")
+        yield Static(id="statusbar")
         yield HistoryInput(id="prompt", placeholder="prompt (/help for commands)")
 
     def say(self, prefix: str, text: str, *, style: str | None = None) -> None:
@@ -563,6 +570,10 @@ class HarnessApp(App[None]):
         )
         self.kernel = kernel
         kernel.loop.on_chunk = self._on_chunk
+        # A fresh/reopened session has its own telemetry root -- the OLD
+        # rollup's tool count must not linger in the status bar until the
+        # next 1s tick.
+        self._last_rollup = None
 
         # Re-subscribe stats BEFORE start()/resumed-render so SessionStarted (or
         # SessionResumed) lands in the fresh queue -- mirrors _session_driver's
@@ -614,6 +625,7 @@ class HarnessApp(App[None]):
             kernel.mcp.flush_events()
 
         self._start_plugin_subscribers(kernel)
+        self._refresh_statusbar()
 
     async def _bus_pump(self, queue) -> None:
         while True:
@@ -637,6 +649,56 @@ class HarnessApp(App[None]):
         self.query_one("#stats", Static).update(
             _plain(f"{model} | in {inp} out {out} | cost {cost_text} | tools {tc}")
         )
+        self._refresh_statusbar(rollup)
+
+    def _statusbar_catalog_segments(self) -> tuple["str | None", "str | None"]:
+        """Resolve the current model against the catalog for the status bar's
+        ctx/cost segments. Both None when the model isn't a catalog alias
+        (echo mode, or a bare --model run) -- there's no limit or pricing to
+        judge fill or cost against. Mirrors the resolve idiom in
+        _maybe_warn_context / _switch_model."""
+        if self.catalog_path is None or not Path(self.catalog_path).exists():
+            return None, None
+        from harness.catalog import Catalog, UnknownAliasError
+
+        catalog = Catalog.load(Path(self.catalog_path))
+        try:
+            resolved = catalog.resolve(str(self.kernel.loop.model))
+        except UnknownAliasError:
+            return None, None
+
+        ctx_segment = None
+        limit = resolved.max_input_tokens
+        if limit is None and "local" in resolved.tags:
+            limit = _LOCAL_CONTEXT_DEFAULT
+        if limit:
+            specs = self.kernel.registry.specs()
+            est = _schema_token_estimate(specs) + sum(
+                len(m.text()) // 4 for m in self.kernel.loop.history
+            )
+            ctx_segment = f"ctx {round(est / limit * 100)}%"
+
+        cost = self._last_rollup["cost"] if self._last_rollup else None
+        cost_segment = f"${cost if cost is not None else 0.0:.4f}"
+
+        return ctx_segment, cost_segment
+
+    def _refresh_statusbar(self, rollup: "dict | None" = None) -> None:
+        """Recompute the persistent #statusbar. Called at turn end (reusing
+        the rollup refresh_stats already computed -- no second telemetry
+        query), from /model (no turn required), after a kernel rebuild
+        (/clear, /resume), and after /compact (history shrinks, ctx% moves)."""
+        if rollup is not None:
+            self._last_rollup = rollup
+        tool_calls = self._last_rollup["tool_calls"] if self._last_rollup else 0
+        segments = [str(self.kernel.loop.model)]
+        ctx_segment, cost_segment = self._statusbar_catalog_segments()
+        if ctx_segment is not None:
+            segments.append(ctx_segment)
+        if cost_segment is not None:
+            segments.append(cost_segment)
+        segments.append(f"tools {tool_calls}")
+        self.query_one("#statusbar", Static).update(_plain(" | ".join(segments)))
 
     def _render_event(self, event) -> None:
         match event:
@@ -753,6 +815,7 @@ class HarnessApp(App[None]):
         )
         loop.history = [Message.system_text(f"Summary of earlier conversation: {summary}")]
         self.say("", f"compacted {len(state.messages)} messages -> 1 summary")
+        self._refresh_statusbar()  # history shrank to 1 message -- ctx% moves
 
     async def _run_resume(self) -> None:
         """/resume: pick a prior session and rebuild the kernel onto it.
@@ -946,6 +1009,7 @@ class HarnessApp(App[None]):
         self.kernel.runner.pricing_for = loop.pricing_for = _make_pricing_for(catalog)
         self.say("", f"model → {alias} ({resolved.route})")
         self._maybe_warn_context(resolved)
+        self._refresh_statusbar()
 
     def action_interrupt(self) -> None:
         # The priority Esc binding preempts modal bindings: with a permission

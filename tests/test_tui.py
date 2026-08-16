@@ -1245,6 +1245,73 @@ async def test_context_toast_fires_for_constrained_model_not_for_unconstrained(t
         assert not app._notifications  # unconstrained model: no toast at all
 
 
+# --- status bar ---
+
+
+async def test_statusbar_shows_model_and_tool_count_after_turn(tmp_path):
+    provider = FakeProvider(
+        [
+            [
+                TextDelta(text="hi"),
+                UsageReport(usage=Usage(input_tokens=7, output_tokens=3)),
+                StreamStop(stop_reason="end_turn"),
+            ]
+        ]
+    )
+    app = make_app(tmp_path, provider=provider, model=ModelId("fake:echo"))
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        await pilot.click("#prompt")
+        await pilot.press(*"go", "enter")
+        await pilot.pause(0.3)
+        app.refresh_stats()  # poke instead of waiting 1s
+        await pilot.pause(0.1)
+        bar = str(app.query_one("#statusbar", Static).content)
+        assert "fake:echo" in bar
+        assert "tools 0" in bar
+
+
+async def test_statusbar_shows_ctx_and_cost_for_catalog_model(tmp_path):
+    catalog_file = tmp_path / "models.toml"
+    catalog_file.write_text(MODELS_TOML_CONTEXT_TOAST)
+    app = make_app(tmp_path, catalog_path=catalog_file)
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        await pilot.click("#prompt")
+        await pilot.press(*"/model tiny-local", "enter")
+        await pilot.pause(0.4)  # switch runs in a worker (lazy litellm import)
+        bar = str(app.query_one("#statusbar", Static).content)
+        assert "ctx" in bar and "%" in bar
+        assert "$" in bar
+
+
+async def test_statusbar_omits_ctx_and_cost_in_echo_mode(tmp_path):
+    app = make_app(tmp_path)  # no catalog_path -- not a catalog alias
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        await pilot.click("#prompt")
+        await pilot.press(*"go", "enter")
+        await pilot.pause(0.3)
+        app.refresh_stats()
+        await pilot.pause(0.1)
+        bar = str(app.query_one("#statusbar", Static).content)
+        assert "ctx" not in bar
+        assert "$" not in bar
+
+
+async def test_statusbar_shows_new_alias_after_model_switch_without_a_turn(tmp_path):
+    catalog_file = tmp_path / "models.toml"
+    catalog_file.write_text(MODELS_TOML_TWO_ALIASES)
+    app = make_app(tmp_path, catalog_path=catalog_file)
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        await pilot.click("#prompt")
+        await pilot.press(*"/model alias-b", "enter")
+        await pilot.pause(0.3)  # switch runs in a worker (lazy litellm import)
+        bar = str(app.query_one("#statusbar", Static).content)
+        assert "alias-b" in bar
+
+
 # --- /clear ---
 
 

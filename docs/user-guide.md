@@ -84,7 +84,24 @@ tool calls, and answer permission prompts inline. Key bindings:
   while a turn is running. If there is nothing else to resume, says so and
   never opens the picker.
 
-The bottom line shows live token counts and stats for the session.
+The bottom line shows live token counts and stats for the session. Just above
+the prompt, a persistent status bar tracks the running session at a glance:
+
+- **model** — the current alias or model id (`loop.model`); updates the
+  instant `/model` switches it, no turn required.
+- **ctx N%** — estimated context-window fill: the tool schemas' token
+  footprint plus the conversation history so far, divided by the model's
+  `max_input_tokens` (a `local`-tagged model with no declared limit falls
+  back to 16384). Shrinks after `/compact`. Shown only when the current
+  model resolves against `--catalog`; omitted for a bare `--model` run or
+  the echo provider, since there's no limit to measure against.
+- **$N.NNNN** — running cost from the session's telemetry rollup. Shown
+  alongside `ctx`, under the same catalog-alias condition.
+- **tools N** — completed tool calls so far, from the same rollup the
+  bottom stats line uses.
+
+`/clear` and `/resume` reset it for the new/reopened session (a fresh
+session starts at `tools 0`); it otherwise refreshes at each turn's end.
 
 ### Headless (one-shot)
 
