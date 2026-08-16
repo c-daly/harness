@@ -15,7 +15,8 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
 from textual.screen import ModalScreen
-from textual.widgets import Checkbox, Input, RichLog, Static
+from textual.widgets import Checkbox, Input, OptionList, RichLog, Static
+from textual.widgets.option_list import Option
 from textual.worker import WorkerCancelled, WorkerFailed
 
 from harness.cli import Kernel, build_kernel
@@ -34,6 +35,7 @@ from harness.log import read_session
 from harness.mcp_host import McpHost
 from harness.messages import Message, Role
 from harness.provider import TextDelta, ThinkingDelta, collect
+from harness.sessions import SessionSummary, list_sessions
 from harness.telemetry import TelemetrySubscriber, open_store_memory, run_rollup
 from harness.tui_support import HistoryRing, SlashCommand, expand_file_mentions, parse_slash_command
 from harness.types import ModelId, SessionId
@@ -69,6 +71,28 @@ def _schema_token_estimate(specs) -> int:
         )
         // 4
     )
+
+
+def _format_age(seconds: float) -> str:
+    """Coarse "Ns/Nm/Nh/Nd ago" age, rounded down to the largest whole unit."""
+    seconds = max(0.0, seconds)
+    if seconds < 60:
+        return f"{int(seconds)}s"
+    minutes = seconds / 60
+    if minutes < 60:
+        return f"{int(minutes)}m"
+    hours = minutes / 60
+    if hours < 24:
+        return f"{int(hours)}h"
+    return f"{int(hours / 24)}d"
+
+
+def _session_row(summary: "SessionSummary") -> str:
+    age = _format_age(time.time() - summary.mtime)
+    if summary.error:
+        return f"{age} ago -- {summary.session_id}  [unreadable: {summary.error}]"
+    label = summary.first_prompt or "(no prompt)"
+    return f"{age} ago -- {label}"
 
 
 def _plain(text: str) -> Text:
@@ -188,6 +212,41 @@ class ServerChecklistScreen(ModalScreen[set[str]]):
             if self.query_one(f"#chk-{spec.name}", Checkbox).value
         }
         self.dismiss(selected)
+
+
+class SessionPickerScreen(ModalScreen["SessionId | None"]):
+    """/resume: pick a prior session to reopen. Enter dismisses with the
+    highlighted session id (newest first, so Enter alone resumes the most
+    recent session); Escape cancels with None. Escape is handled by
+    HarnessApp.action_interrupt (mirrors PermissionScreen: the app's own
+    priority Esc binding preempts a modal's, so cancellation lives there,
+    not in a binding on this screen)."""
+
+    BINDINGS = [Binding("enter", "accept", "resume selected session", priority=True)]
+
+    def __init__(self, sessions: "list[SessionSummary]") -> None:
+        super().__init__()
+        self._sessions = sessions
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="resume-box"):
+            yield Static(_plain("Resume which session? [enter] pick   [esc] cancel"))
+            yield OptionList(
+                *(
+                    Option(_plain(_session_row(s)), id=str(s.session_id))
+                    for s in self._sessions
+                ),
+                id="resume-list",
+            )
+
+    def action_accept(self) -> None:
+        option_list = self.query_one("#resume-list", OptionList)
+        highlighted = option_list.highlighted
+        if highlighted is None:
+            self.dismiss(None)
+            return
+        option = option_list.get_option_at_index(highlighted)
+        self.dismiss(SessionId(option.id))
 
 
 class HistoryInput(Input):
@@ -662,12 +721,33 @@ class HarnessApp(App[None]):
         loop.history = [Message.system_text(f"Summary of earlier conversation: {summary}")]
         self.say("", f"compacted {len(state.messages)} messages -> 1 summary")
 
+    async def _run_resume(self) -> None:
+        """/resume: pick a prior session and rebuild the kernel onto it.
+        Runs as its own worker (see the /resume dispatch) since
+        push_screen_wait needs one. Excludes the CURRENT session from the
+        picker -- resuming into the session you're already in is a
+        no-op-shaped trap, not a real choice."""
+        current_id = self.kernel.session.id
+        sessions = [
+            s for s in list_sessions(self.kernel.session.base) if s.session_id != current_id
+        ]
+        if not sessions:
+            self.say("! ", "no sessions to resume")
+            return
+        chosen = await self.push_screen_wait(SessionPickerScreen(sessions))
+        if chosen is None:
+            return
+        self._clear_live()
+        self.query_one("#transcript", RichLog).clear()
+        await self._rebuild_kernel(resume_session_id=chosen)
+        self.say("", f"resumed session {self.kernel.session.id}")
+
     async def _run_command(self, command: SlashCommand) -> None:
         if command.name == "help":
             self.say(
                 "",
                 "/help  /model [alias]  /thoughts [collapse|full|off]  /clear  /compact  "
-                "/tools  /quit  — @/path attaches a file",
+                "/resume  /tools  /quit  — @/path attaches a file",
             )
             if self._plugin_commands:
                 self.say(
@@ -701,6 +781,14 @@ class HarnessApp(App[None]):
             self._turn_worker = self.run_worker(
                 self._run_compact(), group="agent", exit_on_error=False
             )
+        elif command.name == "resume":
+            if self._turn_worker is not None and self._turn_worker.is_running:
+                self.say("! ", "a turn is already running -- Esc to interrupt it first")
+                return
+            # push_screen_wait must run from a worker (Textual requirement) --
+            # unlike /clear and /compact, this command needs a modal answer
+            # before it can act, so the picker + rebuild both live in one.
+            self.run_worker(self._run_resume(), group="driver", exit_on_error=False)
         elif command.name in self._plugin_commands:
             body = self._plugin_commands[command.name].body
             prompt = body.replace("$ARGUMENTS", command.arg)
@@ -835,6 +923,9 @@ class HarnessApp(App[None]):
         # modal up, Esc means "deny this ask", not "kill the turn".
         if isinstance(self.screen, PermissionScreen):
             self.screen.action_answer("deny")
+            return
+        if isinstance(self.screen, SessionPickerScreen):
+            self.screen.dismiss(None)
             return
         worker = self._turn_worker
         if worker is None or worker.is_finished or self._interrupting:

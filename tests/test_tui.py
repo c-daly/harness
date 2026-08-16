@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 
 import anyio
 from mcp.shared.memory import create_client_server_memory_streams
-from textual.widgets import Input, RichLog, Static
+from textual.widgets import Input, OptionList, RichLog, Static
 
 from harness.cli import build_kernel
 from harness.fold import fold
@@ -32,6 +32,7 @@ from harness.tui import (
     HarnessApp,
     PermissionScreen,
     ServerChecklistScreen,
+    SessionPickerScreen,
     _schema_token_estimate,
 )
 from harness.tui_support import TuiResolver
@@ -1482,3 +1483,110 @@ async def test_compact_refused_while_turn_running(tmp_path):
         assert app.kernel.loop.history == history_before
         provider.release.set()  # let the first turn finish before teardown
         await pilot.pause(0.3)
+
+
+# --- /resume ---
+
+
+async def _write_seed_session(tmp_path, prompt_text):
+    """Run one turn to completion in its own app, close the session, and
+    hand back its id -- a prior session for a LATER app's /resume to find."""
+    seed = make_app(tmp_path)
+    async with seed.run_test() as pilot:
+        await pilot.pause(0.1)
+        await pilot.click("#prompt")
+        await pilot.press(*prompt_text, "enter")
+        await pilot.pause(0.2)
+    sid = seed.kernel.session.id
+    seed.kernel.session.close()
+    return sid
+
+
+async def test_resume_shows_picker_with_age_and_first_prompt(tmp_path):
+    await _write_seed_session(tmp_path, "hello from the past")
+
+    app = make_app(tmp_path)
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        await pilot.click("#prompt")
+        await pilot.press(*"/resume", "enter")
+        await pilot.pause(0.2)
+        screen = app.screen
+        assert isinstance(screen, SessionPickerScreen)
+        option_list = screen.query_one(OptionList)
+        # the app's OWN (currently open) session is excluded -- only the prior one shows
+        assert option_list.option_count == 1
+        rendered = str(option_list.get_option_at_index(0).prompt)
+        assert "hello from the past" in rendered
+        await pilot.press("escape")
+        await pilot.pause(0.1)
+
+
+async def test_resume_choosing_session_rebuilds_onto_it(tmp_path):
+    seed_sid = await _write_seed_session(tmp_path, "hello from the past")
+
+    app = make_app(tmp_path)
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        await pilot.click("#prompt")
+        original_sid = app.kernel.session.id
+        await pilot.press(*"/resume", "enter")
+        await pilot.pause(0.2)
+        assert isinstance(app.screen, SessionPickerScreen)
+        await pilot.press("enter")  # sole option is highlighted by default
+        await pilot.pause(0.2)
+        assert app.kernel.session.id == seed_sid
+        assert app.kernel.session.id != original_sid
+        texts = [m.text() for m in app.kernel.loop.history]
+        assert any("hello from the past" in t for t in texts)
+        lines = "\n".join(str(line) for line in app.query_one(RichLog).lines)
+        assert "hello from the past" in lines
+        assert f"resumed session {seed_sid}" in lines
+
+
+async def test_resume_escape_cancels_session_unchanged(tmp_path):
+    await _write_seed_session(tmp_path, "hello from the past")
+
+    app = make_app(tmp_path)
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        await pilot.click("#prompt")
+        original_sid = app.kernel.session.id
+        await pilot.press(*"/resume", "enter")
+        await pilot.pause(0.2)
+        assert isinstance(app.screen, SessionPickerScreen)
+        await pilot.press("escape")
+        await pilot.pause(0.1)
+        assert not isinstance(app.screen, SessionPickerScreen)
+        assert app.kernel.session.id == original_sid
+
+
+async def test_resume_refused_while_turn_running(tmp_path):
+    provider = GatedProvider()
+    app = make_app(tmp_path, provider=provider, model=ModelId("gated"))
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        await pilot.click("#prompt")
+        await pilot.press(*"stuck", "enter")
+        await pilot.pause(0.1)  # turn parked at the gate
+        original_sid = app.kernel.session.id
+        await pilot.press(*"/resume", "enter")
+        await pilot.pause(0.1)
+        lines = "\n".join(str(line) for line in app.query_one(RichLog).lines)
+        assert "already running" in lines
+        assert not isinstance(app.screen, SessionPickerScreen)
+        assert app.kernel.session.id == original_sid
+        provider.release.set()  # let the first turn finish before teardown
+        await pilot.pause(0.3)
+
+
+async def test_resume_with_no_prior_sessions_says_so(tmp_path):
+    app = make_app(tmp_path)
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        await pilot.click("#prompt")
+        await pilot.press(*"/resume", "enter")
+        await pilot.pause(0.2)
+        lines = "\n".join(str(line) for line in app.query_one(RichLog).lines)
+        assert "no sessions" in lines.lower()
+        assert not isinstance(app.screen, SessionPickerScreen)

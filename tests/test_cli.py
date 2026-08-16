@@ -82,6 +82,77 @@ async def test_resume_flag_continues_session(tmp_path):
     assert seqs == sorted(seqs) and len(set(seqs)) == len(seqs)
 
 
+def test_continue_flag_resolves_to_newest_session_id(tmp_path, monkeypatch, capsys):
+    import os
+
+    import harness.cli as cli_mod
+
+    monkeypatch.setattr(cli_mod, "default_engine", lambda project_dir=None: None)
+    monkeypatch.setattr("sys.argv", ["harness", "-p", "first", "--base-dir", str(tmp_path)])
+    cli_mod.main()
+    capsys.readouterr()
+    first_sid = next((tmp_path / "sessions").glob("*.jsonl")).stem
+    # force distinct, deterministic mtimes -- two runs on a fast machine can
+    # otherwise land in the same second and make "newest" ambiguous
+    os.utime(tmp_path / "sessions" / f"{first_sid}.jsonl", (1_000_000, 1_000_000))
+
+    monkeypatch.setattr("sys.argv", ["harness", "-p", "second", "--base-dir", str(tmp_path)])
+    cli_mod.main()
+    capsys.readouterr()
+    all_sids = {p.stem for p in (tmp_path / "sessions").glob("*.jsonl")}
+    second_sid = (all_sids - {first_sid}).pop()
+    os.utime(tmp_path / "sessions" / f"{second_sid}.jsonl", (2_000_000, 2_000_000))
+
+    captured: dict = {}
+    real_build_kernel = cli_mod.build_kernel
+
+    def spy_build_kernel(**kwargs):
+        captured["resume_session_id"] = kwargs.get("resume_session_id")
+        return real_build_kernel(**kwargs)
+
+    monkeypatch.setattr(cli_mod, "build_kernel", spy_build_kernel)
+    monkeypatch.setattr(
+        "sys.argv", ["harness", "--continue", "-p", "third", "--base-dir", str(tmp_path)]
+    )
+    cli_mod.main()
+    assert captured["resume_session_id"] == second_sid
+
+
+def test_continue_flag_with_no_sessions_raises_clear_system_exit(tmp_path, monkeypatch):
+    import pytest
+    import harness.cli as cli_mod
+
+    monkeypatch.setattr(cli_mod, "default_engine", lambda project_dir=None: None)
+    monkeypatch.setattr(
+        "sys.argv", ["harness", "--continue", "-p", "hi", "--base-dir", str(tmp_path)]
+    )
+    with pytest.raises(SystemExit) as exc:
+        cli_mod.main()
+    assert "no sessions" in str(exc.value).lower()
+
+
+def test_continue_and_resume_together_is_argparse_error(tmp_path, monkeypatch):
+    import pytest
+    import harness.cli as cli_mod
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "harness",
+            "--continue",
+            "--resume",
+            "abc123",
+            "-p",
+            "hi",
+            "--base-dir",
+            str(tmp_path),
+        ],
+    )
+    with pytest.raises(SystemExit) as exc:
+        cli_mod.main()
+    assert exc.value.code == 2  # argparse's own mutually-exclusive-group usage error
+
+
 async def test_permission_engine_denies_through_kernel(tmp_path):
     from harness.events import HookDecided
     from harness.log import read_session

@@ -71,6 +71,18 @@ tool calls, and answer permission prompts inline. Key bindings:
   same replacement on replay. On failure (the summarize call errors) history
   is left untouched, nothing is logged, and the error is shown. Refused while
   a turn is running.
+- `/resume` — pick a prior session and reopen it in place (same kernel
+  rebuild `/clear` uses, but reopening instead of starting fresh). Shows a
+  picker listing every other session under `--base-dir`, newest first, each
+  row an age (`3m ago`, `2h ago`, ...) and that session's first prompt; the
+  current session is left out of the list, and a torn or otherwise unreadable
+  log still shows up, marked `[unreadable: ...]`, rather than being hidden.
+  Enter on the (default-highlighted, newest) row resumes it: same provider,
+  permission engine, and resolver wiring as `/clear`, but `loop.history` and
+  the transcript are rebuilt from that session's log instead of starting
+  empty. Escape cancels and leaves the current session untouched. Refused
+  while a turn is running. If there is nothing else to resume, says so and
+  never opens the picker.
 
 The bottom line shows live token counts and stats for the session.
 
@@ -418,8 +430,10 @@ uv run harness outcome SESSION_ID ok --score 0.9 --note "shipped"
 | `<project>/.harness/` | Project-scoped `mcp.toml`, `permissions.toml`, `plugins/` |
 
 Override the session/data root with `--base-dir`. Resume a past session with
-`--resume SESSION_ID`. Tag a run for later querying with `--tag NAME`
-(repeatable).
+`--resume SESSION_ID`, or reopen the most recently active one under
+`--base-dir` without looking up its id via `--continue` (errors clearly if
+there are no sessions to continue; mutually exclusive with `--resume`). Tag a
+run for later querying with `--tag NAME` (repeatable).
 
 ---
 

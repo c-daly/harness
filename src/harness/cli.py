@@ -367,8 +367,15 @@ def _run_main() -> None:
         default=Path.home() / ".config" / "harness" / "models.toml",
         help="Path to the model catalog TOML (default: ~/.config/harness/models.toml).",
     )
-    parser.add_argument(
+    resume_group = parser.add_mutually_exclusive_group()
+    resume_group.add_argument(
         "--resume", dest="resume_session_id", default=None, help="Session ID to resume."
+    )
+    resume_group.add_argument(
+        "--continue",
+        dest="continue_last",
+        action="store_true",
+        help="Resume the most recently active session under --base-dir.",
     )
     parser.add_argument(
         "--allow",
@@ -402,6 +409,13 @@ def _run_main() -> None:
     args = parser.parse_args()
 
     resume_session_id = SessionId(args.resume_session_id) if args.resume_session_id else None
+    if args.continue_last:
+        from harness.sessions import list_sessions
+
+        sessions = list_sessions(args.base_dir)
+        if not sessions:
+            raise SystemExit(f"--continue: no sessions found under {args.base_dir}")
+        resume_session_id = sessions[0].session_id
 
     from harness.routing import load_routing
 
