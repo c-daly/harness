@@ -108,7 +108,7 @@ servers, and so on. Point at a different catalog with `--catalog PATH`.
 | `route` (required) | The LiteLLM model string the alias maps to. |
 | `api_base` | Custom endpoint base URL — for OpenAI-compatible or local servers. |
 | `api_key_env` | Name of the env var holding the API key (a *name*, never the key itself). |
-| `backend` | Selects a non-LiteLLM provider implementation. Currently `"claude-code"`: turns run through the local, logged-in Claude Code CLI on subscription auth, and `route` becomes `claude-code/<model>` instead of a LiteLLM string (see [Claude on your Claude Code subscription](#claude-on-your-claude-code-subscription)). Absent → the LiteLLM route above. |
+| `backend` | Selects a non-LiteLLM provider implementation: `"claude-code"` runs turns through the local, logged-in Claude Code CLI on subscription auth (see [Claude on your Claude Code subscription](#claude-on-your-claude-code-subscription)); `"codex"` runs turns through the local, logged-in Codex CLI on subscription auth (see [Codex on your ChatGPT subscription](#codex-on-your-chatgpt-subscription)). Either way `route` becomes `<backend>/<model>` instead of a LiteLLM string. Absent → the LiteLLM route above. |
 | `tags` | Free-form capability labels you can use to organize aliases. |
 | `input_cost_per_token` / `output_cost_per_token` | Pricing overrides. |
 | `max_input_tokens` | Context-window override. |
@@ -395,3 +395,36 @@ tags = ["anthropic", "subscription", "tool-calling", "frontier"]
 
 Requirements: `claude` on PATH and logged in (Pro/Max). One harness turn is
 one Claude Code agent turn; Max-plan rate limits apply.
+
+---
+
+## Codex on your ChatGPT subscription
+
+Entries with `backend = "codex"` run turns through your locally installed,
+logged-in Codex CLI (`codex mcp-server`) instead of an API. The harness
+serves its own tools to Codex over MCP by replacing Codex's `mcp_servers`
+config table for the turn, with `sandbox = "read-only"` and
+`approval-policy = "never"` — the harness permission engine is the only
+gate. The harness never handles ChatGPT credentials — log in with
+`codex login` once and the backend uses that.
+
+```toml
+[models.codex]
+backend = "codex"
+route = "codex/default"         # "codex/<model>" passes a --model override
+input_cost_per_token = 0.0      # subscription: flat-rate, no per-token cost
+output_cost_per_token = 0.0
+tags = ["openai", "subscription", "tool-calling"]
+```
+
+**Additive, not exclusive.** Unlike the claude-code backend, which disables
+Claude Code's own built-in tools so the harness registry is the only tool
+surface, the codex backend does *not* disable Codex's built-in read-only
+shell. A codex-backed turn gets the harness's tools in addition to whatever
+Codex can already do on its own — tool parity here is additive, not a
+drop-in match for the claude-code backend's exclusivity. Codex's own shell
+stays read-only regardless, since the turn is spawned with
+`sandbox = "read-only"`.
+
+Requirements: `codex` on PATH and logged in. One harness turn is one Codex
+agent turn.

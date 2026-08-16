@@ -22,7 +22,7 @@ class UnknownBackendError(Exception):
     pass
 
 
-KNOWN_BACKENDS: frozenset[str] = frozenset({"claude-code"})
+KNOWN_BACKENDS: frozenset[str] = frozenset({"claude-code", "codex"})
 
 
 @dataclass(frozen=True)

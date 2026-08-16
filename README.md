@@ -18,10 +18,10 @@ uv run harness -p "summarize the README"    # one-shot, headless
 - **Event-sourced kernel.** The session log is the unit of truth; model state is
   a pure fold of it. Resume, replay, and telemetry fall out for free.
 - **Multi-model by default.** Models are catalog aliases — over LiteLLM for API
-  and local endpoints, or over a subscription CLI (Claude Code today) with the
-  harness's own tools served to it. Switch providers, run different models in
-  subagents, do adversarial cross-model review. Not getting locked in is the
-  point.
+  and local endpoints, or over a subscription CLI (Claude Code or Codex) with
+  the harness's own tools served to it. Switch providers, run different models
+  in subagents, do adversarial cross-model review. Not getting locked in is
+  the point.
 - **One enforcement path.** Native tools and MCP tools dispatch identically,
   through one dispatcher, behind one permission engine.
 - **Permission engine.** Allow / deny / ask rules over tool name *and* arguments,

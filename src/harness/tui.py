@@ -517,11 +517,14 @@ class HarnessApp(App[None]):
         loop.pricing = resolved.pricing_dict() or None
         if not isinstance(loop.provider, CatalogProvider):
             from harness.provider_claude_code import ClaudeCodeProvider
+            from harness.provider_codex import CodexProvider
 
             # Match cli.py's construction: backend entries must be dispatchable.
             # The dispatcher reaches the backend via current_dispatch_tool, so no
             # bind is needed here.
-            loop.provider = CatalogProvider(catalog, claude_code=ClaudeCodeProvider())
+            loop.provider = CatalogProvider(
+                catalog, claude_code=ClaudeCodeProvider(), codex=CodexProvider()
+            )
         self.say("", f"model → {alias} ({resolved.route})")
         self._maybe_warn_context(resolved)
 
