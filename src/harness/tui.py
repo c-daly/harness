@@ -5,6 +5,7 @@ on_chunk tee (streaming), the Resolver (decisions), and the loop/session/mcp
 lifecycle calls that mirror run_once's ordering contract."""
 
 import asyncio
+import json
 from pathlib import Path
 
 from rich.text import Text
@@ -29,6 +30,30 @@ from harness.tui_support import HistoryRing, SlashCommand, expand_file_mentions,
 from harness.types import ModelId
 
 _SNIPPET_CAP = 200
+
+# A constrained model is one that either self-identifies as "local" (small,
+# self-hosted) or advertises a small context window; the threshold and
+# default mirror what a typical local GGUF quant ships with.
+_SMALL_CONTEXT_THRESHOLD = 32768
+_LOCAL_CONTEXT_DEFAULT = 16384
+_UNCONSTRAINED_CONTEXT = 10**9  # sentinel: an unset max_input_tokens is never "small"
+_CONTEXT_WARN_FRACTION = 0.10
+
+
+def _schema_token_estimate(specs) -> int:
+    """~4 characters/token approximation of the JSON schema payload the
+    model receives for these tools every turn."""
+    return (
+        sum(
+            len(
+                json.dumps(
+                    {"name": str(s.name), "description": s.description, "parameters": s.parameters}
+                )
+            )
+            for s in specs
+        )
+        // 4
+    )
 
 
 def _plain(text: str) -> Text:
@@ -250,6 +275,9 @@ class HarnessApp(App[None]):
             selected = await self.push_screen_wait(ServerChecklistScreen(kernel.mcp))
             for warning in await kernel.mcp.start(only=selected):
                 self.say("! ", warning)
+        # Registry is final now (MCP registration above already ran, if any) --
+        # safe to estimate the tool-schema footprint against it.
+        await self._warn_context_at_mount()
         if not kernel.resumed:
             await kernel.loop.start()
         else:
@@ -418,6 +446,46 @@ class HarnessApp(App[None]):
         else:
             self.say("! ", f"unknown command: /{command.name}")
 
+    def _maybe_warn_context(self, resolved) -> None:
+        """Toast once when a constrained model's tool-schema footprint eats a
+        meaningful slice of its context window -- local/small-context models
+        are the ones that actually run out of room for schemas plus history."""
+        constrained = (
+            "local" in resolved.tags
+            or (resolved.max_input_tokens or _UNCONSTRAINED_CONTEXT) < _SMALL_CONTEXT_THRESHOLD
+        )
+        if not constrained:
+            return
+        ctx = resolved.max_input_tokens or _LOCAL_CONTEXT_DEFAULT
+        specs = self.kernel.registry.specs()
+        est = _schema_token_estimate(specs)
+        if est <= ctx * _CONTEXT_WARN_FRACTION:
+            return
+        pct = round(est / ctx * 100)
+        self.notify(
+            f"{resolved.alias}: {len(specs)} tools \u2248 {est:,} tokens of schemas "
+            f"(~{pct}% of {ctx:,} context) \u2014 /tools to review",
+            severity="warning",
+            timeout=8,
+        )
+
+    async def _warn_context_at_mount(self) -> None:
+        """Resolve the running model against the catalog once the tool
+        registry is final and toast if it's constrained and schema-heavy.
+        No-ops without --catalog, or when the model isn't a catalog alias (a
+        bare --model run, or the echo/fake providers tests use) -- there are
+        no tags/limits to judge it against."""
+        if self.catalog_path is None or not Path(self.catalog_path).exists():
+            return
+        from harness.catalog import Catalog, UnknownAliasError
+
+        catalog = Catalog.load(Path(self.catalog_path))
+        try:
+            resolved = catalog.resolve(str(self.kernel.loop.model))
+        except UnknownAliasError:
+            return
+        self._maybe_warn_context(resolved)
+
     async def _switch_model(self, alias: str) -> None:
         if self.catalog_path is None or not Path(self.catalog_path).exists():
             self.say("! ", "no catalog configured (--catalog)")
@@ -455,6 +523,7 @@ class HarnessApp(App[None]):
             # bind is needed here.
             loop.provider = CatalogProvider(catalog, claude_code=ClaudeCodeProvider())
         self.say("", f"model → {alias} ({resolved.route})")
+        self._maybe_warn_context(resolved)
 
     def action_interrupt(self) -> None:
         # The priority Esc binding preempts modal bindings: with a permission

@@ -25,7 +25,13 @@ from harness.provider import (
     text_turn,
 )
 from harness.tools import ToolSpec
-from harness.tui import AppBoundAsk, HarnessApp, PermissionScreen, ServerChecklistScreen
+from harness.tui import (
+    AppBoundAsk,
+    HarnessApp,
+    PermissionScreen,
+    ServerChecklistScreen,
+    _schema_token_estimate,
+)
 from harness.tui_support import TuiResolver
 from harness.types import CallId, ModelId, ToolName
 from tests.conftest import fixture_stdio_spec, load_fixture_server
@@ -58,6 +64,19 @@ class PathEchoTool:
 
     async def __call__(self, args: dict) -> str:
         return args["file_path"]
+
+
+class FatSchemaTool:
+    # Parameters schema padded to ~40KB so its estimated token cost clears the
+    # 10%-of-context threshold for a 16384-token constrained model.
+    spec = ToolSpec(
+        name=ToolName("fat_tool"),
+        description="Tool with an oversized parameter schema",
+        parameters={"type": "object", "description": "x" * 40_000},
+    )
+
+    async def __call__(self, args: dict) -> str:
+        return "ok"
 
 
 def make_app(tmp_path, catalog_path=None, plugins=None, **kernel_kwargs) -> HarnessApp:
@@ -951,3 +970,62 @@ async def test_checked_server_full_capability(tmp_path):
             app._mcp_errlog.close()
         await kernel.mcp.stop()
         kernel.session.close()
+
+
+def test_schema_token_estimate_sums_json_length_over_four():
+    specs = (
+        ToolSpec(
+            name=ToolName("t1"),
+            description="one",
+            parameters={"type": "object", "properties": {}},
+        ),
+        ToolSpec(
+            name=ToolName("t2"),
+            description="two tool",
+            parameters={"type": "object", "properties": {"x": {"type": "string"}}},
+        ),
+    )
+    # json.dumps({"name": "t1", "description": "one",
+    #             "parameters": {"type": "object", "properties": {}}}) is 88 chars;
+    # the t2 spec's JSON is 116 chars -- (88 + 116) // 4 == 51.
+    assert _schema_token_estimate(specs) == 51
+
+
+MODELS_TOML_CONTEXT_TOAST = (
+    "[models.tiny-local]\n"
+    "route = 'local/tiny'\n"
+    "tags = ['local']\n"
+    "max_input_tokens = 16384\n"
+    "input_cost_per_token = 0.0\n"
+    "output_cost_per_token = 0.0\n"
+    "\n"
+    "[models.big-cloud]\n"
+    "route = 'openai/big-cloud'\n"
+    "input_cost_per_token = 0.0\n"
+    "output_cost_per_token = 0.0\n"
+)
+
+
+async def test_context_toast_fires_for_constrained_model_not_for_unconstrained(tmp_path):
+    catalog_file = tmp_path / "models.toml"
+    catalog_file.write_text(MODELS_TOML_CONTEXT_TOAST)
+    app = make_app(tmp_path, catalog_path=catalog_file)
+    app.kernel.registry.register(FatSchemaTool())
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        await pilot.click("#prompt")
+        await pilot.press(*"/model tiny-local", "enter")
+        await pilot.pause(0.4)  # switch runs in a worker (lazy litellm import)
+        warnings = [n for n in app._notifications if n.severity == "warning"]
+        assert any(
+            w.message.startswith("tiny-local: ")
+            and "tokens of schemas" in w.message
+            and "context)" in w.message
+            and w.message.endswith("/tools to review")
+            for w in warnings
+        )
+
+        app.clear_notifications()
+        await pilot.press(*"/model big-cloud", "enter")
+        await pilot.pause(0.4)
+        assert not app._notifications  # unconstrained model: no toast at all

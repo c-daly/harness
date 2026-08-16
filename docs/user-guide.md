@@ -283,6 +283,15 @@ tools, so it cannot be reached even by a permission rule that would otherwise
 match it. Headless (`-p`) runs skip the checklist -- there is no one to ask --
 and start whatever `default_enabled` says for every configured server.
 
+Once the checklist's selections are live and every started server has
+registered its tools, the TUI checks the final tool registry against the
+active model: for a constrained model (tagged `local`, or with
+`max_input_tokens` under 32768) whose tool schemas alone would eat more
+than 10% of its context window, it shows a warning toast naming the tool
+count and the estimated token cost -- `/tools` lists what's registered so
+you can trim the checklist next time. The same check runs again after any
+`/model` switch. Unconstrained models never trigger it.
+
 Skip MCP entirely for a run with `--no-mcp`, or point at one explicit file with
 `--mcp-config PATH`.
 
