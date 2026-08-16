@@ -45,7 +45,9 @@ async def test_local_alias_resolves_route_and_api_base(captured):
     (call,) = captured
     assert str(call["model"]) == "ollama/llama3"
     assert call["api_base"] == "http://localhost:11434"
-    assert call["api_key"] is None  # no api_key_env on this entry
+    # no api_key_env on this entry: CatalogProvider injects a placeholder
+    # (a real value is never required for a local api_base)
+    assert call["api_key"] == "local-no-key"
 
 
 async def test_gpt_alias_dereferences_api_key_env(monkeypatch, captured):

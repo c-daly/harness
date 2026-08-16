@@ -104,3 +104,83 @@ def test_bind_dispatcher_forwards_to_both(tmp_path):
     provider.bind_dispatcher(sentinel)
     assert fake_claude.bound is sentinel
     assert fake_codex.bound is sentinel
+
+
+# --- keyless local endpoints: litellm openai/* routes refuse to run without
+# SOME api_key even against a local api_base; a local server ignores the
+# value, so CatalogProvider must inject a placeholder rather than requiring
+# an unrelated real credential. ---
+
+
+def _fake_acompletion(captured):
+    async def _empty_stream():
+        for _ in ():
+            yield None
+
+    async def _acompletion(**kwargs):
+        captured.append(kwargs)
+        return _empty_stream()
+
+    return _acompletion
+
+
+async def test_local_api_base_without_key_gets_placeholder_api_key(tmp_path, monkeypatch):
+    import litellm
+
+    captured = []
+    monkeypatch.setattr(litellm, "acompletion", _fake_acompletion(captured))
+    p = tmp_path / "models.toml"
+    p.write_text(
+        """[models.local36]
+route = "openai/local-model"
+api_base = "http://localhost:8080/v1"
+input_cost_per_token = 0.0
+output_cost_per_token = 0.0
+"""
+    )
+    provider = CatalogProvider(Catalog.load(p))
+    await collect(provider.complete(model=ModelId("local36"), messages=USER, tools=()))
+    assert captured[0]["api_key"] == "local-no-key"
+    assert captured[0]["api_base"] == "http://localhost:8080/v1"
+
+
+async def test_no_api_base_and_no_key_leaves_api_key_absent(tmp_path, monkeypatch):
+    import litellm
+
+    captured = []
+    monkeypatch.setattr(litellm, "acompletion", _fake_acompletion(captured))
+    p = tmp_path / "models.toml"
+    p.write_text(
+        """[models.plainroute]
+route = "gpt-4o-mini"
+input_cost_per_token = 0.0
+output_cost_per_token = 0.0
+"""
+    )
+    provider = CatalogProvider(Catalog.load(p))
+    await collect(provider.complete(model=ModelId("plainroute"), messages=USER, tools=()))
+    assert "api_key" not in captured[0]
+    assert "api_base" not in captured[0]
+
+
+async def test_real_api_key_env_wins_over_local_placeholder(tmp_path, monkeypatch):
+    import litellm
+
+    captured = []
+    monkeypatch.setattr(litellm, "acompletion", _fake_acompletion(captured))
+    monkeypatch.setenv("FAKE_LOCAL_KEY", "real-secret-value")
+    p = tmp_path / "models.toml"
+    p.write_text(
+        """[models.localwithkey]
+route = "openai/local-model"
+api_base = "http://localhost:8080/v1"
+api_key_env = "FAKE_LOCAL_KEY"
+input_cost_per_token = 0.0
+output_cost_per_token = 0.0
+"""
+    )
+    provider = CatalogProvider(Catalog.load(p))
+    await collect(
+        provider.complete(model=ModelId("localwithkey"), messages=USER, tools=())
+    )
+    assert captured[0]["api_key"] == "real-secret-value"

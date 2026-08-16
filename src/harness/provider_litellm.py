@@ -312,6 +312,11 @@ class CatalogProvider:
                 yield chunk
             return
         api_key = os.environ.get(resolved.api_key_env) if resolved.api_key_env else None
+        if resolved.api_base and api_key is None:
+            # litellm openai/* routes refuse to run without SOME api_key, even
+            # against a local api_base; local servers ignore the value. Local
+            # endpoints must not require an unrelated real credential.
+            api_key = "local-no-key"
         async for chunk in _acomplete(
             model=resolved.route,
             messages=messages,
