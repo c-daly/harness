@@ -205,6 +205,71 @@ async def test_second_submit_while_turn_running_is_rejected(tmp_path):
     assert [e.event.type for e in envelopes].count("user_message") == 1
 
 
+async def test_busy_guard_rechecked_after_mention_injection_await(tmp_path):
+    """M-1: _refuse_if_busy() was checked only BEFORE await _inject_mentions
+    -- a second submit that starts (and keeps running) its own turn while an
+    earlier submit is still parked in a slow injection would, once that
+    earlier submit's injection finally resolves, silently overwrite
+    _turn_worker/turn_context and start ITS OWN turn too -- two concurrent
+    run_turn workers. The guard must be re-checked AFTER the await too,
+    dropping the turn (with a visible message) if something is now busy.
+
+    Textual's message pump serializes handling of the SAME Input.Submitted
+    source (a genuinely concurrent second keypress can't even be dispatched
+    while the first _submitted call is parked inline -- pilot.press() itself
+    would hang waiting for the pump to go idle), so this drives two
+    concurrent _submitted() calls directly, exactly as two independently
+    scheduled dispatches of the same handler would race in practice."""
+    provider = GatedProvider()
+    calls = 0
+    real_complete = provider.complete
+
+    def counting_complete(*, model, messages, tools):
+        nonlocal calls
+        calls += 1
+        return real_complete(model=model, messages=messages, tools=tools)
+
+    provider.complete = counting_complete
+    app = make_app(tmp_path, provider=provider, model=ModelId("gated"))
+
+    real_inject = app._inject_mentions
+    injection_gate = asyncio.Event()
+
+    async def gated_inject(text):
+        if text == "slow one":
+            await injection_gate.wait()
+        return await real_inject(text)
+
+    app._inject_mentions = gated_inject
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        prompt = app.query_one("#prompt", Input)
+
+        task1 = asyncio.create_task(
+            app._submitted(Input.Submitted(input=prompt, value="slow one"))
+        )
+        await pilot.pause(0.05)  # task1 now parked in the gated injection await
+        task2 = asyncio.create_task(app._submitted(Input.Submitted(input=prompt, value="second")))
+        await pilot.pause(0.1)  # task2's (mention-free) injection is instant; its turn is
+        # now RUNNING (parked on GatedProvider's OWN gate) -- _turn_worker.is_running is True
+        assert app._turn_worker is not None and app._turn_worker.is_running
+
+        injection_gate.set()  # release task1 -- its post-await recheck must refuse now
+        await asyncio.wait_for(asyncio.gather(task1, task2), timeout=5)
+        await pilot.pause(0.1)
+
+        lines = "\n".join(str(line) for line in app.query_one(RichLog).lines)
+        assert "already running" in lines
+
+        provider.release.set()  # let the surviving (second) turn finish
+        await pilot.pause(0.3)
+
+    assert calls == 1  # exactly one turn ever dispatched to the provider
+    texts = [m.text() for m in app.kernel.loop.history]
+    assert not any("slow one" in t for t in texts)  # the refused turn never ran
+
+
 async def test_turn_failure_renders_and_loop_survives(tmp_path):
     # engine denying model:* (tests/test_permissions.py construction); every
     # turn raises ModelDispatchBlocked, so the loop must survive repeat failures.

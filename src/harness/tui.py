@@ -1038,6 +1038,13 @@ class HarnessApp(App[None]):
         # prompt for a mentioned read (same dispatcher path a model-issued
         # read_file takes) can be answered before the turn itself begins.
         context = await self._inject_mentions(text)
+        # M-1: re-check busy-ness AFTER the await above -- another submit
+        # (or a /clear) can slip in and start running while THIS submit was
+        # parked in a slow injection (a permission ask, a slow dispatch);
+        # without this, resuming here would silently overwrite _turn_worker
+        # and turn_context and start a SECOND concurrent run_turn worker.
+        if self._refuse_if_busy():
+            return
         self.kernel.loop.set_turn_context(context)
         self._turn_worker = self.run_worker(
             self._run_turn(text), group="agent", exit_on_error=False
