@@ -20,11 +20,15 @@ Each turn runs with `-s read-only`, a fresh empty scratch cwd, and an
 isolated scratch CODEX_HOME (only auth.json carried over from the real
 one, plus the one-key config.toml of _SCRATCH_CONFIG_TOML), so that user-configured MCP servers and profile settings stay out of
 the conversation. The codex built-in shell is not disabled -- tool parity
-here is additive, documented in the guide -- so the empty cwd is what keeps
-the harness MCP tools the only path back to real files. A short orientation
-prefix on the prompt says so outright: live verification showed codex
-otherwise trusting that empty cwd at face value and declaring project files
-missing without ever calling a harness tool.
+here is additive, documented in the guide. The read-only sandbox blocks
+writes and network but NOT reads: the shell can read arbitrary absolute
+paths (live-verified on codex-cli 0.147.0, which has no read-root
+confinement config), so the empty cwd is steering plus defense-in-depth,
+not enforcement -- see the trust-model paragraph in the user guide. A short
+orientation prefix on the prompt directs tool use through the harness:
+live verification showed codex otherwise trusting that empty cwd at face
+value and declaring project files missing without ever calling a harness
+tool.
 """
 
 import asyncio
