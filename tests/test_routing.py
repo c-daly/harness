@@ -46,6 +46,25 @@ def test_rule_path_glob_match():
     assert not rule.matches(RoutingContext(paths=("/repo/src/x.py",)))
 
 
+def test_rule_path_glob_matches_nested_file_via_full_path():
+    rule = RoutingRule(target="local", path_globs=("*.py",))
+    assert rule.matches(RoutingContext(paths=("/repo/src/main.py",)))
+
+
+def test_rule_path_glob_matches_by_basename_for_bare_filename_glob():
+    # a bare filename glob (no wildcard) only matches the full path when the
+    # file is at the root; it must also match against the basename so nested
+    # files aren't missed (mirrors GlobTool's documented behavior).
+    rule = RoutingRule(target="local", path_globs=("main.py",))
+    assert rule.matches(RoutingContext(paths=("/repo/src/main.py",)))
+
+
+def test_rule_path_glob_directory_glob_still_matches_full_path_only():
+    rule = RoutingRule(target="local", path_globs=("src/*",))
+    assert rule.matches(RoutingContext(paths=("src/main.py",)))
+    assert not rule.matches(RoutingContext(paths=("/repo/other/main.py",)))
+
+
 def test_rule_prompt_contains_is_case_insensitive():
     rule = RoutingRule(target="local", prompt_contains="REFACTOR")
     assert rule.matches(RoutingContext(prompt="please refactor this"))

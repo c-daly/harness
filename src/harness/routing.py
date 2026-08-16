@@ -18,7 +18,7 @@ in layer order wins.
 import fnmatch
 import tomllib
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePath
 from typing import Callable
 
 from harness.hooks import (
@@ -54,7 +54,9 @@ class RoutingRule:
         if self.tags and not (set(self.tags) & set(ctx.tags)):
             return False
         if self.path_globs and not any(
-            fnmatch.fnmatch(p, g) for p in ctx.paths for g in self.path_globs
+            fnmatch.fnmatch(p, g) or fnmatch.fnmatch(PurePath(p).name, g)
+            for p in ctx.paths
+            for g in self.path_globs
         ):
             return False
         if self.prompt_contains is not None:
