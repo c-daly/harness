@@ -16,7 +16,16 @@ what keeps the harness's MCP tools the only path back to real files. A
 `base-instructions` argument orients the model to that fact explicitly:
 live verification showed codex trusting its (intentionally empty) scratch
 cwd at face value and declaring files missing without ever trying the
-harness tools.
+harness tools. Every codex-invoked MCP tool call also arrives at the
+client as a server->client MCP "elicitation/create" request -- a SECOND,
+codex-side approval gate that `approval-policy="never"` does NOT cover
+(that flag only governs shell commands) -- which ClientSession leaves
+unanswered by default, hanging the turn forever; the harness's own
+permission engine is the only gate this design allows, so the
+elicitation_callback wired below auto-accepts every one. The injected
+harness url also carries a trailing slash: a bare "/mcp" path triggers a
+per-request 307 redirect from the Starlette mount (live-verified);
+"/mcp/" skips it.
 """
 
 import asyncio
@@ -24,12 +33,13 @@ import os
 import shutil
 import tempfile
 from pathlib import Path
-from typing import AsyncIterator, Sequence
+from typing import Any, AsyncIterator, Sequence
 
 import anyio
 import mcp.types as mcp_types
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
+from mcp.shared.context import RequestContext
 from mcp.shared.exceptions import McpError
 
 from harness.dispatcher import current_dispatch_tool
@@ -56,6 +66,24 @@ _BASE_INSTRUCTIONS = (
     "is for pure computation only, not for inspecting or locating project "
     "files."
 )
+
+
+async def _auto_accept_elicitation(
+    context: RequestContext["ClientSession", Any],
+    params: mcp_types.ElicitRequestParams,
+) -> mcp_types.ElicitResult:
+    """Answer every server->client elicitation (codex's per-tool-call
+    approval ask) with an immediate accept. The harness permission engine
+    already gated this call before it ever reached codex; a second,
+    codex-side approval prompt is not part of the design and, left
+    unanswered by ClientSession's default (no callback wired), hangs the
+    turn forever -- live-verified as the root cause of turns hanging at
+    mcp_tool_call_begin. `content={}` satisfies a schema-less/no-required-
+    fields form (the only kind an approval ask plausibly sends); url-mode
+    elicitations carry no content per the MCP spec, so it's omitted there."""
+    if getattr(params, "mode", None) == "url":
+        return mcp_types.ElicitResult(action="accept")
+    return mcp_types.ElicitResult(action="accept", content={})
 
 
 def _scratch_codex_home() -> str:
@@ -132,7 +160,10 @@ class CodexProvider:
             # The spawn-time `-c mcp_servers=...` override is inert for
             # conversation MCP servers (live-verified against codex-cli
             # 0.147.0); the per-call config argument is the path that works.
-            "config": {"mcp_servers": {"harness": {"url": url}}},
+            # Trailing slash: a bare "/mcp" path hits a per-request 307
+            # redirect from the Starlette mount (live-verified); "/mcp/"
+            # skips it. McpToolServer.url itself is left without one.
+            "config": {"mcp_servers": {"harness": {"url": f"{url}/"}}},
         }
         suffix = str(model).split("/", 1)[-1]
         if suffix not in ("", "default", str(model)):
@@ -158,7 +189,9 @@ class CodexProvider:
         try:
             async with asyncio.timeout(self.timeout_s):
                 async with stdio_client(params) as (read, write):
-                    async with ClientSession(read, write) as session:
+                    async with ClientSession(
+                        read, write, elicitation_callback=_auto_accept_elicitation
+                    ) as session:
                         await session.initialize()
                         # Call the tools/call primitive directly rather than via
                         # session.call_tool(): the high-level wrapper additionally

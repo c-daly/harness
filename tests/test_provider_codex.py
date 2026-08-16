@@ -43,6 +43,17 @@ for line in sys.stdin:
         cwd_arg = msg["params"]["arguments"].get("cwd")
         cwd_ok = bool(cwd_arg) and os.path.isdir(cwd_arg) and not os.listdir(cwd_arg)
         open(sys.argv[0] + ".cwdcheck", "w").write(json.dumps(cwd_ok))
+        # Real codex sends a server->client MCP elicitation ("approve this
+        # MCP tool call?") for every MCP tool call before returning the
+        # tools/call result -- approval-policy="never" does not cover this.
+        # Send one and WAIT for the client's answer: if the provider never
+        # wired an elicitation_callback, this read blocks forever and the
+        # test times out, exactly reproducing the live hang.
+        send({"jsonrpc": "2.0", "id": "elicit-1", "method": "elicitation/create",
+              "params": {"mode": "form", "message": "Approve MCP tool call?",
+                         "requestedSchema": {"type": "object", "properties": {}}}})
+        elicit_response = json.loads(sys.stdin.readline())
+        open(sys.argv[0] + ".elicit_response", "w").write(json.dumps(elicit_response))
         send({"jsonrpc": "2.0", "id": msg["id"], "result": {
             "structuredContent": {"threadId": "t-1", "content": "pong"},
             "content": [{"type": "text", "text": "pong"}]}})
@@ -121,7 +132,13 @@ async def test_call_contract(tmp_path, monkeypatch):
     assert "mcp__harness" in args["base-instructions"]
     url = args["config"]["mcp_servers"]["harness"]["url"]
     assert url.startswith("http://127.0.0.1")  # harness's per-turn McpToolServer
+    assert url.endswith("/mcp/")  # trailing slash: skips the Starlette mount's 307 redirect
     assert json.loads(open(binary + ".cwdcheck").read()) is True  # existing, empty scratch dir
+    # The turn completing at all proves the elicitation was answered: the
+    # fake blocks on sys.stdin.readline() waiting for it, so an unwired
+    # elicitation_callback would hang this test until timeout_s instead.
+    elicit_response = json.loads(open(binary + ".elicit_response").read())
+    assert elicit_response["result"]["action"] == "accept"
     env_keys = json.loads(open(binary + ".env").read())
     assert "OPENAI_API_KEY" not in env_keys and "ANTHROPIC_API_KEY" not in env_keys
     assert "PATH" in env_keys
