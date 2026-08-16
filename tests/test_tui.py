@@ -787,3 +787,23 @@ async def test_plugin_command_respects_turn_guard(tmp_path):
         await pilot.pause(0.1)
         lines = "\n".join(str(line) for line in app.query_one(RichLog).lines)
         assert "already running" in lines
+
+
+async def test_slash_model_upgrade_wires_claude_code_backend(tmp_path):
+    """Upgrading out of echo mode via /model must wire the claude-code backend:
+    a catalog may hold backend = "claude-code" entries, and a bare
+    CatalogProvider fails them with "backend ... not wired" (the TUI bug hit
+    live on 2026-08-15)."""
+    catalog_file = tmp_path / "models.toml"
+    catalog_file.write_text(MODELS_TOML_TWO_ALIASES)
+    app = make_app(tmp_path, catalog_path=catalog_file)
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        await pilot.click("#prompt")
+        await pilot.press(*"/model alias-b", "enter")
+        await pilot.pause(0.3)
+        from harness.provider_litellm import CatalogProvider
+
+        provider = app.kernel.loop.provider
+        assert isinstance(provider, CatalogProvider)
+        assert provider.claude_code is not None  # claude-code entries dispatchable

@@ -409,7 +409,12 @@ class HarnessApp(App[None]):
         loop.model_pinned = True  # an explicit /model is a pin (routing-exempt)
         loop.pricing = resolved.pricing_dict() or None
         if not isinstance(loop.provider, CatalogProvider):
-            loop.provider = CatalogProvider(catalog)
+            from harness.provider_claude_code import ClaudeCodeProvider
+
+            # Match cli.py's construction: backend entries must be dispatchable.
+            # The dispatcher reaches the backend via current_dispatch_tool, so no
+            # bind is needed here.
+            loop.provider = CatalogProvider(catalog, claude_code=ClaudeCodeProvider())
         self.say("", f"model → {alias} ({resolved.route})")
 
     def action_interrupt(self) -> None:
