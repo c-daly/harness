@@ -252,6 +252,9 @@ class HarnessApp(App[None]):
         self._stats_sub = None
         self._stats_queue = None
         self._mcp_errlog = None
+        # The checklist selection (or headless default set) from the FIRST mount
+        # -- a /clear rebuild restarts exactly these servers, never re-prompting.
+        self._mcp_enabled: "set[str] | None" = None
         if ask is not None:
             ask.app = self
         # Build plugin command lookup: name -> CommandDef (from all loaded plugins).
@@ -349,6 +352,7 @@ class HarnessApp(App[None]):
             self._mcp_errlog = errlog_path.open("a")
             kernel.mcp.errlog = self._mcp_errlog
             selected = await self.push_screen_wait(ServerChecklistScreen(kernel.mcp))
+            self._mcp_enabled = selected  # a /clear rebuild restarts exactly this set
             for warning in await kernel.mcp.start(only=selected):
                 self.say("! ", warning)
         # Registry is final now (MCP registration above already ran, if any) --
@@ -415,18 +419,27 @@ class HarnessApp(App[None]):
         tear down the current kernel.
         """
         old_kernel = self.kernel
+        old_mcp = old_kernel.mcp
         try:
             await old_kernel.loop.end()
         except RuntimeError:
             pass  # already ended elsewhere
         except Exception as exc:
             self.say("! ", f"session end failed: {exc}")
+        if old_mcp is not None:
+            # Mirrors run_tui's own teardown ordering: stop/flush the old host
+            # BEFORE closing the session (flush_events() is a no-op on a closed
+            # session, so events from stop() would otherwise be silently lost).
+            await old_mcp.stop()
+            old_mcp.flush_events()
         old_kernel.session.close()
 
-        # McpHost specs carry over so the rebuilt kernel keeps the same server
-        # set wired in principle; actually restarting/re-prompting the
-        # checklist is out of scope here (v1 gap -- see task report).
-        mcp_specs = old_kernel.mcp.specs if old_kernel.mcp is not None else None
+        # build_kernel's own `mcp=` path constructs a plain McpHost with the
+        # DEFAULT transport (real stdio spawn) and no way to pass a test
+        # transport_factory through -- so MCP is NOT threaded through
+        # build_kernel here. Instead, a fresh McpHost is built by hand below,
+        # reusing the specs and transport_factory off the OLD host, mirroring
+        # how _build_checklist_kernel wires McpHost onto a kernel in tests.
         kernel = build_kernel(
             provider=old_kernel.provider,
             base_dir=old_kernel.session.base,
@@ -438,7 +451,6 @@ class HarnessApp(App[None]):
             tags=old_kernel.tags,
             resolver=old_kernel.runner.resolver,
             plugins=old_kernel.plugins,
-            mcp=mcp_specs,
             workspace_root=self._workspace_root,
             native_tools=self._native_tools,
             routing_rules=self._routing_rules,
@@ -459,10 +471,33 @@ class HarnessApp(App[None]):
             self._bus_pump(_bus_queue), group="driver", exit_on_error=False
         )
 
+        if old_mcp is not None:
+            # Restart exactly the servers enabled at the app's FIRST mount
+            # (the checklist selection, or the headless default set) -- the
+            # checklist itself is never re-shown on a rebuild.
+            kernel.mcp = McpHost(
+                old_mcp.specs,
+                registry=kernel.registry,
+                hooks=kernel.hooks,
+                session=kernel.session,
+                transport_factory=old_mcp._transport_factory,
+            )
+            if self._mcp_errlog is not None:
+                kernel.mcp.errlog = self._mcp_errlog
+            # McpHost buffers lifecycle events (server_started etc.) until
+            # flush_events() -- it must not touch session._seq before
+            # session.start() below, so flushing is deferred past it (mirrors
+            # _session_driver's own mount-time ordering exactly).
+            for warning in await kernel.mcp.start(only=self._mcp_enabled or set()):
+                self.say("! ", warning)
+
         if not kernel.resumed:
             await kernel.loop.start()
         else:
             self._render_resumed_history()
+
+        if kernel.mcp is not None:
+            kernel.mcp.flush_events()
 
     async def _bus_pump(self, queue) -> None:
         while True:

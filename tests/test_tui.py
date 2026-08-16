@@ -1147,6 +1147,41 @@ async def test_checked_server_full_capability(tmp_path):
         kernel.session.close()
 
 
+async def test_clear_restarts_previously_enabled_mcp_servers(tmp_path):
+    """/clear must leave MCP tools functional: the server(s) enabled at the
+    FIRST mount's checklist restart (as fresh connections -- v1 accepts a
+    process restart) on the rebuilt kernel, without re-showing the checklist,
+    and a server that was never enabled stays never-started."""
+    kernel, on_counter, off_counter = _build_checklist_kernel(tmp_path)
+    app = HarnessApp(kernel)
+    async with app.run_test() as pilot:
+        await pilot.pause(0.3)
+        assert isinstance(app.screen, ServerChecklistScreen)
+        await pilot.press("enter")  # accept defaults: on-server stays checked
+        await pilot.pause(0.3)
+        assert on_counter.calls == 1
+        result = await app.kernel.registry.get(ToolName("mcp__on-server__add"))({"a": 2, "b": 2})
+        assert result == "4"
+
+        await pilot.click("#prompt")
+        await pilot.press(*"/clear", "enter")
+        await pilot.pause(0.3)
+
+        assert not isinstance(app.screen, ServerChecklistScreen)  # never re-shown
+        assert on_counter.calls == 2  # restarted with the same enabled set
+        assert off_counter.calls == 0  # never-enabled server still never starts
+        names = {str(s.name) for s in app.kernel.registry.specs()}
+        assert "mcp__on-server__add" in names
+        result = await app.kernel.registry.get(ToolName("mcp__on-server__add"))({"a": 3, "b": 4})
+        assert result == "7"
+    try:
+        if app._mcp_errlog is not None:
+            app._mcp_errlog.close()
+        await app.kernel.mcp.stop()
+    finally:
+        app.kernel.session.close()
+
+
 def test_schema_token_estimate_sums_json_length_over_four():
     specs = (
         ToolSpec(
