@@ -431,9 +431,23 @@ headlessly: it gates every MCP tool call behind a custom `codex/event`
 elicitation that no automated client can answer, while `codex exec` runs
 the same turn, with the same tools, and asks nothing (verified against
 codex-cli 0.147.0). Each turn also gets `-s read-only` and a fresh, empty
-scratch directory as its `cwd` — the harness permission engine is the only
-gate. The harness never handles ChatGPT credentials — log in with
-`codex login` once and the backend uses that.
+scratch directory as its `cwd`. The harness permission engine gates every
+call to a harness tool; codex's own sandbox is a separate mechanism that
+blocks its built-in shell from writing to disk or reaching the network (see
+"Trust model" below for what it does *not* block).
+
+Every turn also runs under its own scratch `CODEX_HOME`, seeded fresh and
+torn down when the turn ends, so a turn never picks up your real Codex
+profile or its configured MCP servers. Its `config.toml` sets
+`approvals_reviewer = "auto_review"` — without that key `codex exec`
+auto-declines every MCP tool call headlessly; with it, codex-side approval
+prompts never fire, and the harness permission engine is the only approval
+surface a harness tool call goes through. The harness never reads, stores,
+or transmits your ChatGPT credential contents: each turn mechanically
+copies `auth.json` from `$CODEX_HOME` (or `~/.codex` if unset) into that
+per-turn scratch `CODEX_HOME` so the codex CLI can authenticate itself, and
+the copy is removed with the rest of the scratch home when the turn ends.
+Log in once with `codex login` and the backend uses that.
 
 ```toml
 [models.codex]
@@ -449,11 +463,21 @@ Claude Code's own built-in tools so the harness registry is the only tool
 surface, the codex backend does *not* disable Codex's built-in shell. A
 codex-backed turn gets the harness's tools in addition to whatever Codex can
 already do on its own — tool parity here is additive, not a drop-in match
-for the claude-code backend's exclusivity. Two things keep that shell from
-touching your real files: it's spawned with `-s read-only`, and its
-`cwd` is a fresh, empty scratch directory created and torn down for that one
-turn — not your workspace — so the harness's MCP tools remain the only path
-back to real files.
+for the claude-code backend's exclusivity.
+
+**Trust model.** Writes go through harness tools and the harness permission
+engine — a deny-rule there binds. Reads by codex's own built-in shell do
+not: live verification (codex-cli 0.147.0, 2026-08-16) showed that under
+`-s read-only` codex's shell can `cat` an absolute path anywhere on disk and
+get the content back. The sandbox blocks writes and network, not reads, and
+codex has no read-root confinement setting to turn that off. The empty,
+per-turn scratch `cwd` is steering plus defense-in-depth, not a hard
+boundary: relative paths resolve to nothing there, and a prompt prefix
+tells the model its cwd is empty and to check through harness tools before
+concluding a file is missing — but a codex-backed turn that chooses to read
+an absolute path outside that scratch dir will succeed, unaudited by the
+harness. Stated plainly: a harness deny-rule on a read path does not bind
+codex's own shell.
 
 Requirements: `codex` on PATH and logged in. One harness turn is one Codex
 agent turn.
