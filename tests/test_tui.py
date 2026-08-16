@@ -1770,6 +1770,40 @@ async def test_resume_choosing_session_rebuilds_onto_it(tmp_path):
         assert f"resumed session {seed_sid}" in lines
 
 
+async def test_resumed_history_routes_assistant_replies_through_markdown_seam(tmp_path):
+    """parked-2: replayed history (on --resume, at mount) must render
+    assistant replies through the SAME _render_reply seam a live turn uses,
+    so an old markdown reply matches live rendering under the current
+    /markdown mode -- not the always-plain _plain() seam _render_resumed_history
+    used before. User lines keep their plain '> ' prefix."""
+    body = "# heading\n\nsome **bold** text"
+    provider = FakeProvider([text_turn(body)])
+    seed = make_app(tmp_path, provider=provider, model=ModelId("fake:seed"))
+    async with seed.run_test() as pilot:
+        await pilot.pause(0.1)
+        await pilot.click("#prompt")
+        await pilot.press(*"go", "enter")
+        await pilot.pause(0.3)
+    seed_sid = seed.kernel.session.id
+    seed.kernel.session.close()
+
+    app = make_app(tmp_path, resume_session_id=seed_sid)
+    seam_calls = []
+    real_render_reply = app._render_reply
+
+    def spy(text):
+        seam_calls.append(text)
+        return real_render_reply(text)
+
+    app._render_reply = spy  # patched before run_test() -- mount runs the replay
+    async with app.run_test() as pilot:
+        await pilot.pause(0.2)
+        lines = "\n".join(str(line) for line in app.query_one(RichLog).lines)
+        assert "heading" in lines
+        assert "> go" in lines  # the user line keeps its plain prefix
+    assert seam_calls == [body]
+
+
 async def test_resume_escape_cancels_session_unchanged(tmp_path):
     await _write_seed_session(tmp_path, "hello from the past")
 

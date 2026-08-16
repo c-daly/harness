@@ -725,9 +725,19 @@ class HarnessApp(App[None]):
         self._toggle_panel()
 
     def _render_resumed_history(self) -> None:
+        """Replay a resumed session's history into the transcript. ASSISTANT
+        replies go through the SAME _render_reply seam a live turn's
+        completed reply uses (parked-2) -- so an old markdown reply matches
+        live rendering under the current /markdown mode -- rather than the
+        always-plain say()/_plain() seam. User lines keep their plain '> '
+        prefix; system/tool lines stay plain, exactly as before."""
         for message in self.kernel.loop.history:
             text = message.text()
-            if text:
+            if not text:
+                continue
+            if message.role == Role.ASSISTANT:
+                self.query_one("#transcript", RichLog).write(self._render_reply(text))
+            else:
                 prefix = "> " if message.role == Role.USER else ""
                 self.say(prefix, text)
 
