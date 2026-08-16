@@ -1111,12 +1111,40 @@ class HarnessApp(App[None]):
         self.say("", f"compacted {len(state.messages)} messages -> 1 summary")
         self._refresh_statusbar()  # history shrank to 1 message -- ctx% moves
 
+    def _preflight_resume(self, session_id: "SessionId") -> "str | None":
+        """Lock-liveness + log-readability check for `session_id`, run BEFORE
+        the current kernel is torn down (I-1): a locked or unreadable target
+        must refuse here, with the current session untouched, rather than
+        being discovered only after _rebuild_kernel_body has already closed
+        it. May clear an already-stale lock or quarantine an already-torn
+        tail -- exactly what resume_session's own reopen would do a moment
+        later -- but a LIVE lock is never touched. Returns None when it's
+        safe to proceed, else a human-readable reason."""
+        from harness.log import SessionLockedError, TornLogError, read_session
+        from harness.resume import _clear_stale_lock
+
+        base = self.kernel.session.base
+        try:
+            _clear_stale_lock(base, session_id)
+            read_session(base, session_id, repair=True)
+        except (SessionLockedError, TornLogError, OSError) as exc:
+            return str(exc)
+        return None
+
     async def _run_resume(self) -> None:
         """/resume: pick a prior session and rebuild the kernel onto it.
         Runs as its own worker (see the /resume dispatch) since
         push_screen_wait needs one. Excludes the CURRENT session from the
         picker -- resuming into the session you're already in is a
-        no-op-shaped trap, not a real choice."""
+        no-op-shaped trap, not a real choice.
+
+        I-1: a pre-flight check runs BEFORE any teardown (see
+        _preflight_resume) so a locked or unreadable target refuses cleanly
+        with the current session still functional. Belt-and-braces: the
+        rebuild itself is still wrapped below -- if it fails AFTER the old
+        kernel is already torn down (anything the pre-flight didn't catch),
+        fall back to a fresh session rather than leaving the app stuck on a
+        closed kernel."""
         current_id = self.kernel.session.id
         sessions = [
             s for s in list_sessions(self.kernel.session.base) if s.session_id != current_id
@@ -1127,9 +1155,22 @@ class HarnessApp(App[None]):
         chosen = await self.push_screen_wait(SessionPickerScreen(sessions))
         if chosen is None:
             return
+        preflight_error = self._preflight_resume(chosen)
+        if preflight_error is not None:
+            self.say("! ", f"cannot resume {chosen}: {preflight_error}")
+            return
         self._clear_live()
         self.query_one("#transcript", RichLog).clear()
-        await self._rebuild_kernel(resume_session_id=chosen)
+        try:
+            await self._rebuild_kernel(resume_session_id=chosen)
+        except Exception as exc:
+            self.say(
+                "! ",
+                f"resume of {chosen} failed ({exc}) -- falling back to a fresh session",
+            )
+            await self._rebuild_kernel()
+            self.say("", f"started fresh session {self.kernel.session.id}")
+            return
         self.say("", f"resumed session {self.kernel.session.id}")
 
     async def _run_command(self, command: SlashCommand) -> None:

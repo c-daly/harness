@@ -1,6 +1,7 @@
 """Textual app: headless pilot tests. Each test builds a kernel on tmp_path."""
 
 import asyncio
+import os
 from contextlib import asynccontextmanager
 
 import anyio
@@ -1840,6 +1841,84 @@ async def test_rebuild_in_progress_refuses_turn_and_clear_and_ignores_esc(tmp_pa
         texts = [m.text() for m in app.kernel.loop.history]
         assert any("hello from the past" in t for t in texts)
         assert not any("sneaky" in t for t in texts)  # no interleaved turn
+
+
+# --- I-1: /resume failure mid-rebuild must not brick the app ---
+
+
+async def test_resume_refuses_locked_session_pre_teardown(tmp_path):
+    """A target session held by a live writer (a lock file naming a live pid)
+    must refuse BEFORE any teardown of the CURRENT kernel -- the old session
+    stays fully functional, not bricked on a half-torn-down kernel."""
+    seed_sid = await _write_seed_session(tmp_path, "hello from the past")
+    lock_path = tmp_path / "sessions" / f"{seed_sid}.lock"
+    lock_path.write_text(str(os.getpid()), encoding="utf-8")
+
+    app = make_app(tmp_path)
+    try:
+        async with app.run_test() as pilot:
+            await pilot.pause(0.1)
+            await pilot.click("#prompt")
+            original_sid = app.kernel.session.id
+            await pilot.press(*"/resume", "enter")
+            await pilot.pause(0.2)
+            assert isinstance(app.screen, SessionPickerScreen)
+            await pilot.press("enter")
+            await pilot.pause(0.2)
+            lines = "\n".join(str(line) for line in app.query_one(RichLog).lines)
+            assert "cannot resume" in lines
+            assert app.kernel.session.id == original_sid
+            assert app._rebuild_in_progress is False
+            # the old session is still functional -- a turn completes normally
+            await pilot.press(*"still alive", "enter")
+            await pilot.pause(0.2)
+            lines = "\n".join(str(line) for line in app.query_one(RichLog).lines)
+            assert "turn failed" not in lines
+    finally:
+        lock_path.unlink(missing_ok=True)
+
+
+async def test_resume_build_kernel_failure_falls_back_to_fresh_session(tmp_path, monkeypatch):
+    """A build_kernel failure that surfaces AFTER the old kernel is already
+    torn down (anything the pre-flight check didn't catch) must fall back to
+    a fresh session -- never leave the app stuck on a closed kernel -- and
+    say plainly what happened."""
+    seed_sid = await _write_seed_session(tmp_path, "hello from the past")
+
+    app = make_app(tmp_path)
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        await pilot.click("#prompt")
+        original_sid = app.kernel.session.id
+
+        import harness.tui as tui_module
+
+        real_build_kernel = tui_module.build_kernel
+
+        def flaky_build_kernel(*args, **kwargs):
+            if kwargs.get("resume_session_id") is not None:
+                raise RuntimeError("boom")
+            return real_build_kernel(*args, **kwargs)
+
+        monkeypatch.setattr(tui_module, "build_kernel", flaky_build_kernel)
+
+        await pilot.press(*"/resume", "enter")
+        await pilot.pause(0.2)
+        assert isinstance(app.screen, SessionPickerScreen)
+        await pilot.press("enter")
+        await pilot.pause(0.3)
+
+        lines = "\n".join(str(line) for line in app.query_one(RichLog).lines)
+        assert "boom" in lines  # the error is visible
+        assert "fresh session" in lines
+        assert app.kernel.session.id != original_sid
+        assert app.kernel.session.id != seed_sid  # not the resumed one either
+        assert app._rebuild_in_progress is False
+        # the app still works: a turn completes fine on the fresh session
+        await pilot.press(*"still alive", "enter")
+        await pilot.pause(0.2)
+        lines = "\n".join(str(line) for line in app.query_one(RichLog).lines)
+        assert "turn failed" not in lines
 
 
 # --- Task 6: @-file mentions (Tab completion + dispatcher-gated injection) ---
