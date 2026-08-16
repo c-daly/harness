@@ -52,14 +52,16 @@ def majority_vote(answers: list[str]) -> str:
 
 
 def _is_veto(critique: str) -> bool:
-    """A critic vetoes unless it clearly approves. Conservative: anything that
-    isn't an explicit APPROVE (and isn't an error) counts as a veto signal."""
-    head = critique.strip().lower()
+    """Fail-closed: a subagent error vetoes (an unreviewed approval is worse
+    than a false veto). Otherwise veto iff the critique does NOT start with
+    APPROVE -- the critic protocol (_CRITIC_PROMPT) requires APPROVE on the
+    first line for acceptance, so anything else (including neutral text) is
+    treated as non-approval. No substring scan: "I would not veto this" does
+    not start with "approve", so it correctly vetoes without matching on the
+    word "veto" appearing anywhere in the text."""
     if _is_error(critique):
         return True
-    if head.startswith("approve"):
-        return False
-    return head.startswith("veto") or head.startswith("reject") or "veto" in head
+    return not critique.strip().lower().startswith("approve")
 
 
 _CRITIC_PROMPT = (

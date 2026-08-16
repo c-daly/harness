@@ -10,6 +10,7 @@ from harness.mixture import (
     EnsembleTool,
     EscalateTool,
     Expert,
+    _is_veto,
     draft_refine,
     ensemble,
     escalate,
@@ -62,6 +63,26 @@ async def test_ensemble_uses_judge_to_synthesize():
     runner = FakeRunner({"a": "x", "b": "y", "j": lambda p: f"SYNTH::{('x' in p and 'y' in p)}"})
     out = await ensemble(runner, None, "Q", [Expert("a"), Expert("b")], judge=Expert("j"))
     assert out == "SYNTH::True"  # judge prompt carried both candidate answers
+
+
+# --- _is_veto semantics (fail-closed; APPROVE-first-line protocol) ---
+
+def test_is_veto_neutral_text_vetoes():
+    assert _is_veto("looks reasonable to me")
+
+
+def test_is_veto_no_substring_scan_false_positive():
+    # "veto" appears as a substring, but the critique doesn't start with
+    # APPROVE, so it still vetoes -- just not because of a substring scan.
+    assert _is_veto("I would not veto this proposal")
+
+
+def test_is_veto_approve_first_line_does_not_veto():
+    assert not _is_veto("APPROVE -- ship it")
+
+
+def test_is_veto_error_vetoes_fail_closed():
+    assert _is_veto("[subagent error] boom")
 
 
 # --- panel ---
