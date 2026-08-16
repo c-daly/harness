@@ -51,6 +51,11 @@ def test_majority_vote_excludes_errors_unless_all_failed():
     assert majority_vote(["[subagent error] x"]).startswith("[subagent error]")
 
 
+def test_majority_vote_tie_breaks_to_earliest_occurrence():
+    # A and B are tied 2-2; A is seen first, so A wins the tie-break.
+    assert majority_vote(["A", "B", "A", "B"]) == "A"
+
+
 # --- ensemble ---
 
 async def test_ensemble_votes_without_judge():

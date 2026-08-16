@@ -44,7 +44,8 @@ def majority_vote(answers: list[str]) -> str:
     resolve to the earliest occurrence. Errors are excluded unless all failed."""
     usable = [a for a in answers if not _is_error(a)] or answers
     counts = Counter(a.strip() for a in usable)
-    winner_norm, _ = max(counts.items(), key=lambda kv: (kv[1], -list(counts).index(kv[0])))
+    order = {key: i for i, key in enumerate(counts)}  # O(1) lookups; built once
+    winner_norm, _ = max(counts.items(), key=lambda kv: (kv[1], -order[kv[0]]))
     for a in usable:
         if a.strip() == winner_norm:
             return a
