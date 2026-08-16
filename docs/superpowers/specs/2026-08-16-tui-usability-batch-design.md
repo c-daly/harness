@@ -27,9 +27,13 @@ looks hung for minutes while the model thinks invisibly.
   present).
 - `provider_codex`: `item.completed` items with `item.type == "reasoning"` and
   non-empty `text` yield `ThinkingDelta(text=item["text"])`.
-- Thought text is display-only: it must NOT enter `loop.history`, the event
-  log's message content, or subagent transcripts (unchanged from today —
-  `ThinkingDelta` is already excluded from assembled messages).
+- Thought text is display-only: it never enters assembled prompt text /
+  `message.text()`; ThinkingBlocks are retained verbatim in message blocks
+  for provider fidelity. (Amended post-review: `ThinkingBlock`s ARE
+  correctly retained in `message.blocks` for provider signature round-trip
+  — claude-code/codex sessions now persist them where they previously
+  emitted nothing — the constraint is on assembled prompt text and
+  `.text()`, not on `message.blocks` itself.)
 
 ## F2 — Session resume + picker
 
