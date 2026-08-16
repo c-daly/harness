@@ -27,10 +27,10 @@ NCPUMOE="${HARNESS_LOCAL_NCPUMOE:-28}"
 CACHE="${HARNESS_LOCAL_CACHE:-$HOME/.cache/huggingface}"   # llama.cpp -hf uses the HF hub cache
 
 mkdir -p "$CACHE"
-exec docker run --rm --gpus all -p "${PORT}:8080" \\
-  -v "${CACHE}:/root/.cache/huggingface" \\
-  ghcr.io/ggml-org/llama.cpp:server-cuda \\
-  -hf "$MODEL" \\
-  --host 0.0.0.0 --port 8080 \\
-  -ngl 99 --n-cpu-moe "$NCPUMOE" \\
+exec docker run --rm --gpus all -p "${PORT}:8080" \
+  -v "${CACHE}:/root/.cache/huggingface" \
+  ghcr.io/ggml-org/llama.cpp:server-cuda \
+  -hf "$MODEL" \
+  --host 0.0.0.0 --port 8080 \
+  -ngl 99 --n-cpu-moe "$NCPUMOE" \
   -c "$CTX" -fa on --jinja
