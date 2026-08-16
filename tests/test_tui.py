@@ -1944,6 +1944,73 @@ async def test_rebuild_in_progress_refuses_turn_and_clear_and_ignores_esc(tmp_pa
         assert not any("sneaky" in t for t in texts)  # no interleaved turn
 
 
+async def test_model_refused_during_parked_rebuild(tmp_path):
+    """parked-5 (rebuild half): /model must not touch the kernel while a
+    rebuild (/clear, /resume) is mid-flight -- the old kernel may be
+    mid-teardown or the new one mid-startup, same reasoning as the other
+    _rebuild_in_progress guards. Reuses the gated-rebuild test idiom above."""
+    seed_sid = await _write_seed_session(tmp_path, "hello from the past")
+    catalog_file = tmp_path / "models.toml"
+    catalog_file.write_text(MODELS_TOML_CONTEXT_TOAST)
+
+    app = make_app(tmp_path, catalog_path=catalog_file)
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        await pilot.click("#prompt")
+        original_model = str(app.kernel.loop.model)
+
+        gate = asyncio.Event()
+        real_end = app.kernel.loop.end
+
+        async def gated_end():
+            await gate.wait()
+            return await real_end()
+
+        app.kernel.loop.end = gated_end
+
+        try:
+            await pilot.press(*"/resume", "enter")
+            await pilot.pause(0.2)
+            assert isinstance(app.screen, SessionPickerScreen)
+            await pilot.press("enter")
+            await pilot.pause(0.2)  # parked in gated_end() on `gate`
+            assert app._rebuild_in_progress is True
+
+            await pilot.press(*"/model tiny-local", "enter")
+            await pilot.pause(0.2)
+            lines = "\n".join(str(line) for line in app.query_one(RichLog).lines)
+            assert "in progress" in lines
+            assert str(app.kernel.loop.model) == original_model  # unchanged
+        finally:
+            gate.set()
+        await pilot.pause(0.3)
+
+        assert app._rebuild_in_progress is False
+        assert app.kernel.session.id == seed_sid
+
+
+async def test_model_still_allowed_mid_turn(tmp_path):
+    """parked-5: /model must stay allowed while a TURN (not a rebuild) is
+    running -- deliberate, unchanged behavior that the rebuild-only gate
+    above must not regress."""
+    provider = GatedProvider()
+    catalog_file = tmp_path / "models.toml"
+    catalog_file.write_text(MODELS_TOML_CONTEXT_TOAST)
+    app = make_app(tmp_path, provider=provider, model=ModelId("gated"), catalog_path=catalog_file)
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        await pilot.click("#prompt")
+        await pilot.press(*"stuck", "enter")
+        await pilot.pause(0.1)  # turn parked at the gate
+        await pilot.press(*"/model tiny-local", "enter")
+        await pilot.pause(0.3)
+        lines = "\n".join(str(line) for line in app.query_one(RichLog).lines)
+        assert "in progress" not in lines
+        assert "tiny-local" in lines
+        provider.release.set()
+        await pilot.pause(0.3)
+
+
 # --- I-1: /resume failure mid-rebuild must not brick the app ---
 
 

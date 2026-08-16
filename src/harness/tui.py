@@ -1243,6 +1243,14 @@ class HarnessApp(App[None]):
             await self._finish()
             self.exit()
         elif command.name == "model":
+            # parked-5: gated on _rebuild_in_progress ONLY -- the old kernel may
+            # be mid-teardown or the new one mid-startup, same reasoning as the
+            # other rebuild guards. Deliberately NOT the full _refuse_if_busy():
+            # /model stays allowed mid-TURN (unchanged; a turn finishes its
+            # current dispatch with the old alias and picks the new one up next).
+            if self._rebuild_in_progress:
+                self.say("! ", "a session rebuild is in progress -- try again in a moment")
+                return
             # catalog.resolve lazily imports litellm (seconds) -- never block the
             # message handler; the switch applies on the next dispatch anyway
             self.run_worker(self._switch_model(command.arg), group="driver", exit_on_error=False)
