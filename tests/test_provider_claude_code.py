@@ -11,7 +11,7 @@ import pytest
 from harness.dispatcher import ToolOutcome, current_dispatch_tool
 from harness.errors import MalformedStreamError, ProviderError
 from harness.messages import Message, Role, TextBlock
-from harness.provider import TextDelta, collect
+from harness.provider import TextDelta, ThinkingDelta, collect
 from harness.provider_claude_code import DISALLOWED_BUILTINS, ClaudeCodeProvider
 from harness.types import ModelId
 
@@ -37,6 +37,34 @@ print(json.dumps({"type": "result", "subtype": "success", "is_error": False,
 # also record argv and stdin length so tests can assert the flag contract
 open(sys.argv[0] + ".argv", "w").write(json.dumps(sys.argv[1:]))
 open(sys.argv[0] + ".stdinlen", "w").write(str(len(prompt)))
+"""
+
+THINKING_THEN_TEXT = r"""
+import json, sys
+prompt = sys.stdin.read()
+print(json.dumps({"type": "system", "subtype": "init", "session_id": "s-6", "tools": []}))
+print(json.dumps({"type": "assistant", "message": {"model": "claude-opus-5",
+    "content": [{"type": "thinking", "thinking": "let me check", "signature": "sig1"},
+                {"type": "text", "text": "pong"}],
+    "usage": {"input_tokens": 2, "output_tokens": 1}}, "session_id": "s-6"}))
+print(json.dumps({"type": "result", "subtype": "success", "is_error": False,
+    "num_turns": 1, "stop_reason": "end_turn", "result": "pong", "session_id": "s-6",
+    "usage": {"input_tokens": 2, "cache_creation_input_tokens": 0,
+              "cache_read_input_tokens": 0, "output_tokens": 4}}))
+"""
+
+EMPTY_THINKING_THEN_TEXT = r"""
+import json, sys
+prompt = sys.stdin.read()
+print(json.dumps({"type": "system", "subtype": "init", "session_id": "s-7", "tools": []}))
+print(json.dumps({"type": "assistant", "message": {"model": "claude-opus-5",
+    "content": [{"type": "thinking", "thinking": "", "signature": "sig2"},
+                {"type": "text", "text": "pong"}],
+    "usage": {"input_tokens": 2, "output_tokens": 1}}, "session_id": "s-7"}))
+print(json.dumps({"type": "result", "subtype": "success", "is_error": False,
+    "num_turns": 1, "stop_reason": "end_turn", "result": "pong", "session_id": "s-7",
+    "usage": {"input_tokens": 2, "cache_creation_input_tokens": 0,
+              "cache_read_input_tokens": 0, "output_tokens": 4}}))
 """
 
 ERROR_RESULT = r"""
@@ -104,6 +132,44 @@ async def test_happy_turn_maps_chunks(tmp_path):
     assert usage.output_tokens == 4
     assert usage.cache_read_tokens == 16241
     assert usage.cache_write_tokens == 6646
+
+
+async def test_thinking_block_yields_thinking_delta_before_text_delta(tmp_path):
+    binary = _fake_claude(tmp_path, THINKING_THEN_TEXT)
+    provider = _provider(binary)
+    chunks = [
+        c
+        async for c in provider.complete(
+            model=ModelId("claude-code/default"), messages=USER, tools=()
+        )
+    ]
+    thinking_indices = [i for i, c in enumerate(chunks) if isinstance(c, ThinkingDelta)]
+    text_indices = [i for i, c in enumerate(chunks) if isinstance(c, TextDelta)]
+    assert thinking_indices, "expected a ThinkingDelta chunk"
+    assert text_indices, "expected a TextDelta chunk"
+    assert thinking_indices[0] < text_indices[0]
+    assert chunks[thinking_indices[0]] == ThinkingDelta(text="let me check", signature="sig1")
+
+
+async def test_thinking_never_leaks_into_assembled_message_text(tmp_path):
+    binary = _fake_claude(tmp_path, THINKING_THEN_TEXT)
+    provider = _provider(binary)
+    message, _, _ = await collect(
+        provider.complete(model=ModelId("claude-code/default"), messages=USER, tools=())
+    )
+    assert message.text() == "pong"
+
+
+async def test_empty_thinking_block_yields_nothing(tmp_path):
+    binary = _fake_claude(tmp_path, EMPTY_THINKING_THEN_TEXT)
+    provider = _provider(binary)
+    chunks = [
+        c
+        async for c in provider.complete(
+            model=ModelId("claude-code/default"), messages=USER, tools=()
+        )
+    ]
+    assert not any(isinstance(c, ThinkingDelta) for c in chunks)
 
 
 async def test_flag_contract(tmp_path):

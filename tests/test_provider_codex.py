@@ -13,7 +13,7 @@ import pytest
 from harness.dispatcher import ToolOutcome, current_dispatch_tool
 from harness.errors import MalformedStreamError, ProviderError
 from harness.messages import Message, Role, TextBlock
-from harness.provider import TextDelta, collect
+from harness.provider import TextDelta, ThinkingDelta, collect
 from harness.provider_codex import CodexProvider
 from harness.types import ModelId
 
@@ -63,6 +63,29 @@ emit({"type": "item.completed", "item": {"id": "item_1", "type": "agent_message"
 emit({"type": "turn.completed", "usage": {"input_tokens": 37337,
       "cached_input_tokens": 22016, "cache_write_input_tokens": 0,
       "output_tokens": 184, "reasoning_output_tokens": 52}})
+"""
+
+REASONING_THEN_TEXT = _PREAMBLE + """
+emit({"type": "thread.started", "thread_id": "01a0feed"})
+emit({"type": "turn.started"})
+emit({"type": "item.completed", "item": {"type": "reasoning", "text": "considering options"}})
+emit({"type": "item.completed", "item": {"id": "item_1", "type": "agent_message",
+      "text": "echo-result-42"}})
+emit({"type": "turn.completed", "usage": {"input_tokens": 37337,
+      "cached_input_tokens": 22016, "cache_write_input_tokens": 0,
+      "output_tokens": 184, "reasoning_output_tokens": 52}})
+"""
+
+EMPTY_OR_MISSING_REASONING = _PREAMBLE + """
+emit({"type": "thread.started", "thread_id": "01a0fee2"})
+emit({"type": "turn.started"})
+emit({"type": "item.completed", "item": {"type": "reasoning", "text": ""}})
+emit({"type": "item.completed", "item": {"type": "reasoning"}})
+emit({"type": "item.completed", "item": {"id": "item_1", "type": "agent_message",
+      "text": "echo-result-42"}})
+emit({"type": "turn.completed", "usage": {"input_tokens": 1,
+      "cached_input_tokens": 0, "cache_write_input_tokens": 0,
+      "output_tokens": 1, "reasoning_output_tokens": 0}})
 """
 
 FAILED = _PREAMBLE + """
@@ -164,6 +187,41 @@ async def test_happy_turn_maps_chunks_and_usage(tmp_path):
     assert usage.output_tokens == 184
     assert usage.cache_read_tokens == 22016
     assert usage.cache_write_tokens == 0
+
+
+async def test_reasoning_item_yields_thinking_delta_before_text_delta(tmp_path):
+    provider = _provider(_fake_codex(tmp_path, REASONING_THEN_TEXT))
+    chunks = [
+        c
+        async for c in provider.complete(
+            model=ModelId("codex/default"), messages=USER, tools=()
+        )
+    ]
+    thinking_indices = [i for i, c in enumerate(chunks) if isinstance(c, ThinkingDelta)]
+    text_indices = [i for i, c in enumerate(chunks) if isinstance(c, TextDelta)]
+    assert thinking_indices, "expected a ThinkingDelta chunk"
+    assert text_indices, "expected a TextDelta chunk"
+    assert thinking_indices[0] < text_indices[0]
+    assert chunks[thinking_indices[0]] == ThinkingDelta(text="considering options")
+
+
+async def test_reasoning_never_leaks_into_assembled_message_text(tmp_path):
+    provider = _provider(_fake_codex(tmp_path, REASONING_THEN_TEXT))
+    message, _, _ = await collect(
+        provider.complete(model=ModelId("codex/default"), messages=USER, tools=())
+    )
+    assert message.text() == "echo-result-42"
+
+
+async def test_reasoning_item_with_empty_or_missing_text_yields_nothing(tmp_path):
+    provider = _provider(_fake_codex(tmp_path, EMPTY_OR_MISSING_REASONING))
+    chunks = [
+        c
+        async for c in provider.complete(
+            model=ModelId("codex/default"), messages=USER, tools=()
+        )
+    ]
+    assert not any(isinstance(c, ThinkingDelta) for c in chunks)
 
 
 async def test_flag_contract(tmp_path, monkeypatch):

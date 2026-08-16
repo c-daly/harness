@@ -418,6 +418,9 @@ tags = ["anthropic", "subscription", "tool-calling", "frontier"]
 Requirements: `claude` on PATH and logged in (Pro/Max). One harness turn is
 one Claude Code agent turn; Max-plan rate limits apply.
 
+Any reasoning Claude surfaces (`thinking` content blocks) is streamed to the
+UI as thought chunks and never enters the transcript.
+
 ---
 
 ## Codex on your ChatGPT subscription
@@ -481,3 +484,6 @@ codex's own shell.
 
 Requirements: `codex` on PATH and logged in. One harness turn is one Codex
 agent turn.
+
+Any reasoning Codex surfaces (`reasoning` items) is streamed to the UI as
+thought chunks and never enters the transcript.

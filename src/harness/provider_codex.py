@@ -44,7 +44,7 @@ from harness.dispatcher import current_dispatch_tool
 from harness.errors import MalformedStreamError, ProviderError
 from harness.mcp_serve import McpToolServer
 from harness.messages import Message
-from harness.provider import Chunk, StreamStop, TextDelta, Usage, UsageReport
+from harness.provider import Chunk, StreamStop, TextDelta, ThinkingDelta, Usage, UsageReport
 from harness.provider_claude_code import _kill_process_group, _render_prompt, _sanitized_env
 from harness.tools import ToolSpec
 from harness.types import ModelId
@@ -249,8 +249,11 @@ class CodexProvider:
                         kind = event.get("type") or ""
                         if kind == "item.completed":
                             item = event.get("item") or {}
-                            # mcp_tool_call and reasoning items arrive here too;
-                            # only the agent message is turn output.
+                            # mcp_tool_call items arrive here too; reasoning
+                            # items surface as ThinkingDelta below, and only
+                            # the agent message is turn (transcript) output.
+                            if item.get("type") == "reasoning" and item.get("text"):
+                                yield ThinkingDelta(text=item["text"])
                             if item.get("type") == "agent_message" and item.get("text"):
                                 yield TextDelta(text=item["text"])
                         elif kind == "turn.completed":

@@ -20,7 +20,7 @@ from harness.dispatcher import current_dispatch_tool
 from harness.errors import MalformedStreamError, ProviderError
 from harness.mcp_serve import McpToolServer
 from harness.messages import Message
-from harness.provider import Chunk, StreamStop, TextDelta, Usage, UsageReport
+from harness.provider import Chunk, StreamStop, TextDelta, ThinkingDelta, Usage, UsageReport
 from harness.tools import ToolSpec
 from harness.types import ModelId
 
@@ -194,6 +194,10 @@ class ClaudeCodeProvider:
                             for block in event.get("message", {}).get("content", []):
                                 if block.get("type") == "text" and block.get("text"):
                                     yield TextDelta(text=block["text"])
+                                elif block.get("type") == "thinking" and block.get("thinking"):
+                                    yield ThinkingDelta(
+                                        text=block["thinking"], signature=block.get("signature")
+                                    )
                         elif event.get("type") == "result":
                             saw_result = True
                             if event.get("is_error"):
