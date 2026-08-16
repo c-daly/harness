@@ -62,7 +62,8 @@ The source is flat under `src/harness/`. Grouped by role:
   `claude -p` subprocess, with harness tools served to it over `mcp_serve.py`.
 - `provider_codex.py` — subscription-CLI backend: one turn = one `codex
   mcp-server` child driven over MCP, with harness tools served to it over
-  `mcp_serve.py` by replacing Codex's `mcp_servers` config table.
+  `mcp_serve.py` and injected via the tool call's own `config.mcp_servers`
+  argument (a spawn-time `-c` override is inert for conversation servers).
 - `catalog.py` — model alias → route/backend resolution.
 
 **Permissions & telemetry**

@@ -1,12 +1,19 @@
 """Codex on ChatGPT-subscription auth: one complete() = one `codex mcp-server`
-child driven over MCP. The harness's tools reach codex by REPLACING its
-mcp_servers config table at spawn (isolates the user's codex config AND mounts
-the per-turn McpToolServer in one flag). sandbox=read-only + approval-policy=
-never: the harness permission engine is the only gate. Codex's built-in
-read-only shell remains -- tool parity is additive, documented in the guide.
+child driven over MCP. The harness's tools reach codex via the `codex` tool
+call's own `config.mcp_servers` argument, not a spawn-time `-c` override:
+live verification against codex-cli 0.147.0 showed `-c mcp_servers=...` is
+inert for conversation MCP servers, so the per-turn McpToolServer's url
+travels inside the tool call arguments instead. sandbox=read-only,
+approval-policy=never, and a fresh, empty per-turn scratch `cwd`: the harness
+permission engine is the only gate. Codex's built-in shell is not disabled
+(tool parity is additive, documented in the guide) -- pointing its cwd at an
+empty scratch directory rather than the real workspace is what keeps the
+harness's MCP tools the only path back to real files.
 """
 
 import asyncio
+import shutil
+import tempfile
 from typing import AsyncIterator, Sequence
 
 import anyio
@@ -49,25 +56,42 @@ class CodexProvider:
             )
         server = McpToolServer(specs=tools, dispatch=dispatch)
         await server.start()
+        # A fresh, empty scratch dir for the turn's lifecycle: codex's own
+        # built-in shell is not disabled (see module docstring), so its cwd
+        # must not be the real workspace -- the harness's MCP tools are meant
+        # to be the only path back to real files.
+        scratch = tempfile.mkdtemp(prefix="harness-codex-")
         try:
-            async for chunk in self._run_turn(model=model, messages=messages, url=server.url):
+            async for chunk in self._run_turn(
+                model=model, messages=messages, url=server.url, cwd=scratch
+            ):
                 yield chunk
         finally:
+            shutil.rmtree(scratch, ignore_errors=True)
             await server.stop()
 
-    def _arguments(self, *, model: ModelId, prompt: str) -> dict:
-        args = {"prompt": prompt, "sandbox": "read-only", "approval-policy": "never"}
+    def _arguments(self, *, model: ModelId, prompt: str, url: str, cwd: str) -> dict:
+        args = {
+            "prompt": prompt,
+            "sandbox": "read-only",
+            "approval-policy": "never",
+            "cwd": cwd,
+            # The spawn-time `-c mcp_servers=...` override is inert for
+            # conversation MCP servers (live-verified against codex-cli
+            # 0.147.0); the per-call config argument is the path that works.
+            "config": {"mcp_servers": {"harness": {"url": url}}},
+        }
         suffix = str(model).split("/", 1)[-1]
         if suffix not in ("", "default", str(model)):
             args["model"] = suffix
         return args
 
     async def _run_turn(
-        self, *, model: ModelId, messages: Sequence[Message], url: str
+        self, *, model: ModelId, messages: Sequence[Message], url: str, cwd: str
     ) -> AsyncIterator[Chunk]:
         params = StdioServerParameters(
             command=self.binary,
-            args=["mcp-server", "-c", f'mcp_servers={{harness={{url="{url}"}}}}'],
+            args=["mcp-server"],
             env=_sanitized_env(),
         )
         try:
@@ -87,7 +111,10 @@ class CodexProvider:
                                     params=mcp_types.CallToolRequestParams(
                                         name="codex",
                                         arguments=self._arguments(
-                                            model=model, prompt=_render_prompt(messages)
+                                            model=model,
+                                            prompt=_render_prompt(messages),
+                                            url=url,
+                                            cwd=cwd,
                                         ),
                                     )
                                 )

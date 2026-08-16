@@ -424,9 +424,13 @@ one Claude Code agent turn; Max-plan rate limits apply.
 
 Entries with `backend = "codex"` run turns through your locally installed,
 logged-in Codex CLI (`codex mcp-server`) instead of an API. The harness
-serves its own tools to Codex over MCP by replacing Codex's `mcp_servers`
-config table for the turn, with `sandbox = "read-only"` and
-`approval-policy = "never"` — the harness permission engine is the only
+serves its own tools to Codex over MCP by passing the per-turn tool
+server's url inside the `codex` tool call's own `config.mcp_servers`
+argument — a spawn-time `-c mcp_servers=...` override looks like it should
+work but is inert for conversation MCP servers (verified against codex-cli
+0.147.0), so the wiring travels with the call instead. Each turn also gets
+`sandbox = "read-only"`, `approval-policy = "never"`, and a fresh, empty
+scratch directory as its `cwd` — the harness permission engine is the only
 gate. The harness never handles ChatGPT credentials — log in with
 `codex login` once and the backend uses that.
 
@@ -441,12 +445,14 @@ tags = ["openai", "subscription", "tool-calling"]
 
 **Additive, not exclusive.** Unlike the claude-code backend, which disables
 Claude Code's own built-in tools so the harness registry is the only tool
-surface, the codex backend does *not* disable Codex's built-in read-only
-shell. A codex-backed turn gets the harness's tools in addition to whatever
-Codex can already do on its own — tool parity here is additive, not a
-drop-in match for the claude-code backend's exclusivity. Codex's own shell
-stays read-only regardless, since the turn is spawned with
-`sandbox = "read-only"`.
+surface, the codex backend does *not* disable Codex's built-in shell. A
+codex-backed turn gets the harness's tools in addition to whatever Codex can
+already do on its own — tool parity here is additive, not a drop-in match
+for the claude-code backend's exclusivity. Two things keep that shell from
+touching your real files: it's spawned with `sandbox = "read-only"`, and its
+`cwd` is a fresh, empty scratch directory created and torn down for that one
+turn — not your workspace — so the harness's MCP tools remain the only path
+back to real files.
 
 Requirements: `codex` on PATH and logged in. One harness turn is one Codex
 agent turn.

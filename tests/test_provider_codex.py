@@ -31,6 +31,12 @@ for line in sys.stdin:
             "serverInfo": {"name": "codex-mcp-server", "version": "0.0-fake"}}})
     elif m == "tools/call":
         open(sys.argv[0] + ".call", "w").write(json.dumps(msg["params"]))
+        # Snapshot the cwd argument's on-disk state AT CALL TIME, before the
+        # harness's post-turn cleanup can remove it: the test reads this back
+        # instead of stat-ing the (by-then-deleted) path itself.
+        cwd_arg = msg["params"]["arguments"].get("cwd")
+        cwd_ok = bool(cwd_arg) and os.path.isdir(cwd_arg) and not os.listdir(cwd_arg)
+        open(sys.argv[0] + ".cwdcheck", "w").write(json.dumps(cwd_ok))
         send({"jsonrpc": "2.0", "id": msg["id"], "result": {
             "structuredContent": {"threadId": "t-1", "content": "pong"},
             "content": [{"type": "text", "text": "pong"}]}})
@@ -79,9 +85,7 @@ async def test_call_contract(tmp_path, monkeypatch):
     provider = _provider(binary)
     await collect(provider.complete(model=ModelId("codex/default"), messages=USER, tools=()))
     argv = json.loads(open(binary + ".argv").read())
-    assert argv[0] == "mcp-server"
-    joined = " ".join(argv)
-    assert "mcp_servers=" in joined and "http://127.0.0.1" in joined  # harness injected, table replaced
+    assert argv == ["mcp-server"]  # no spawn-time -c override; injection travels per-call
     call = json.loads(open(binary + ".call").read())
     assert call["name"] == "codex"
     args = call["arguments"]
@@ -89,6 +93,9 @@ async def test_call_contract(tmp_path, monkeypatch):
     assert args["approval-policy"] == "never"
     assert "say pong" in args["prompt"]
     assert "model" not in args  # "default" suffix means no override
+    url = args["config"]["mcp_servers"]["harness"]["url"]
+    assert url.startswith("http://127.0.0.1")  # harness's per-turn McpToolServer
+    assert json.loads(open(binary + ".cwdcheck").read()) is True  # existing, empty scratch dir
     env_keys = json.loads(open(binary + ".env").read())
     assert "OPENAI_API_KEY" not in env_keys and "ANTHROPIC_API_KEY" not in env_keys
     assert "PATH" in env_keys
