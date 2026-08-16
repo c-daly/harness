@@ -70,6 +70,15 @@ tool calls, and answer permission prompts inline. Key bindings:
   mode. The mode is session-local and not persisted across restarts. This is
   what makes a reasoning-heavy local model (e.g. a local Qwen3.6 quant) show
   visible progress instead of appearing hung during a long thinking phase.
+- `/markdown [on|off]` — render each completed assistant reply as markdown
+  (headings, lists, fenced code, tables) once the turn finishes. On by
+  default; `/markdown off` reverts to plain text if a reply's formatting
+  ever looks worse rendered than raw (e.g. heavy use of literal `#`/`*`/`_`
+  outside of prose). Run `/markdown` with no argument to see the current
+  mode. Session-local, not persisted across restarts. Streaming stays plain
+  by design while a reply is still in progress — the live tail can't reflow
+  as markdown mid-stream without flicker, so only the completed reply in the
+  transcript renders formatted.
 - `/clear` — end the current session cleanly and start a fresh one: new
   session id, empty history, but the same provider instance, permission
   engine, and resolver wiring the app started with (kernel rebuild-in-place,

@@ -5,6 +5,8 @@ from contextlib import asynccontextmanager
 
 import anyio
 from mcp.shared.memory import create_client_server_memory_streams
+from rich.markdown import Markdown
+from rich.text import Text
 from textual.widgets import Input, OptionList, RichLog, Static
 
 from harness.cli import build_kernel
@@ -406,6 +408,121 @@ async def test_thoughts_command_rejects_unknown_mode(tmp_path):
         await pilot.pause(0.1)
         lines = "\n".join(str(line) for line in app.query_one(RichLog).lines)
         assert "collapse" in lines and "full" in lines and "off" in lines
+
+
+# --- /markdown (Task 7) ---
+
+
+async def test_render_reply_markdown_by_default_and_plain_after_toggle_off(tmp_path):
+    """(a): _render_reply returns Markdown by default, Text after /markdown off."""
+    app = make_app(tmp_path)
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        assert isinstance(app._render_reply("# hi"), Markdown)
+        await pilot.click("#prompt")
+        await pilot.press(*"/markdown off", "enter")
+        await pilot.pause(0.1)
+        assert isinstance(app._render_reply("# hi"), Text)
+
+
+async def test_completed_reply_with_code_block_and_table_uses_markdown_seam(tmp_path):
+    """(b) e2e: a fenced code block + table reply completes without error and
+    the transcript write for the reply goes through the _render_reply seam."""
+    body = "```python\nprint(1)\n```\n\n| a | b |\n| - | - |\n| 1 | 2 |"
+    provider = FakeProvider([text_turn(body)])
+    app = make_app(tmp_path, provider=provider, model=ModelId("fake:md"))
+    seam_calls = []
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        real_render_reply = app._render_reply
+
+        def spy(text):
+            seam_calls.append(text)
+            return real_render_reply(text)
+
+        app._render_reply = spy
+        await pilot.click("#prompt")
+        await pilot.press(*"go", "enter")
+        await pilot.pause(0.3)
+        lines = "\n".join(str(line) for line in app.query_one(RichLog).lines)
+        assert "turn failed" not in lines
+    assert seam_calls == [body]
+    assert isinstance(real_render_reply(body), Markdown)
+
+
+async def test_markdown_command_rejects_unknown_arg(tmp_path):
+    """(c): /markdown bogus reports the valid values."""
+    app = make_app(tmp_path)
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        await pilot.click("#prompt")
+        await pilot.press(*"/markdown bogus", "enter")
+        await pilot.pause(0.1)
+        lines = "\n".join(str(line) for line in app.query_one(RichLog).lines)
+        assert "unknown markdown mode" in lines
+        assert "on" in lines and "off" in lines
+
+
+async def test_markdown_command_no_arg_reports_current_mode(tmp_path):
+    app = make_app(tmp_path)
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        await pilot.click("#prompt")
+        await pilot.press(*"/markdown", "enter")
+        await pilot.pause(0.1)
+        lines = "\n".join(str(line) for line in app.query_one(RichLog).lines)
+        assert "markdown mode: on" in lines
+
+
+async def test_reply_render_seam_not_used_for_thought_lines(tmp_path):
+    """(d): full-mode thought lines stay on the _plain seam -- _render_reply
+    is invoked ONLY for the completed assistant reply text."""
+    provider = ThinkingGatedProvider()
+    app = make_app(tmp_path, provider=provider, model=ModelId("fake:think"))
+    seam_calls = []
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        real_render_reply = app._render_reply
+
+        def spy(text):
+            seam_calls.append(text)
+            return real_render_reply(text)
+
+        app._render_reply = spy
+        await pilot.click("#prompt")
+        await pilot.press(*"/thoughts full", "enter")
+        await pilot.pause(0.1)
+        await pilot.press(*"go", "enter")
+        await pilot.pause(0.1)
+        provider.release_after_thought.set()
+        await pilot.pause(0.1)
+        provider.release_after_text.set()
+        await pilot.pause(0.2)
+    assert seam_calls == ["answer"]  # only the completed reply went through the seam
+
+
+async def test_reply_render_seam_not_used_on_turn_failure(tmp_path):
+    """(d): error lines stay on the _plain seam via say(), never _render_reply."""
+    engine = PermissionEngine(
+        [RuleSet(rules=[PermissionRule(action="deny", tool="model:*")], default="allow")]
+    )
+    app = make_app(tmp_path, permissions=engine)
+    seam_calls = []
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        real_render_reply = app._render_reply
+
+        def spy(text):
+            seam_calls.append(text)
+            return real_render_reply(text)
+
+        app._render_reply = spy
+        await pilot.click("#prompt")
+        await pilot.press(*"hi", "enter")
+        await pilot.pause(0.3)
+        lines = "\n".join(str(line) for line in app.query_one(RichLog).lines)
+        assert "turn failed" in lines
+    assert seam_calls == []
 
 
 async def test_permission_modal_allow_completes_turn(tmp_path):

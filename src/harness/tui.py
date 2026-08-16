@@ -12,6 +12,8 @@ import subprocess
 import time
 from pathlib import Path
 
+from rich.console import RenderableType
+from rich.markdown import Markdown
 from rich.text import Text
 from textual import on
 from textual.app import App, ComposeResult
@@ -396,6 +398,7 @@ class HarnessApp(App[None]):
     """
     BINDINGS = [Binding("escape", "interrupt", "Interrupt", priority=True)]
     _THOUGHT_MODES = ("collapse", "full", "off")
+    _MARKDOWN_MODES = ("on", "off")
 
     def __init__(
         self,
@@ -436,6 +439,9 @@ class HarnessApp(App[None]):
         # /thoughts mode: session-local, not persisted; not reset per turn.
         self._thought_mode = "collapse"  # "collapse" | "full" | "off"
         self._thought_buffer = ""
+        # /markdown mode: session-local, not persisted -- like _thought_mode,
+        # survives a /clear rebuild since it lives on the app, not the kernel.
+        self._markdown_mode = True
         self._thought_started: float | None = None
         self._thought_collapsed = False
         self._stats_conn = None
@@ -477,6 +483,15 @@ class HarnessApp(App[None]):
             content.stylize(style)
         line.append(content)
         self.query_one("#transcript", RichLog).write(line)
+
+    def _render_reply(self, text: str) -> RenderableType:
+        """The seam a completed assistant reply is written through -- markdown
+        by default, /markdown off reverts to the plain-text seam used
+        everywhere else. Thought summaries, errors, and system lines call
+        say() (-> _plain) directly and never pass through here."""
+        if self._markdown_mode:
+            return Markdown(text)
+        return _plain(text)
 
     def _clear_live(self) -> None:
         self._stream_buffer = ""
@@ -953,7 +968,7 @@ class HarnessApp(App[None]):
         if self._thought_mode == "full" and self._thought_buffer:
             self.say("", self._thought_buffer, style="dim")
         self._clear_live()
-        self.say("", reply)
+        self.query_one("#transcript", RichLog).write(self._render_reply(reply))
 
     async def _run_compact(self) -> None:
         """One summarize completion through the CURRENT model/provider over
@@ -1021,9 +1036,9 @@ class HarnessApp(App[None]):
         if command.name == "help":
             self.say(
                 "",
-                "/help  /model [alias]  /thoughts [collapse|full|off]  /clear  /compact  "
-                "/resume  /tools  /quit  — @path mentions a file (Tab completes), read for "
-                "the model only",
+                "/help  /model [alias]  /thoughts [collapse|full|off]  /markdown [on|off]  "
+                "/clear  /compact  /resume  /tools  /quit  — @path mentions a file (Tab "
+                "completes), read for the model only",
             )
             if self._plugin_commands:
                 self.say(
@@ -1042,6 +1057,8 @@ class HarnessApp(App[None]):
             self.run_worker(self._switch_model(command.arg), group="driver", exit_on_error=False)
         elif command.name == "thoughts":
             self._set_thought_mode(command.arg.strip())
+        elif command.name == "markdown":
+            self._set_markdown_mode(command.arg.strip())
         elif command.name == "clear":
             if self._refuse_if_busy():
                 return
@@ -1090,6 +1107,18 @@ class HarnessApp(App[None]):
             self.say(
                 "! ",
                 f"unknown thought mode: {arg!r} (valid: {', '.join(self._THOUGHT_MODES)})",
+            )
+
+    def _set_markdown_mode(self, arg: str) -> None:
+        if not arg:
+            self.say("", f"markdown mode: {'on' if self._markdown_mode else 'off'} (on|off)")
+        elif arg in self._MARKDOWN_MODES:
+            self._markdown_mode = arg == "on"
+            self.say("", f"markdown mode -> {arg}")
+        else:
+            self.say(
+                "! ",
+                f"unknown markdown mode: {arg!r} (valid: {', '.join(self._MARKDOWN_MODES)})",
             )
 
     def _maybe_warn_context(self, resolved) -> None:
