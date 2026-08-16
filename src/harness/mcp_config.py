@@ -213,6 +213,11 @@ def emit_mcp_toml(specs: tuple) -> str:
             lines.append(f"restart = {_toml_str(spec.restart)}")
         if spec.tool_timeout_s != 60.0:
             lines.append(f"tool_timeout_s = {spec.tool_timeout_s}")
+        if spec.tools_allow:
+            joined = ", ".join(_toml_str(g) for g in spec.tools_allow)
+            lines.append(f"tools_allow = [{joined}]")
+        if not spec.default_enabled:
+            lines.append("default_enabled = false")
         for table, refs in (("env", spec.env), ("headers", spec.headers)):
             if refs:
                 lines.append(f"[servers.{spec.name}.{table}]")

@@ -9,7 +9,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.shared.memory import create_client_server_memory_streams
 
 from harness.hooks import HookBus
-from harness.mcp_config import McpConfigError, McpServerSpec, load_mcp_file
+from harness.mcp_config import McpConfigError, McpServerSpec, emit_mcp_toml, load_mcp_file
 from harness.mcp_host import McpHost
 from harness.session import Session
 from harness.tools import ToolRegistry
@@ -153,3 +153,36 @@ async def test_host_filters_tools_by_tools_allow_globs(tmp_path):
     finally:
         await host.stop()
         session.close()
+
+
+# --- emit_mcp_toml round-trip: tools_allow and default_enabled survive a
+# read-all -> mutate-one -> rewrite-all cycle (cli.py mcp add/remove/import) ---
+
+
+def test_emit_mcp_toml_round_trips_tools_allow_and_default_enabled(tmp_path):
+    original = McpServerSpec(
+        name="router",
+        transport="stdio",
+        command="/bin/mcp-router",
+        tools_allow=("workflow__*", "experiment__*"),
+        default_enabled=False,
+    )
+    text = emit_mcp_toml((original,))
+    p = tmp_path / "mcp.toml"
+    p.write_text(text)
+    reparsed = load_mcp_file(p, source="user")
+    assert len(reparsed) == 1
+    assert reparsed[0].tools_allow == ("workflow__*", "experiment__*")
+    assert reparsed[0].default_enabled is False
+
+
+def test_emit_mcp_toml_omits_tools_allow_and_default_enabled_when_default(tmp_path):
+    plain = McpServerSpec(name="plain", transport="stdio", command="/bin/plain")
+    text = emit_mcp_toml((plain,))
+    assert "tools_allow" not in text
+    assert "default_enabled" not in text
+    p = tmp_path / "mcp.toml"
+    p.write_text(text)
+    reparsed = load_mcp_file(p, source="user")
+    assert reparsed[0].tools_allow == ()
+    assert reparsed[0].default_enabled is True
