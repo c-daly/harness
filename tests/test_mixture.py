@@ -10,6 +10,7 @@ from harness.mixture import (
     EnsembleTool,
     EscalateTool,
     Expert,
+    _experts,
     _is_veto,
     draft_refine,
     ensemble,
@@ -201,6 +202,19 @@ async def test_ensemble_tool_delegates():
     assert tool.spec.name == ToolName("ensemble")
     out = await tool({"prompt": "Q", "models": ["a", "b"]})
     assert out == "same"
+
+
+def test_experts_scalar_string_is_one_expert_not_chars():
+    # a bare string from an LLM tool call must not iterate into characters
+    assert _experts("gpt-4") == [Expert(model="gpt-4")]
+
+
+async def test_ensemble_tool_scalar_models_string_is_one_expert():
+    runner = FakeRunner({"gpt-4": "ok"})
+    tool = EnsembleTool(runner=runner, parent=None)
+    out = await tool({"prompt": "Q", "models": "gpt-4"})
+    assert out == "ok"
+    assert [m for m, _ in runner.calls] == ["gpt-4"]  # one call, not five
 
 
 async def test_escalate_tool_delegates():

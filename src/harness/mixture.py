@@ -201,6 +201,8 @@ async def run_strategy(
 # --- model-driven native tools ---
 
 def _experts(models: Any) -> list[Expert]:
+    if isinstance(models, str):
+        models = (models,)  # a bare scalar means a one-expert list, not chars
     return [Expert(model=str(m)) for m in (models or [])]
 
 
