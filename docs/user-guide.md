@@ -423,13 +423,14 @@ one Claude Code agent turn; Max-plan rate limits apply.
 ## Codex on your ChatGPT subscription
 
 Entries with `backend = "codex"` run turns through your locally installed,
-logged-in Codex CLI (`codex mcp-server`) instead of an API. The harness
-serves its own tools to Codex over MCP by passing the per-turn tool
-server's url inside the `codex` tool call's own `config.mcp_servers`
-argument — a spawn-time `-c mcp_servers=...` override looks like it should
-work but is inert for conversation MCP servers (verified against codex-cli
-0.147.0), so the wiring travels with the call instead. Each turn also gets
-`sandbox = "read-only"`, `approval-policy = "never"`, and a fresh, empty
+logged-in Codex CLI (`codex exec --json`) instead of an API. The harness
+serves its own tools to Codex over MCP, injected at spawn time as a dotted
+`-c mcp_servers.harness.url=...` override, and reads the turn back off the
+JSONL event stream. The `codex mcp-server` transport is not usable
+headlessly: it gates every MCP tool call behind a custom `codex/event`
+elicitation that no automated client can answer, while `codex exec` runs
+the same turn, with the same tools, and asks nothing (verified against
+codex-cli 0.147.0). Each turn also gets `-s read-only` and a fresh, empty
 scratch directory as its `cwd` — the harness permission engine is the only
 gate. The harness never handles ChatGPT credentials — log in with
 `codex login` once and the backend uses that.
@@ -449,7 +450,7 @@ surface, the codex backend does *not* disable Codex's built-in shell. A
 codex-backed turn gets the harness's tools in addition to whatever Codex can
 already do on its own — tool parity here is additive, not a drop-in match
 for the claude-code backend's exclusivity. Two things keep that shell from
-touching your real files: it's spawned with `sandbox = "read-only"`, and its
+touching your real files: it's spawned with `-s read-only`, and its
 `cwd` is a fresh, empty scratch directory created and torn down for that one
 turn — not your workspace — so the harness's MCP tools remain the only path
 back to real files.

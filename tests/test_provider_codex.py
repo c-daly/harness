@@ -1,69 +1,97 @@
-"""CodexProvider against a fake `codex` executable implementing the mcp-server
-JSON-RPC surface (captured live from codex-cli 0.147.0). No subscription use."""
+"""CodexProvider against fake `codex` executables replaying the `codex exec
+--json` event stream captured live from codex-cli 0.147.0. No real CLI, no
+subscription use."""
 
+import asyncio
 import json
 import os
 import stat
 
 import pytest
 
-from harness.dispatcher import ToolOutcome
-from harness.errors import ProviderError
+from harness.dispatcher import ToolOutcome, current_dispatch_tool
+from harness.errors import MalformedStreamError, ProviderError
 from harness.messages import Message, Role, TextBlock
-from harness.provider import collect
+from harness.provider import TextDelta, collect
 from harness.provider_codex import CodexProvider
 from harness.types import ModelId
 
-FAKE_CODEX = r'''#!/usr/bin/env python3
+# Every fake asserts the exec/--json shape up front, then dumps what the
+# provider handed it (argv, stdin, env, cwd state, CODEX_HOME state) as
+# sidecar files next to the binary -- never inside cwd, which the flag
+# contract test asserts is empty.
+_PREAMBLE = """
 import json, os, sys
 
-def send(m):
-    sys.stdout.write(json.dumps(m) + "\n"); sys.stdout.flush()
-
-assert sys.argv[1] == "mcp-server", sys.argv
-open(sys.argv[0] + ".argv", "w").write(json.dumps(sys.argv[1:]))
-open(sys.argv[0] + ".env", "w").write(json.dumps(sorted(os.environ.keys())))
-_codex_home = os.environ.get("CODEX_HOME")
-open(sys.argv[0] + ".codexhome", "w").write(json.dumps({
-    "value": _codex_home,
-    "has_auth_json": bool(_codex_home) and os.path.isfile(os.path.join(_codex_home, "auth.json")),
+assert sys.argv[1:3] == ["exec", "--json"], sys.argv
+_here = sys.argv[0]
+_prompt = sys.stdin.read()
+_cwd = os.getcwd()
+_home = os.environ.get("CODEX_HOME")
+open(_here + ".argv", "w").write(json.dumps(sys.argv[1:]))
+open(_here + ".stdin", "w").write(_prompt)
+open(_here + ".env", "w").write(json.dumps(sorted(os.environ.keys())))
+open(_here + ".cwd", "w").write(json.dumps({"path": _cwd, "empty": not os.listdir(_cwd)}))
+open(_here + ".codexhome", "w").write(json.dumps({
+    "value": _home,
+    "has_auth_json": bool(_home) and os.path.isfile(os.path.join(_home, "auth.json")),
 }))
-for line in sys.stdin:
-    msg = json.loads(line)
-    m = msg.get("method")
-    if m == "initialize":
-        send({"jsonrpc": "2.0", "id": msg["id"], "result": {
-            "protocolVersion": "2024-11-05", "capabilities": {"tools": {}},
-            "serverInfo": {"name": "codex-mcp-server", "version": "0.0-fake"}}})
-    elif m == "tools/call":
-        open(sys.argv[0] + ".call", "w").write(json.dumps(msg["params"]))
-        # Snapshot the cwd argument's on-disk state AT CALL TIME, before the
-        # harness's post-turn cleanup can remove it: the test reads this back
-        # instead of stat-ing the (by-then-deleted) path itself.
-        cwd_arg = msg["params"]["arguments"].get("cwd")
-        cwd_ok = bool(cwd_arg) and os.path.isdir(cwd_arg) and not os.listdir(cwd_arg)
-        open(sys.argv[0] + ".cwdcheck", "w").write(json.dumps(cwd_ok))
-        # Real codex sends a server->client MCP elicitation ("approve this
-        # MCP tool call?") for every MCP tool call before returning the
-        # tools/call result -- approval-policy="never" does not cover this.
-        # Send one and WAIT for the client's answer: if the provider never
-        # wired an elicitation_callback, this read blocks forever and the
-        # test times out, exactly reproducing the live hang.
-        send({"jsonrpc": "2.0", "id": "elicit-1", "method": "elicitation/create",
-              "params": {"mode": "form", "message": "Approve MCP tool call?",
-                         "requestedSchema": {"type": "object", "properties": {}}}})
-        elicit_response = json.loads(sys.stdin.readline())
-        open(sys.argv[0] + ".elicit_response", "w").write(json.dumps(elicit_response))
-        send({"jsonrpc": "2.0", "id": msg["id"], "result": {
-            "structuredContent": {"threadId": "t-1", "content": "pong"},
-            "content": [{"type": "text", "text": "pong"}]}})
-        break
-'''
 
-ERROR_CODEX = FAKE_CODEX.replace(
-    '"structuredContent": {"threadId": "t-1", "content": "pong"},\n            "content": [{"type": "text", "text": "pong"}]}',
-    '"content": [{"type": "text", "text": "Not logged in"}], "isError": True}',
-)
+
+def emit(event):
+    print(json.dumps(event), flush=True)
+"""
+
+# Verbatim event contract from a live `codex exec --json` run against a real
+# McpToolServer: the harness tool call ran with no elicitation of any kind.
+HAPPY = _PREAMBLE + """
+emit({"type": "thread.started", "thread_id": "01a0feed"})
+emit({"type": "turn.started"})
+emit({"type": "item.started", "item": {"id": "item_0", "type": "mcp_tool_call",
+      "server": "harness", "tool": "echo", "arguments": {}, "result": None,
+      "error": None, "status": "in_progress"}})
+emit({"type": "item.completed", "item": {"id": "item_0", "type": "mcp_tool_call",
+      "server": "harness", "tool": "echo", "arguments": {},
+      "result": {"content": [{"type": "text", "text": "echo-result-42"}],
+                 "structured_content": None},
+      "error": None, "status": "completed"}})
+emit({"type": "item.completed", "item": {"id": "item_1", "type": "agent_message",
+      "text": "echo-result-42"}})
+emit({"type": "turn.completed", "usage": {"input_tokens": 37337,
+      "cached_input_tokens": 22016, "cache_write_input_tokens": 0,
+      "output_tokens": 184, "reasoning_output_tokens": 52}})
+"""
+
+FAILED = _PREAMBLE + """
+emit({"type": "thread.started", "thread_id": "01a0dead"})
+emit({"type": "turn.started"})
+emit({"type": "turn.failed", "error": {"message": "Not logged in"}})
+"""
+
+NO_TURN_COMPLETED = _PREAMBLE + """
+emit({"type": "thread.started", "thread_id": "01a0bare"})
+emit({"type": "item.completed", "item": {"id": "item_0", "type": "agent_message",
+      "text": "half a turn"}})
+"""
+
+CRASH = _PREAMBLE + """
+sys.stderr.write("boom: something broke")
+sys.exit(2)
+"""
+
+SLEEPER = _PREAMBLE + """
+import time
+open(_here + ".pid", "w").write(str(os.getpid()))
+time.sleep(60)
+"""
+
+ONE_DELTA_THEN_SLEEP = _PREAMBLE + """
+import time
+open(_here + ".pid", "w").write(str(os.getpid()))
+emit({"type": "item.completed", "item": {"id": "item_0", "type": "agent_message",
+      "text": "partial"}})
+time.sleep(60)
+"""
 
 USER = [Message(role=Role.USER, blocks=(TextBlock(text="say pong"),))]
 
@@ -72,123 +100,211 @@ USER = [Message(role=Role.USER, blocks=(TextBlock(text="say pong"),))]
 def _isolated_codex_home(tmp_path, monkeypatch):
     """Every CodexProvider turn copies auth.json out of $CODEX_HOME (or
     ~/.codex if unset) into a fresh scratch dir. Default CODEX_HOME to an
-    empty directory with no auth.json so tests never touch this machine's
-    real ChatGPT credentials as a side effect; test_call_contract overrides
-    this to exercise the copy explicitly."""
+    empty directory with no auth.json so tests never touch the real ChatGPT
+    credentials on this machine as a side effect; test_flag_contract
+    overrides this to exercise the copy explicitly."""
     empty = tmp_path / "no-codex-home"
     empty.mkdir()
     monkeypatch.setenv("CODEX_HOME", str(empty))
 
 
-def _fake(tmp_path, body: str) -> str:
+def _fake_codex(tmp_path, script_body: str) -> str:
     path = tmp_path / "codex"
-    path.write_text(body)
+    path.write_text("#!/usr/bin/env python3\n" + script_body)
     path.chmod(path.stat().st_mode | stat.S_IEXEC)
     return str(path)
 
 
 class _Dispatcher:
-    async def dispatch_tool(self, call):
+    async def dispatch_tool(self, call):  # never called in these tests
         return ToolOutcome(text="", blob=None, is_error=False)
 
 
-def _provider(binary, timeout_s=30.0):
+def _provider(binary: str, timeout_s: float = 30.0) -> CodexProvider:
     p = CodexProvider(binary=binary, timeout_s=timeout_s)
     p.bind_dispatcher(_Dispatcher())
     return p
 
 
-async def test_happy_turn_maps_text(tmp_path):
-    provider = _provider(_fake(tmp_path, FAKE_CODEX))
+async def _wait_for_death(pid: int) -> bool:
+    for _ in range(60):
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return True
+        await asyncio.sleep(0.05)
+    return False
+
+
+async def _read_pid(path: str) -> int:
+    for _ in range(60):
+        if os.path.exists(path):
+            return int(open(path).read())
+        await asyncio.sleep(0.05)
+    raise AssertionError("fake codex never wrote its pid file")
+
+
+async def test_happy_turn_maps_chunks_and_usage(tmp_path):
+    provider = _provider(_fake_codex(tmp_path, HAPPY))
     message, usage, stop = await collect(
         provider.complete(model=ModelId("codex/default"), messages=USER, tools=())
     )
-    assert message.text() == "pong"
+    assert message.text() == "echo-result-42"  # only the agent_message item is output
     assert stop == "end_turn"
+    assert usage.input_tokens == 37337
+    assert usage.output_tokens == 184
+    assert usage.cache_read_tokens == 22016
+    assert usage.cache_write_tokens == 0
 
 
-async def test_call_contract(tmp_path, monkeypatch):
+async def test_flag_contract(tmp_path, monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
-    # A fake "user" CODEX_HOME with a real auth.json, so this test can prove
-    # it gets copied into the isolated scratch home the child actually sees.
+    # A fake user CODEX_HOME with a real auth.json, so this test can prove it
+    # gets copied into the isolated scratch home the child actually sees.
     fake_user_home = tmp_path / "fake-user-codex-home"
     fake_user_home.mkdir()
-    (fake_user_home / "auth.json").write_text('{"fake": "auth"}')
+    (fake_user_home / "auth.json").write_text(json.dumps({"fake": "auth"}))
     monkeypatch.setenv("CODEX_HOME", str(fake_user_home))
-    binary = _fake(tmp_path, FAKE_CODEX)
+    binary = _fake_codex(tmp_path, HAPPY)
     provider = _provider(binary)
     await collect(provider.complete(model=ModelId("codex/default"), messages=USER, tools=()))
+
     argv = json.loads(open(binary + ".argv").read())
-    assert argv == ["mcp-server"]  # no spawn-time -c override; injection travels per-call
-    call = json.loads(open(binary + ".call").read())
-    assert call["name"] == "codex"
-    args = call["arguments"]
-    assert args["sandbox"] == "read-only"
-    assert args["approval-policy"] == "never"
-    assert "say pong" in args["prompt"]
-    assert "model" not in args  # "default" suffix means no override
-    assert args["base-instructions"]  # non-empty orientation block
-    assert "mcp__harness" in args["base-instructions"]
-    url = args["config"]["mcp_servers"]["harness"]["url"]
-    assert url.startswith("http://127.0.0.1")  # harness's per-turn McpToolServer
-    assert url.endswith("/mcp/")  # trailing slash: skips the Starlette mount's 307 redirect
-    assert json.loads(open(binary + ".cwdcheck").read()) is True  # existing, empty scratch dir
-    # The turn completing at all proves the elicitation was answered: the
-    # fake blocks on sys.stdin.readline() waiting for it, so an unwired
-    # elicitation_callback would hang this test until timeout_s instead.
-    elicit_response = json.loads(open(binary + ".elicit_response").read())
-    assert elicit_response["result"]["action"] == "accept"
-    env_keys = json.loads(open(binary + ".env").read())
+    assert argv[:2] == ["exec", "--json"]
+    assert "--skip-git-repo-check" in argv
+    assert argv[argv.index("-s") + 1] == "read-only"
+    config = argv[argv.index("-c") + 1]
+    assert config.startswith("mcp_servers.harness.url=")  # dotted: merges, not replaces
+    url = json.loads(config.split("=", 1)[1])
+    assert url.startswith("http://127.0.0.1")  # the per-turn McpToolServer
+    assert url.endswith("/mcp/")  # trailing slash skips the Starlette mount 307
+    assert argv[-1] == "-"  # prompt comes from stdin
+    assert "-m" not in argv  # "default" suffix means no override
+    assert not any("say pong" in a for a in argv)
+
+    stdin = open(binary + ".stdin").read()
+    assert "say pong" in stdin
+    assert "mcp__harness" in stdin  # orientation prefix rides on the prompt
+
+    cwd = json.loads(open(binary + ".cwd").read())
+    assert cwd["empty"] is True  # a fresh, empty per-turn scratch dir
+    assert cwd["path"] != os.getcwd()
+
+    env_keys = set(json.loads(open(binary + ".env").read()))
     assert "OPENAI_API_KEY" not in env_keys and "ANTHROPIC_API_KEY" not in env_keys
     assert "PATH" in env_keys
     assert "CODEX_HOME" in env_keys
+
     codex_home = json.loads(open(binary + ".codexhome").read())
-    # isolated: the child's CODEX_HOME is a scratch dir, not the user's real one
-    assert codex_home["value"] not in (None, str(fake_user_home))
+    assert codex_home["value"] not in (None, str(fake_user_home))  # isolated scratch home
     assert codex_home["has_auth_json"] is True  # auth.json carried over from the fake source
     assert not os.path.exists(codex_home["value"])  # torn down after the turn
 
 
 async def test_model_suffix_becomes_override(tmp_path):
-    binary = _fake(tmp_path, FAKE_CODEX)
+    binary = _fake_codex(tmp_path, HAPPY)
     provider = _provider(binary)
     await collect(
         provider.complete(model=ModelId("codex/gpt-5.2-codex"), messages=USER, tools=())
     )
-    call = json.loads(open(binary + ".call").read())
-    assert call["arguments"]["model"] == "gpt-5.2-codex"
+    argv = json.loads(open(binary + ".argv").read())
+    assert argv[argv.index("-m") + 1] == "gpt-5.2-codex"
+    assert argv[-1] == "-"
 
 
-async def test_is_error_result_raises(tmp_path):
-    provider = _provider(_fake(tmp_path, ERROR_CODEX))
+async def test_turn_failed_raises_provider_error(tmp_path):
+    provider = _provider(_fake_codex(tmp_path, FAILED))
     with pytest.raises(ProviderError, match="Not logged in"):
         await collect(
             provider.complete(model=ModelId("codex/default"), messages=USER, tools=())
         )
 
 
-async def test_missing_binary_raises(tmp_path):
+async def test_crash_raises_provider_error_with_stderr(tmp_path):
+    provider = _provider(_fake_codex(tmp_path, CRASH))
+    with pytest.raises(ProviderError, match="boom"):
+        await collect(
+            provider.complete(model=ModelId("codex/default"), messages=USER, tools=())
+        )
+
+
+async def test_missing_binary_raises_provider_error(tmp_path):
     provider = _provider("/nonexistent/codex")
-    with pytest.raises(ProviderError):
+    with pytest.raises(ProviderError, match="spawn failed"):
         await collect(
             provider.complete(model=ModelId("codex/default"), messages=USER, tools=())
         )
 
 
 async def test_unbound_dispatcher_is_loud(tmp_path):
-    provider = CodexProvider(binary=_fake(tmp_path, FAKE_CODEX))
+    provider = CodexProvider(binary=_fake_codex(tmp_path, HAPPY))  # no bind_dispatcher
     with pytest.raises(ProviderError, match="dispatcher"):
         await collect(
             provider.complete(model=ModelId("codex/default"), messages=USER, tools=())
         )
 
 
-async def test_timeout_raises(tmp_path):
-    slow = FAKE_CODEX.replace('elif m == "tools/call":',
-                              'elif m == "tools/call":\n        import time; time.sleep(60)')
-    provider = _provider(_fake(tmp_path, slow), timeout_s=2.0)
+async def test_eof_without_turn_completed_raises_malformed_stream_error(tmp_path):
+    provider = _provider(_fake_codex(tmp_path, NO_TURN_COMPLETED))
+    with pytest.raises(MalformedStreamError):
+        await collect(
+            provider.complete(model=ModelId("codex/default"), messages=USER, tools=())
+        )
+
+
+async def test_timeout_kills_process_group(tmp_path):
+    binary = _fake_codex(tmp_path, SLEEPER)
+    provider = _provider(binary, timeout_s=1.0)
     with pytest.raises(ProviderError, match="timed out"):
         await collect(
             provider.complete(model=ModelId("codex/default"), messages=USER, tools=())
         )
+    pid = await _read_pid(binary + ".pid")
+    assert await _wait_for_death(pid), "child survived the turn timeout"
+
+
+async def test_abandoning_stream_kills_process_group(tmp_path):
+    binary = _fake_codex(tmp_path, ONE_DELTA_THEN_SLEEP)
+    provider = _provider(binary, timeout_s=30.0)
+    gen = provider.complete(model=ModelId("codex/default"), messages=USER, tools=())
+    first = await gen.__anext__()
+    assert isinstance(first, TextDelta)
+    await gen.aclose()
+    pid = await _read_pid(binary + ".pid")
+    assert await _wait_for_death(pid), "child survived the stream being abandoned"
+
+
+async def test_contextvar_dispatch_overrides_bound_dispatcher(tmp_path, monkeypatch):
+    provider = _provider(_fake_codex(tmp_path, HAPPY))  # bound to the _Dispatcher shim
+
+    captured = {}
+
+    class _FakeMcpToolServer:
+        def __init__(self, *, specs, dispatch):
+            captured["dispatch"] = dispatch
+
+        @property
+        def url(self):
+            return "http://127.0.0.1:0/mcp"
+
+        async def start(self):
+            pass
+
+        async def stop(self):
+            pass
+
+    monkeypatch.setattr("harness.provider_codex.McpToolServer", _FakeMcpToolServer)
+
+    async def recorder_b(call):
+        return ToolOutcome(text="", blob=None, is_error=False)
+
+    token = current_dispatch_tool.set(recorder_b)
+    try:
+        await collect(
+            provider.complete(model=ModelId("codex/default"), messages=USER, tools=())
+        )
+    finally:
+        current_dispatch_tool.reset(token)
+
+    assert captured["dispatch"] is recorder_b

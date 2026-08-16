@@ -60,10 +60,11 @@ The source is flat under `src/harness/`. Grouped by role:
   `CatalogProvider`, which multiplexes per call on the catalog entry's `backend`.
 - `provider_claude_code.py` — subscription-CLI backend: one turn = one headless
   `claude -p` subprocess, with harness tools served to it over `mcp_serve.py`.
-- `provider_codex.py` — subscription-CLI backend: one turn = one `codex
-  mcp-server` child driven over MCP, with harness tools served to it over
-  `mcp_serve.py` and injected via the tool call's own `config.mcp_servers`
-  argument (a spawn-time `-c` override is inert for conversation servers).
+- `provider_codex.py` — subscription-CLI backend: one turn = one headless
+  `codex exec --json` child, with harness tools served to it over
+  `mcp_serve.py` and injected via a spawn-time `-c mcp_servers.harness.url`
+  override (the `codex mcp-server` transport gates every tool call behind an
+  elicitation no headless client can answer).
 - `catalog.py` — model alias → route/backend resolution.
 
 **Permissions & telemetry**
