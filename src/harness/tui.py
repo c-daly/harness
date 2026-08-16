@@ -364,14 +364,21 @@ class HistoryInput(Input):
             end += 1
         return start, end
 
-    def _mention_matches(self, prefix: str) -> list[str]:
+    async def _mention_matches(self, prefix: str) -> list[str]:
         if self._mention_files is None:
             root = self.workspace_root or Path.cwd()
-            self._mention_files = _list_workspace_files(root)
+            # _list_workspace_files shells out to git (subprocess.run, twice)
+            # or falls back to a bounded os.walk -- both blocking. Off the
+            # event loop via an executor so Tab-completion never stalls the
+            # app (I-3 + parked-1); cache semantics (once per prompt-session,
+            # reset by reset_mention_cache on submit) are unchanged.
+            self._mention_files = await asyncio.get_running_loop().run_in_executor(
+                None, _list_workspace_files, root
+            )
         needle = prefix.lower()
         return [f for f in self._mention_files if needle in f.lower()]
 
-    def action_complete_mention(self) -> None:
+    async def action_complete_mention(self) -> None:
         start, end = self._word_bounds()
         word = self.value[start:end]
         cyc = self._mention_cycle
@@ -387,7 +394,7 @@ class HistoryInput(Input):
             self._mention_cycle = None
             self.screen.focus_next()
             return
-        matches = self._mention_matches(word[1:])
+        matches = await self._mention_matches(word[1:])
         if not matches:
             self._mention_cycle = None
             return  # nothing to complete; stay put rather than jump focus
@@ -1155,9 +1162,14 @@ class HarnessApp(App[None]):
         fall back to a fresh session rather than leaving the app stuck on a
         closed kernel."""
         current_id = self.kernel.session.id
-        sessions = [
-            s for s in list_sessions(self.kernel.session.base) if s.session_id != current_id
-        ]
+        # list_sessions fully reads+parses every session log under base --
+        # blocking; off the event loop via an executor (I-3) so a large
+        # sessions directory can't stall the whole app while /resume builds
+        # its picker.
+        all_sessions = await asyncio.get_running_loop().run_in_executor(
+            None, list_sessions, self.kernel.session.base
+        )
+        sessions = [s for s in all_sessions if s.session_id != current_id]
         if not sessions:
             self.say("! ", "no sessions to resume")
             return

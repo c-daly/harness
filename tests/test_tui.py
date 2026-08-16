@@ -36,6 +36,7 @@ from harness.tools import ToolSpec
 from harness.tui import (
     AppBoundAsk,
     HarnessApp,
+    HistoryInput,
     PermissionScreen,
     ServerChecklistScreen,
     SessionPickerScreen,
@@ -1955,6 +1956,19 @@ async def test_resume_build_kernel_failure_falls_back_to_fresh_session(tmp_path,
         await pilot.pause(0.2)
         lines = "\n".join(str(line) for line in app.query_one(RichLog).lines)
         assert "turn failed" not in lines
+
+
+# --- I-3 + parked-1: sync blocking work must not run on the event loop ---
+
+
+def test_action_complete_mention_is_async():
+    """action_complete_mention's Tab-completion path shells out to git
+    (subprocess.run, blocking) via _list_workspace_files -- it must be a
+    coroutine function so Textual awaits it (off-loop via an executor)
+    rather than running it synchronously inline and stalling the app."""
+    import inspect
+
+    assert inspect.iscoroutinefunction(HistoryInput.action_complete_mention)
 
 
 # --- Task 6: @-file mentions (Tab completion + dispatcher-gated injection) ---
