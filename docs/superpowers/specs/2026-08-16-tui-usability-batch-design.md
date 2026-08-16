@@ -97,10 +97,45 @@ session ids and no `--continue`.
 - The user's message in history keeps the literal `@path` text; the injected
   content is additional context for that turn only.
 
+## F6 — Markdown rendering (added 2026-08-16, approved in-chat)
+
+**Design.** Completed assistant replies are written to the transcript as
+rendered markdown (Rich `Markdown` renderable into the existing `RichLog`):
+headers, code fences with syntax highlighting, tables, lists. Streaming stays
+plain text (partial-markdown flicker avoided by design); the final reply
+replaces the plain stream. `/markdown on|off` (default on, session-local)
+falls back to today's escaped-plain behavior. Thought summaries/blocks (F1)
+and system/error lines stay plain — markdown applies to assistant reply text
+only.
+
+## F7 — Activity panel: Files / Agents / Workflows (added 2026-08-16, approved in-chat)
+
+**Design.** A toggleable sidebar (`/panel` command + a key binding), hidden by
+default, with three tabs fed by the session's own event stream:
+- **Files**: workspace paths touched this session with R/W/E markers, folded
+  from read/write/edit tool completions. Newest first, deduped per path with
+  merged markers.
+- **Agents**: one row per subagent/mixture dispatch (`dispatch_agent`,
+  `ensemble`, `consult_panel`, `escalate`): label, status
+  (running/done/error), model when known.
+- **Workflows**: two stacked parts. (1) Harness-native: mixture strategy runs
+  grouped with their per-expert rows — always available. (2) agent-swarm:
+  a read-only workflow/phase-state view that EXISTS ONLY when the agent-swarm
+  MCP server is enabled this session (the cleanly-disableable invariant:
+  disabled ⇒ the section is absent, not empty-with-apology). State is
+  fetched via the server's own workflow tools THROUGH the dispatcher (so
+  fetches are evented and permission-gated), on tab open and on an explicit
+  refresh key — never on a timer.
+- Merely opening/toggling the panel causes no event-log writes; the only
+  eventing the panel initiates is the explicit agent-swarm state fetch.
+- Panel toggle must not disturb a running turn.
+
 ## Non-goals (this batch)
 
 Permission modes (auto-accept-edits), mid-session MCP server toggling,
-keep-tail compaction, popup-style completion UI, persisting /thoughts mode.
+keep-tail compaction, popup-style completion UI, persisting /thoughts,
+/markdown, or panel state; streaming markdown (final-reply rendering only);
+agent-swarm workflow CONTROL from the panel (read-only view).
 
 ## Testing philosophy
 

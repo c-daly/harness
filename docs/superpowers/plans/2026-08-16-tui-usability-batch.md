@@ -139,3 +139,38 @@ if item.get("type") == "reasoning" and item.get("text"):
 - [ ] **Step 4: Implement injection** in the submit path before the turn worker starts: parse `@`-tokens, dispatch reads, prepend a context block to the turn's model input (NOT to the persisted user message).
 - [ ] **Step 5: Docs sweep.** user-guide: @-mentions section; README feature bullet list refreshed for the whole batch; verify every new command appears in `/help` and the guide's command table.
 - [ ] **Step 6: Full suite, then commit** `feat(tui): @-file mentions with Tab completion and evented reads`.
+
+### Task 7: Markdown rendering for completed replies
+
+**Files:**
+- Modify: `src/harness/tui.py` (turn-completion transcript write; `/markdown` in command dispatch ~413-427; help text)
+- Test: `tests/test_tui.py`
+
+**Interfaces:**
+- Consumes: the existing turn-completion path that writes the assistant reply into the `RichLog` transcript (locate where `_stream_buffer`/final text lands after `_run_turn`).
+- Produces: `HarnessApp._markdown_mode: bool` (default True, session-local); `_render_reply(text: str) -> RenderableType` — returns `rich.markdown.Markdown` when on, the existing `_plain(...)` Text when off; `/markdown on|off`.
+
+- [ ] **Step 1: Failing tests.** (a) unit: `_render_reply("# hi")` returns a `rich.markdown.Markdown` instance by default and a plain `Text` after `/markdown off`; (b) e2e (make_app + scripted provider replying with a fenced code block + a table): the turn completes without error and the transcript write for the reply used the markdown path (assert via the seam, not pixel output); (c) `/markdown bogus` reports valid args; (d) thought summary lines (Task 2) and error lines still go through `_plain` — assert the seam is applied ONLY to assistant reply text.
+- [ ] **Step 2: Implement.** Factor the reply-write into `_render_reply`; wire `/markdown`; streaming stays plain (`#live` untouched); the completed reply is written rendered. Update `/help`.
+- [ ] **Step 3: Docs.** user-guide: markdown rendering default + `/markdown off` escape hatch; note streaming stays plain by design.
+- [ ] **Step 4: Full suite, then commit** `feat(tui): render completed replies as markdown with /markdown on|off`.
+
+### Task 8: Activity panel — Files / Agents / Workflows
+
+**Files:**
+- Create: `src/harness/tui_panel.py` (panel widget + event-fold helpers — keep tui.py from bloating; one responsibility: the activity panel)
+- Modify: `src/harness/tui.py` (compose/mount the hidden panel, `/panel` command, key binding, help)
+- Test: `tests/test_tui_panel.py` (fold helpers), `tests/test_tui.py` (integration)
+
+**Interfaces:**
+- Consumes: the session event stream the TUI already observes (read how `TelemetrySubscriber` taps events, tui.py:262-266, and use the same mechanism — do NOT invent a second event path); tool-completion events for the native read/write/edit tools and for `dispatch_agent`/`ensemble`/`consult_panel`/`escalate`; `McpHost` server-enabled knowledge (`kernel.mcp`) for the agent-swarm section; the dispatcher for explicit agent-swarm state fetches.
+- Produces: `ActivityPanel` widget (Textual `TabbedContent`, tabs Files/Agents/Workflows); pure fold helpers `fold_files(events) -> list[FileRow]` (path, markers set ⊆ {R,W,E}, newest first, deduped) and `fold_agents(events) -> list[AgentRow]` (call id, label, status running|done|error, model|None, strategy grouping key|None); `/panel` toggle + key binding (choose one not already bound — check existing Bindings — and document it).
+
+- [ ] **Step 1: Failing tests — folds.** Feed synthetic envelopes (build with the real event classes): (a) read+edit of the same path → one row, markers {R,E}; (b) a dispatch_agent proposal without completion → status running; with completion → done; with error outcome → error; (c) ensemble with two experts → rows share a strategy grouping key; (d) event order newest-first respected.
+- [ ] **Step 2: Implement the fold helpers** in tui_panel.py as pure functions over envelopes.
+- [ ] **Step 3: Failing tests — panel behavior.** (a) `/panel` toggles visibility; toggling during a scripted running turn leaves the turn unaffected (turn still completes); (b) after a turn that read a file, the Files tab shows the row; (c) with NO agent-swarm server enabled, the Workflows tab contains the mixture section but NO agent-swarm section (assert absence — the cleanly-disableable invariant); (d) opening the panel writes nothing to the event log (compare event counts before/after toggle).
+- [ ] **Step 4: Implement the panel + /panel + binding.** Hidden by default; refresh tab contents from folds on toggle and turn end.
+- [ ] **Step 5: Failing test — agent-swarm section.** With a fake MCP server registered under the agent-swarm name exposing a `workflow__workflow_get_state`-shaped tool (use the existing fake-MCP idiom from tests/test_tools_allow.py / test_mcp_host.py): opening the Workflows tab and pressing refresh dispatches the fetch THROUGH the dispatcher (event logged, permission-gated) and renders the returned state read-only; when the server is enabled but the fetch fails, the section shows the error without crashing the panel.
+- [ ] **Step 6: Implement the agent-swarm section** behind the server-enabled guard; fetch on tab open + explicit refresh key only (never a timer).
+- [ ] **Step 7: Docs.** user-guide: the panel, its tabs, the toggle, the agent-swarm section's enabled-only presence; README feature bullet.
+- [ ] **Step 8: Full suite, then commit** `feat(tui): activity panel with files, agents, and workflows tabs`.
