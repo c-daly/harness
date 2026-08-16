@@ -8,6 +8,7 @@ call_tool from other tasks is safe (the session multiplexes by request id).
 
 import asyncio
 import contextlib
+import fnmatch
 import json
 from datetime import timedelta
 from typing import Any, Callable
@@ -58,6 +59,10 @@ def _default_transport(spec: McpServerSpec, errlog=None):
             headers=headers, timeout=httpx.Timeout(30.0, read=300.0), follow_redirects=True
         )
     return streamable_http_client(spec.url, http_client=http_client)
+
+
+def _allowed(spec_globs: tuple[str, ...], tool_name: str) -> bool:
+    return not spec_globs or any(fnmatch.fnmatch(tool_name, g) for g in spec_globs)
 
 
 async def _list_all_tools(session: ClientSession) -> list[types.Tool]:
@@ -334,6 +339,8 @@ class McpHost:
             self.connections[conn.spec.name] = conn
             registered = 0
             for tool in conn.tools:
+                if not _allowed(conn.spec.tools_allow, tool.name):
+                    continue
                 adapter = McpTool(conn, tool)
                 name = str(adapter.spec.name)
                 if name in taken:

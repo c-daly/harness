@@ -256,6 +256,23 @@ env-var *names*, dereferenced at launch — so a config file is safe to commit.
 The importer refuses any `.mcp.json` entry that embeds a literal secret and
 tells you which variable to set instead.
 
+**Narrowing tool exposure per server.** A server can register far more tools
+than you want in scope. `tools_allow` is a list of fnmatch globs on the
+server's own tool names (before the `mcp__<server>__` prefix is added);
+tools that match none of the globs are never registered — they do not exist
+in the tool registry at all, so permission rules and the model can never see
+or call them. An empty (or omitted) `tools_allow` exposes every tool the
+server advertises. `default_enabled` controls whether the server starts
+pre-checked in the session-start checklist; set it to `false` for a server
+you want present but dormant until explicitly opted into for a given session.
+
+```toml
+[servers.agent-swarm]
+command = "/home/fearsidhe/.claude/plugins/cache/fearsidhe-plugins/agent-swarm/1.1.0/bin/mcp-router"
+tools_allow = ["workflow__*", "experiment__*", "router__*"]  # its unique families only
+default_enabled = false  # present in the checklist, dormant unless opted in
+```
+
 Skip MCP entirely for a run with `--no-mcp`, or point at one explicit file with
 `--mcp-config PATH`.
 
