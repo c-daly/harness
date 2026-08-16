@@ -101,6 +101,28 @@ The `route` is a [LiteLLM](https://docs.litellm.ai/) model string, so any
 provider LiteLLM supports works: Anthropic, OpenAI-compatible endpoints, local
 servers, and so on. Point at a different catalog with `--catalog PATH`.
 
+### Running local models
+
+To run a local model on your hardware, use `scripts/serve-local.sh` to launch a containerized llama.cpp server with GPU acceleration. The script defaults to **Qwen3.6-35B-A3B** (Mixture of Experts), a 35B-parameter model where only ~3.5B params activate per token — fast and VRAM-efficient on a 12 GB GPU:
+
+```bash
+bash scripts/serve-local.sh   # launches on http://localhost:8080
+```
+
+Then configure your `~/.config/harness/models.toml` to route through it (same `[models.local]` section above, but with `route = "openai/qwen"` and `api_base = "http://localhost:8080/v1"` to match llama.cpp's OpenAI-compatible endpoint).
+
+**Quantization options** for Qwen3.6-35B-A3B (all from `unsloth/Qwen3.6-35B-A3B-GGUF`):
+
+| Quantization | Size | Notes |
+|---|---|---|
+| `UD-IQ4_XS` | 17.7 GB | Default; balanced quality and speed. |
+| `UD-Q4_K_M` | 22.1 GB | Higher quality, slower; use if you have VRAM headroom. |
+| `UD-Q3_K_XL` | 16.8 GB | Tighter fit for 12 GB cards; quality trade-off for speed. |
+
+Set a different model with `HARNESS_LOCAL_MODEL` (e.g., `HARNESS_LOCAL_MODEL=unsloth/Qwen3.6-35B-A3B-GGUF:UD-Q4_K_M bash scripts/serve-local.sh`). The old Qwen3-Coder-30B-A3B is still available the same way: `HARNESS_LOCAL_MODEL=unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF:IQ4_XS`.
+
+**Key point:** The `[models.local]` catalog entry defines the *route* your harness uses to call the server; the actual model running inside is whatever `scripts/serve-local.sh` launched (controlled by `HARNESS_LOCAL_MODEL`). The route name is advisory to llama.cpp — the server responds correctly to any OpenAI-compatible request, regardless of whether you named it `llama3` or `qwen`.
+
 ### Catalog fields
 
 | Field | Meaning |
