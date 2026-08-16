@@ -1174,6 +1174,9 @@ async def test_clear_restarts_previously_enabled_mcp_servers(tmp_path):
         assert "mcp__on-server__add" in names
         result = await app.kernel.registry.get(ToolName("mcp__on-server__add"))({"a": 3, "b": 4})
         assert result == "7"
+        # the errlog is re-pointed at the NEW session's directory, not left
+        # pointing at the (now torn-down) old one
+        assert str(app.kernel.session.id) in app._mcp_errlog.name
     try:
         if app._mcp_errlog is not None:
             app._mcp_errlog.close()
@@ -1295,10 +1298,90 @@ async def test_turn_after_clear_completes_normally(tmp_path):
         await pilot.pause(0.2)
         await pilot.press(*"/clear", "enter")
         await pilot.pause(0.2)
+        new_session_id = app.kernel.session.id
         await pilot.press(*"after", "enter")
         await pilot.pause(0.2)
         lines = "\n".join(str(line) for line in app.query_one(RichLog).lines)
         assert "echo: after" in lines
+        # the post-/clear turn is the ONLY thing in history -- the pre-/clear
+        # "before" turn did not leak across the rebuild
+        assert len(app.kernel.loop.history) == 2  # user + assistant
+        assert app.kernel.session.id == new_session_id
+
+    # and it's not just in-memory: the reply is durably logged under the NEW
+    # session id, not the old one
+    envelopes = read_session(tmp_path, new_session_id)
+    folded = fold(envelopes)
+    texts = [m.text() for m in folded.messages]
+    assert any("echo: after" in t for t in texts)
+    assert not any("before" in t for t in texts)
+
+
+async def test_clear_reemits_tags_into_new_session_log(tmp_path):
+    """_session_driver emits one CustomEvent(namespace="harness", name="tag")
+    per --tag at mount; a /clear rebuild must reproduce that for the new
+    session's log too, not just carry `tags` forward silently in memory."""
+    app = make_app(tmp_path, tags=["exp-a", "exp-b"])
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        await pilot.click("#prompt")
+        await pilot.press(*"/clear", "enter")
+        await pilot.pause(0.2)
+        new_session_id = app.kernel.session.id
+
+    envelopes = read_session(tmp_path, new_session_id)
+    tags_seen = [
+        e.event.data.get("tag")
+        for e in envelopes
+        if e.event.type == "custom" and e.event.namespace == "harness" and e.event.name == "tag"
+    ]
+    assert tags_seen == ["exp-a", "exp-b"]
+
+
+_SPY_SUBSCRIBER_PLUGIN_MANIFEST = (
+    MINIMAL_PLUGIN_MANIFEST + '\n[[subscribers]]\nname = "spy"\nmodule = "hooks.py"\nfunction = "spy"\n'
+)
+_SPY_SUBSCRIBER_SRC = (
+    "received = []\n\n\nasync def spy(envelope):\n    received.append(envelope.event.type)\n"
+)
+
+
+def _make_spy_plugin(tmp_path):
+    """A plugin whose subscriber records every event.type it's pumped.
+    Returns (LoadedPlugins, received_list) -- received is the SAME list
+    object the running subscriber appends to (module-global), so the test
+    can poll it live."""
+    plugin_dir = tmp_path / "spy-plugin"
+    plugin_dir.mkdir(parents=True)
+    (plugin_dir / "plugin.toml").write_text(_SPY_SUBSCRIBER_PLUGIN_MANIFEST)
+    (plugin_dir / "hooks.py").write_text(_SPY_SUBSCRIBER_SRC)
+    loaded = load_plugins([tmp_path])
+    spy = loaded.plugins[0].subscriber_callables["spy"]
+    return loaded, spy.__globals__["received"]
+
+
+async def test_plugin_subscriber_receives_events_after_clear(tmp_path):
+    """_session_driver starts one pump worker per plugin subscriber on the
+    ORIGINAL session's bus; a /clear rebuild swaps in a session with a brand
+    new bus. Unless the rebuild also restarts the subscriber pumps, the
+    subscriber goes deaf the moment /clear runs -- it keeps draining an
+    orphaned queue that will never receive another envelope."""
+    loaded, received = _make_spy_plugin(tmp_path / "plugins")
+    app = make_app(tmp_path, plugins=loaded)  # default EchoProvider
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        await pilot.click("#prompt")
+        await pilot.press(*"hello", "enter")
+        await pilot.pause(0.2)
+        assert len(received) > 0  # baseline: the pump is alive pre-/clear
+
+        await pilot.press(*"/clear", "enter")
+        await pilot.pause(0.2)
+        after_clear_baseline = len(received)
+
+        await pilot.press(*"again", "enter")
+        await pilot.pause(0.2)
+        assert len(received) > after_clear_baseline  # still alive post-/clear
 
 
 # --- /compact ---

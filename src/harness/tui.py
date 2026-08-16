@@ -242,6 +242,10 @@ class HarnessApp(App[None]):
         self._interrupting = False
         self._ended = False
         self._bus_pump_worker = None
+        # One pump worker per plugin subscriber, tied to the CURRENT session's
+        # bus; a kernel rebuild cancels these and starts fresh ones (see
+        # _start_plugin_subscribers) since a new session owns a new bus.
+        self._plugin_pump_workers: list = []
         self._stream_buffer = ""
         # /thoughts mode: session-local, not persisted; not reset per turn.
         self._thought_mode = "collapse"  # "collapse" | "full" | "off"
@@ -374,32 +378,44 @@ class HarnessApp(App[None]):
         # loop.start()/tags/flush, then per-subscriber pumps run as driver workers
         # (Textual cancels the driver group at app exit -- no explicit teardown).
         if kernel.plugins is not None:
-            from harness.plugins import _pump
-
             for warning in kernel.plugin_warnings:
                 self.say("! ", warning)
-            for plugin in kernel.plugins.plugins:
-                kernel.session.append(
-                    CustomEvent(
-                        namespace="plugin",
-                        name="plugin_loaded",
-                        data={"plugin": plugin.name, "version": plugin.version},
-                    )
-                )
-                for sub_def in plugin.subscribers:
-                    fn = plugin.subscriber_callables.get(sub_def.name)
-                    if fn is None:
-                        continue
-                    _sub_queue = kernel.session.bus.subscribe(maxsize=1024)
-                    self.run_worker(
-                        _pump(_sub_queue, fn, sub_def.name, kernel.session),
-                        group="driver",
-                        exit_on_error=False,
-                    )
+            self._start_plugin_subscribers(kernel)
         self._bus_pump_worker = self.run_worker(
             self._bus_pump(_bus_queue), group="driver", exit_on_error=False
         )
         self.set_interval(1.0, self.refresh_stats)
+
+    def _start_plugin_subscribers(self, kernel: Kernel) -> None:
+        """Emit each plugin's plugin_loaded event and start one pump worker
+        per subscriber, wired onto kernel.session.bus. Called at mount AND
+        again after every kernel rebuild (/clear, /resume) -- a rebuilt
+        kernel's session owns a brand-new SubscriberBus that nothing is
+        listening to yet; without this, subscribers go silently deaf the
+        moment the kernel is swapped."""
+        if kernel.plugins is None:
+            return
+        from harness.plugins import _pump
+
+        for plugin in kernel.plugins.plugins:
+            kernel.session.append(
+                CustomEvent(
+                    namespace="plugin",
+                    name="plugin_loaded",
+                    data={"plugin": plugin.name, "version": plugin.version},
+                )
+            )
+            for sub_def in plugin.subscribers:
+                fn = plugin.subscriber_callables.get(sub_def.name)
+                if fn is None:
+                    continue
+                _sub_queue = kernel.session.bus.subscribe(maxsize=1024)
+                worker = self.run_worker(
+                    _pump(_sub_queue, fn, sub_def.name, kernel.session),
+                    group="driver",
+                    exit_on_error=False,
+                )
+                self._plugin_pump_workers.append(worker)
 
     def _render_resumed_history(self) -> None:
         for message in self.kernel.loop.history:
@@ -420,6 +436,12 @@ class HarnessApp(App[None]):
         """
         old_kernel = self.kernel
         old_mcp = old_kernel.mcp
+        # These pumps are tied to the OLD session's bus; cancel them now so
+        # they don't leak as zombie workers forever draining an orphaned
+        # queue. Fresh ones start below, after the new kernel exists.
+        for worker in self._plugin_pump_workers:
+            worker.cancel()
+        self._plugin_pump_workers = []
         try:
             await old_kernel.loop.end()
         except RuntimeError:
@@ -432,6 +454,9 @@ class HarnessApp(App[None]):
             # session, so events from stop() would otherwise be silently lost).
             await old_mcp.stop()
             old_mcp.flush_events()
+            if self._mcp_errlog is not None:
+                self._mcp_errlog.close()
+                self._mcp_errlog = None
         old_kernel.session.close()
 
         # build_kernel's own `mcp=` path constructs a plain McpHost with the
@@ -482,8 +507,14 @@ class HarnessApp(App[None]):
                 session=kernel.session,
                 transport_factory=old_mcp._transport_factory,
             )
-            if self._mcp_errlog is not None:
-                kernel.mcp.errlog = self._mcp_errlog
+            # Re-pointed at the NEW session's directory -- restarted servers'
+            # stderr must not keep landing under the old (torn-down) session.
+            errlog_path = (
+                kernel.session.base / "sessions" / str(kernel.session.id) / "mcp-stderr.log"
+            )
+            errlog_path.parent.mkdir(parents=True, exist_ok=True)
+            self._mcp_errlog = errlog_path.open("a")
+            kernel.mcp.errlog = self._mcp_errlog
             # McpHost buffers lifecycle events (server_started etc.) until
             # flush_events() -- it must not touch session._seq before
             # session.start() below, so flushing is deferred past it (mirrors
@@ -496,8 +527,13 @@ class HarnessApp(App[None]):
         else:
             self._render_resumed_history()
 
+        for tag in kernel.tags:
+            kernel.session.append(CustomEvent(namespace="harness", name="tag", data={"tag": tag}))
+
         if kernel.mcp is not None:
             kernel.mcp.flush_events()
+
+        self._start_plugin_subscribers(kernel)
 
     async def _bus_pump(self, queue) -> None:
         while True:
@@ -594,17 +630,22 @@ class HarnessApp(App[None]):
         """
         kernel = self.kernel
         loop = kernel.loop
-        state = fold(read_session(kernel.session.base, kernel.session.id, repair=True))
-        if not state._msg_seqs:
-            self.say("! ", "nothing to compact")
-            return
-        from_seq, to_seq = state._msg_seqs[0], state._msg_seqs[-1]
-        messages = [
-            Message.system_text(loop.system_prompt),
-            *loop.history,
-            Message.user_text(_COMPACT_INSTRUCTION),
-        ]
         try:
+            # repair=False: this session's own writer holds the lock right
+            # now, so repair (meant for reopening a closed/crashed session)
+            # would refuse anyway (log.py:91-95) -- a torn tail here is a
+            # genuine read failure and belongs in the except below, not a
+            # separate unguarded call that can crash the worker silently.
+            state = fold(read_session(kernel.session.base, kernel.session.id, repair=False))
+            if not state._msg_seqs:
+                self.say("! ", "nothing to compact")
+                return
+            from_seq, to_seq = state._msg_seqs[0], state._msg_seqs[-1]
+            messages = [
+                Message.system_text(loop.system_prompt),
+                *loop.history,
+                Message.user_text(_COMPACT_INSTRUCTION),
+            ]
             # Issued directly against the provider (bypassing the dispatcher)
             # so this admin call does not itself become a message-bearing log
             # event that CompactionApplied's fold would need to also collapse.

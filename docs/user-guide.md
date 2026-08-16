@@ -59,7 +59,9 @@ tool calls, and answer permission prompts inline. Key bindings:
 - `/clear` — end the current session cleanly and start a fresh one: new
   session id, empty history, but the same provider instance, permission
   engine, and resolver wiring the app started with (kernel rebuild-in-place,
-  not a process restart). Refused with a message while a turn is running.
+  not a process restart). Any MCP servers enabled at startup are restarted
+  (fresh connections, same enabled set — the checklist is not re-prompted).
+  Refused with a message while a turn is running.
 - `/compact` — fold the whole transcript into one summary. Issues a single
   completion through the CURRENT model asking for a handoff-quality summary,
   then replaces `loop.history` with that summary as a system message and
