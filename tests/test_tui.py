@@ -1471,6 +1471,36 @@ async def test_statusbar_shows_new_alias_after_model_switch_without_a_turn(tmp_p
         assert "alias-b" in bar
 
 
+async def test_statusbar_survives_malformed_models_toml_mid_session(tmp_path):
+    """parked-4: Catalog.load sat outside the tick's try, and the tick
+    caught only UnknownAliasError -- a mid-session bad models.toml made the
+    1s timer callback raise every second. A malformed file must instead
+    just drop the ctx/cost segments for that refresh; a later valid file
+    (new mtime) must bring them back."""
+    catalog_file = tmp_path / "models.toml"
+    catalog_file.write_text(MODELS_TOML_CONTEXT_TOAST)
+    os.utime(catalog_file, (1000, 1000))
+    app = make_app(tmp_path, catalog_path=catalog_file, model=ModelId("tiny-local"))
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        app._refresh_statusbar()
+        bar = str(app.query_one("#statusbar", Static).content)
+        assert "ctx" in bar and "%" in bar
+
+        catalog_file.write_text("this is [ not valid toml")
+        os.utime(catalog_file, (2000, 2000))
+        app._refresh_statusbar()  # must not raise
+        bar = str(app.query_one("#statusbar", Static).content)
+        assert "ctx" not in bar
+        assert "tiny-local" in bar  # the rest of the bar still renders
+
+        catalog_file.write_text(MODELS_TOML_CONTEXT_TOAST)
+        os.utime(catalog_file, (3000, 3000))
+        app._refresh_statusbar()
+        bar = str(app.query_one("#statusbar", Static).content)
+        assert "ctx" in bar and "%" in bar
+
+
 # --- /clear ---
 
 

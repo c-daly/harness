@@ -477,6 +477,10 @@ class HarnessApp(App[None]):
         # /model switch or kernel rebuild. Reset to None on a kernel rebuild
         # (fresh session, stale counts would otherwise linger until the next tick).
         self._last_rollup: "dict | None" = None
+        # mtime-keyed Catalog cache for the 1s tick's ctx/cost segments
+        # (parked-4): reloaded only when catalog_path's mtime changes, so a
+        # steady-state valid file is parsed once, not on every tick.
+        self._catalog_cache: "tuple[float, object] | None" = None
         self._mcp_errlog = None
         # The checklist selection (or headless default set) from the FIRST mount
         # -- a /clear rebuild restarts exactly these servers, never re-prompting.
@@ -917,16 +921,31 @@ class HarnessApp(App[None]):
         """Resolve the current model against the catalog for the status bar's
         ctx/cost segments. Both None when the model isn't a catalog alias
         (echo mode, or a bare --model run) -- there's no limit or pricing to
-        judge fill or cost against. Mirrors the resolve idiom in
-        _maybe_warn_context / _switch_model."""
-        if self.catalog_path is None or not Path(self.catalog_path).exists():
+        judge fill or cost against -- and ALSO both None on any failure to
+        load or resolve the catalog (parked-4): this runs off the 1s tick
+        (refresh_stats -> _refresh_statusbar), so a mid-session malformed
+        models.toml must drop these segments for the refresh rather than
+        raising once a second. Reload is mtime-keyed: a steady-state valid
+        file is parsed once, not re-parsed every tick. Mirrors the resolve
+        idiom in _maybe_warn_context / _switch_model (those are mount-time/
+        /model-only, narrower UnknownAliasError handling is fine there)."""
+        if self.catalog_path is None:
             return None, None
-        from harness.catalog import Catalog, UnknownAliasError
-
-        catalog = Catalog.load(Path(self.catalog_path))
+        path = Path(self.catalog_path)
         try:
+            mtime = path.stat().st_mtime
+        except OSError:
+            return None, None
+        from harness.catalog import Catalog
+
+        try:
+            if self._catalog_cache is not None and self._catalog_cache[0] == mtime:
+                catalog = self._catalog_cache[1]
+            else:
+                catalog = Catalog.load(path)
+                self._catalog_cache = (mtime, catalog)
             resolved = catalog.resolve(str(self.kernel.loop.model))
-        except UnknownAliasError:
+        except Exception:
             return None, None
 
         ctx_segment = None

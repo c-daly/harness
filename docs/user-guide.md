@@ -142,7 +142,12 @@ the prompt, a persistent status bar tracks the running session at a glance:
   bottom stats line uses.
 
 `/clear` and `/resume` reset it for the new/reopened session (a fresh
-session starts at `tools 0`); it otherwise refreshes at each turn's end.
+session starts at `tools 0`); it otherwise refreshes at each turn's end. A
+resumed session's `tools`/`$` segments stay blank (its live telemetry index
+never captures the session's own start), but `ctx N%` still tracks
+`loop.history` as the conversation grows. `--catalog`'s file is re-read only
+when it changes on disk; if it's briefly malformed, `ctx`/`$` just drop from
+the bar for that refresh instead of the app erroring.
 
 ### Headless (one-shot)
 
