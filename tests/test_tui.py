@@ -282,6 +282,110 @@ async def test_thinking_only_stream_clears_live_tail(tmp_path):
         assert str(app.query_one("#live", Static).content) == ""  # not stuck
 
 
+class ThinkingGatedProvider:
+    """Yields a thought, then parks; yields the answer, then parks again --
+    gives tests a deterministic window to inspect the live view mid-stream."""
+
+    def __init__(self) -> None:
+        self.release_after_thought = asyncio.Event()
+        self.release_after_text = asyncio.Event()
+
+    async def complete(self, *, model, messages, tools=()):
+        yield ThinkingDelta(text="pondering")
+        await self.release_after_thought.wait()
+        yield TextDelta(text="answer")
+        await self.release_after_text.wait()
+        yield UsageReport(usage=Usage())
+        yield StreamStop(stop_reason="end_turn")
+
+
+async def test_thoughts_collapse_mode_is_default(tmp_path):
+    provider = ThinkingGatedProvider()
+    app = make_app(tmp_path, provider=provider, model=ModelId("fake:think"))
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        await pilot.click("#prompt")
+        await pilot.press(*"go", "enter")
+        await pilot.pause(0.1)
+        # while thinking streams in, the live view shows the raw thought text
+        assert "pondering" in str(app.query_one("#live", Static).content)
+        provider.release_after_thought.set()
+        await pilot.pause(0.1)
+        # once the answer starts, collapse mode replaces the thought with a summary
+        live_text = str(app.query_one("#live", Static).content)
+        assert "(thought for" in live_text
+        assert "pondering" not in live_text
+        assert "answer" in live_text
+        provider.release_after_text.set()
+        await pilot.pause(0.2)
+        lines = "\n".join(str(line) for line in app.query_one(RichLog).lines)
+        assert "answer" in lines
+        assert "pondering" not in lines  # raw thought never lands in the transcript
+        assert "pondering" not in app.kernel.loop.history[-1].text()  # (d): history stays clean
+
+
+async def test_thoughts_full_mode_retains_thought_above_answer(tmp_path):
+    provider = ThinkingGatedProvider()
+    app = make_app(tmp_path, provider=provider, model=ModelId("fake:think"))
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        await pilot.click("#prompt")
+        await pilot.press(*"/thoughts full", "enter")
+        await pilot.pause(0.1)
+        await pilot.press(*"go", "enter")
+        await pilot.pause(0.1)
+        assert "pondering" in str(app.query_one("#live", Static).content)
+        provider.release_after_thought.set()
+        await pilot.pause(0.1)
+        # full mode keeps streaming the raw thought alongside the answer -- no collapse
+        live_text = str(app.query_one("#live", Static).content)
+        assert "pondering" in live_text
+        assert "answer" in live_text
+        provider.release_after_text.set()
+        await pilot.pause(0.2)
+        lines_list = [str(line) for line in app.query_one(RichLog).lines]
+        thought_idx = next(i for i, l in enumerate(lines_list) if "pondering" in l)
+        answer_idx = next(
+            i for i, l in enumerate(lines_list) if "answer" in l and "pondering" not in l
+        )
+        assert thought_idx < answer_idx  # thought retained above the answer
+        assert "pondering" not in app.kernel.loop.history[-1].text()  # (d): history stays clean
+
+
+async def test_thoughts_off_mode_keeps_pre_existing_suffix_only(tmp_path):
+    provider = ThinkingGatedProvider()
+    app = make_app(tmp_path, provider=provider, model=ModelId("fake:think"))
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        await pilot.click("#prompt")
+        await pilot.press(*"/thoughts off", "enter")
+        await pilot.pause(0.1)
+        await pilot.press(*"go", "enter")
+        await pilot.pause(0.1)
+        live_text = str(app.query_one("#live", Static).content)
+        assert "pondering" not in live_text
+        assert "(thinking" in live_text  # pre-existing suffix behavior preserved
+        provider.release_after_thought.set()
+        await pilot.pause(0.1)
+        provider.release_after_text.set()
+        await pilot.pause(0.2)
+        lines = "\n".join(str(line) for line in app.query_one(RichLog).lines)
+        assert "pondering" not in lines
+        assert "(thought for" not in lines
+        assert "pondering" not in app.kernel.loop.history[-1].text()  # (d): history stays clean
+
+
+async def test_thoughts_command_rejects_unknown_mode(tmp_path):
+    app = make_app(tmp_path)
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        await pilot.click("#prompt")
+        await pilot.press(*"/thoughts bogus", "enter")
+        await pilot.pause(0.1)
+        lines = "\n".join(str(line) for line in app.query_one(RichLog).lines)
+        assert "collapse" in lines and "full" in lines and "off" in lines
+
+
 async def test_permission_modal_allow_completes_turn(tmp_path):
     engine = PermissionEngine(
         [

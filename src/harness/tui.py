@@ -6,6 +6,7 @@ lifecycle calls that mirror run_once's ordering contract."""
 
 import asyncio
 import json
+import time
 from pathlib import Path
 
 from rich.text import Text
@@ -201,6 +202,7 @@ class HarnessApp(App[None]):
     #prompt { dock: bottom; }
     """
     BINDINGS = [Binding("escape", "interrupt", "Interrupt", priority=True)]
+    _THOUGHT_MODES = ("collapse", "full", "off")
 
     def __init__(
         self, kernel: Kernel, *, catalog_path=None, ask: "AppBoundAsk | None" = None
@@ -212,6 +214,11 @@ class HarnessApp(App[None]):
         self._interrupting = False
         self._ended = False
         self._stream_buffer = ""
+        # /thoughts mode: session-local, not persisted; not reset per turn.
+        self._thought_mode = "collapse"  # "collapse" | "full" | "off"
+        self._thought_buffer = ""
+        self._thought_started: float | None = None
+        self._thought_collapsed = False
         self._stats_conn = None
         self._stats_sub = None
         self._stats_queue = None
@@ -231,24 +238,64 @@ class HarnessApp(App[None]):
         yield Static(id="stats")
         yield HistoryInput(id="prompt", placeholder="prompt (/help for commands)")
 
-    def say(self, prefix: str, text: str) -> None:
+    def say(self, prefix: str, text: str, *, style: str | None = None) -> None:
         line = Text(prefix)
-        line.append(_plain(text))
+        content = _plain(text)
+        if style:
+            content.stylize(style)
+        line.append(content)
         self.query_one("#transcript", RichLog).write(line)
 
     def _clear_live(self) -> None:
         self._stream_buffer = ""
+        self._thought_buffer = ""
+        self._thought_started = None
+        self._thought_collapsed = False
         self.query_one("#live", Static).update("")
+
+    def _render_live(self) -> None:
+        # collapse/full both stream the raw thought above the answer-so-far while
+        # thinking is in progress; collapse stops doing so once it has replaced
+        # the thought with a "(thought for ...)" summary line (see _on_chunk).
+        if (
+            self._thought_mode in ("collapse", "full")
+            and self._thought_buffer
+            and not self._thought_collapsed
+        ):
+            text = f"{self._thought_buffer}\n{self._stream_buffer}"
+        else:
+            text = self._stream_buffer
+        self.query_one("#live", Static).update(_plain(text))
 
     def _on_chunk(self, chunk) -> None:
         match chunk:
             case TextDelta(text=text):
+                if (
+                    self._thought_mode == "collapse"
+                    and self._thought_buffer
+                    and not self._thought_collapsed
+                ):
+                    elapsed = (
+                        int(time.monotonic() - self._thought_started)
+                        if self._thought_started is not None
+                        else 0
+                    )
+                    self._stream_buffer += (
+                        f"(thought for {elapsed}s · {len(self._thought_buffer)} chars)\n"
+                    )
+                    self._thought_collapsed = True
                 self._stream_buffer += text
-                self.query_one("#live", Static).update(_plain(self._stream_buffer))
-            case ThinkingDelta():
-                self.query_one("#live", Static).update(
-                    _plain(self._stream_buffer + " (thinking\u2026)")
-                )
+                self._render_live()
+            case ThinkingDelta(text=text):
+                if self._thought_started is None:
+                    self._thought_started = time.monotonic()
+                self._thought_buffer += text
+                if self._thought_mode == "off":
+                    self.query_one("#live", Static).update(
+                        _plain(self._stream_buffer + " (thinking\u2026)")
+                    )
+                else:
+                    self._render_live()
             case _:
                 pass
 
@@ -406,12 +453,20 @@ class HarnessApp(App[None]):
             self.kernel.loop.repair_turn()  # orphaned user msg is benign;
             self.say("! ", f"turn failed: {exc}")  # unpaired tool calls are not
             return
+        # full mode: the thought stays visible in the transcript, dimmed, above
+        # the answer -- read _thought_buffer BEFORE _clear_live() wipes it.
+        if self._thought_mode == "full" and self._thought_buffer:
+            self.say("", self._thought_buffer, style="dim")
         self._clear_live()
         self.say("", reply)
 
     async def _run_command(self, command: SlashCommand) -> None:
         if command.name == "help":
-            self.say("", "/help  /model [alias]  /tools  /quit  — @/path attaches a file")
+            self.say(
+                "",
+                "/help  /model [alias]  /thoughts [collapse|full|off]  /tools  /quit  "
+                "— @/path attaches a file",
+            )
             if self._plugin_commands:
                 self.say(
                     "",
@@ -427,6 +482,8 @@ class HarnessApp(App[None]):
             # catalog.resolve lazily imports litellm (seconds) -- never block the
             # message handler; the switch applies on the next dispatch anyway
             self.run_worker(self._switch_model(command.arg), group="driver", exit_on_error=False)
+        elif command.name == "thoughts":
+            self._set_thought_mode(command.arg.strip())
         elif command.name in self._plugin_commands:
             body = self._plugin_commands[command.name].body
             prompt = body.replace("$ARGUMENTS", command.arg)
@@ -445,6 +502,18 @@ class HarnessApp(App[None]):
             )
         else:
             self.say("! ", f"unknown command: /{command.name}")
+
+    def _set_thought_mode(self, arg: str) -> None:
+        if not arg:
+            self.say("", f"thought mode: {self._thought_mode} (collapse|full|off)")
+        elif arg in self._THOUGHT_MODES:
+            self._thought_mode = arg
+            self.say("", f"thought mode -> {arg}")
+        else:
+            self.say(
+                "! ",
+                f"unknown thought mode: {arg!r} (valid: {', '.join(self._THOUGHT_MODES)})",
+            )
 
     def _maybe_warn_context(self, resolved) -> None:
         """Toast once when a constrained model's tool-schema footprint eats a

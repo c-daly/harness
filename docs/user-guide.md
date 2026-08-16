@@ -45,6 +45,17 @@ tool calls, and answer permission prompts inline. Key bindings:
 - **Up / Down** — walk your input history.
 - `@path/to/file` — mention a file; the path is expanded into your message.
 - `/help` — list slash commands, including any your plugins add.
+- `/thoughts [collapse|full|off]` — control how a reasoning model's thinking
+  is shown while it streams. `collapse` (the default) streams the live
+  thought, then replaces it with a `(thought for Ns · N chars)` summary once
+  the answer starts -- the raw thought never lands in the transcript or
+  session history. `full` keeps streaming the raw thought alongside the
+  answer and retains it, dimmed, in the transcript above the reply. `off`
+  shows only a `(thinking…)` suffix while thinking is in progress, with no
+  thought text anywhere. Run `/thoughts` with no argument to see the current
+  mode. The mode is session-local and not persisted across restarts. This is
+  what makes a reasoning-heavy local model (e.g. a local Qwen3.6 quant) show
+  visible progress instead of appearing hung during a long thinking phase.
 
 The bottom line shows live token counts and stats for the session.
 
