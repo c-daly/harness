@@ -417,9 +417,12 @@ def _run_main() -> None:
             raise SystemExit(f"--continue: no sessions found under {args.base_dir}")
         resume_session_id = sessions[0].session_id
 
-    from harness.routing import load_routing
+    from harness.routing import RoutingConfigError, load_routing
 
-    routing_rules = load_routing(project_dir=Path.cwd())
+    try:
+        routing_rules = load_routing(project_dir=Path.cwd())
+    except RoutingConfigError as exc:
+        raise SystemExit(f"routing config error: {exc}")
     pricing_for: Callable[[ModelId], dict[str, float]] | None = None
     model_pinned = False
 

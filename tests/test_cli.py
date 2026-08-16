@@ -269,6 +269,21 @@ def test_main_missing_catalog_is_actionable(tmp_path, capsys, monkeypatch):
     assert "--catalog" in str(exc.value)
 
 
+def test_main_broken_routing_toml_is_actionable(tmp_path, monkeypatch):
+    import pytest
+
+    (tmp_path / ".harness").mkdir()
+    (tmp_path / ".harness" / "routing.toml").write_text('[[rules]]\ntags = ["docs"]\n')
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "sys.argv", ["harness", "-p", "x", "--base-dir", str(tmp_path)]
+    )
+    with pytest.raises(SystemExit) as exc:
+        main()
+    assert "routing" in str(exc.value).lower()
+    assert "target" in str(exc.value)
+
+
 def test_allow_flags_become_session_grants(tmp_path):
     from harness.permissions import PermissionEngine, PermissionRule, RuleSet
     from harness.cli import _apply_allow_flags

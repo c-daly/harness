@@ -1,5 +1,7 @@
 """Layer B: context routing as a dispatch hook (explicit pins win)."""
 
+import pytest
+
 from harness.dispatcher import Dispatcher
 from harness.events import ModelCallCompleted
 from harness.hooks import (
@@ -13,6 +15,7 @@ from harness.interaction import HeadlessResolver
 from harness.log import read_session
 from harness.provider import FakeProvider, text_turn
 from harness.routing import (
+    RoutingConfigError,
     RoutingContext,
     RoutingEngine,
     RoutingRule,
@@ -215,6 +218,23 @@ def test_load_routing_layers_project_over_user(tmp_path):
 
 def test_load_routing_absent_returns_none(tmp_path):
     assert load_routing(project_dir=tmp_path, config_home=tmp_path) is None
+
+
+def test_routing_ruleset_load_missing_target_raises_clean_error(tmp_path):
+    path = tmp_path / "routing.toml"
+    path.write_text('[[rules]]\ntags = ["docs"]\n')  # rule missing required "target"
+    with pytest.raises(RoutingConfigError) as exc:
+        RoutingRuleSet.load(path)
+    assert str(path) in str(exc.value)
+    assert "target" in str(exc.value)
+
+
+def test_routing_ruleset_load_malformed_toml_raises_clean_error(tmp_path):
+    path = tmp_path / "routing.toml"
+    path.write_text("this is not [ valid toml")
+    with pytest.raises(RoutingConfigError) as exc:
+        RoutingRuleSet.load(path)
+    assert str(path) in str(exc.value)
 
 
 # --- build_kernel wiring: the signals closure reads the live turn prompt ---

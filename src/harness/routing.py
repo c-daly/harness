@@ -31,6 +31,12 @@ from harness.hooks import (
 from harness.types import ModelId
 
 
+class RoutingConfigError(Exception):
+    """A routing.toml is malformed or a rule is missing a required key.
+    Raised instead of letting tomllib.TOMLDecodeError or a raw KeyError
+    crash the CLI/TUI with a traceback."""
+
+
 @dataclass(frozen=True)
 class RoutingContext:
     """The per-turn signals a rule matches against. Cheap to compute; gathered
@@ -74,17 +80,23 @@ class RoutingRuleSet:
 
     @classmethod
     def load(cls, path: Path) -> "RoutingRuleSet":
-        with open(path, "rb") as fh:
-            data = tomllib.load(fh)
-        rules = [
-            RoutingRule(
-                target=r["target"],
-                tags=tuple(r.get("tags", ())),
-                path_globs=tuple(r.get("path_globs", ())),
-                prompt_contains=r.get("prompt_contains"),
-            )
-            for r in data.get("rules", [])
-        ]
+        try:
+            with open(path, "rb") as fh:
+                data = tomllib.load(fh)
+        except tomllib.TOMLDecodeError as exc:
+            raise RoutingConfigError(f"{path}: invalid TOML: {exc}") from exc
+        try:
+            rules = [
+                RoutingRule(
+                    target=r["target"],
+                    tags=tuple(r.get("tags", ())),
+                    path_globs=tuple(r.get("path_globs", ())),
+                    prompt_contains=r.get("prompt_contains"),
+                )
+                for r in data.get("rules", [])
+            ]
+        except KeyError as exc:
+            raise RoutingConfigError(f"{path}: rule missing required key {exc}") from exc
         return cls(
             rules=rules,
             default=data.get("default"),
