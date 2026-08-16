@@ -6,6 +6,7 @@ import asyncio
 import json
 import os
 import stat
+import tempfile
 
 import pytest
 
@@ -319,3 +320,43 @@ async def test_contextvar_dispatch_overrides_bound_dispatcher(tmp_path, monkeypa
         current_dispatch_tool.reset(token)
 
     assert captured["dispatch"] is recorder_b
+
+
+async def test_scratch_setup_failure_still_stops_started_server(tmp_path, monkeypatch):
+    """Critical fix: if scratch-dir setup (tempfile.mkdtemp, e.g. under
+    ENOSPC) raises after the McpToolServer has already been started, the
+    server must still be stopped rather than leaking a bound port for the
+    process lifetime."""
+    events = []
+
+    class _FakeMcpToolServer:
+        def __init__(self, *, specs, dispatch):
+            pass
+
+        @property
+        def url(self):
+            return "http://127.0.0.1:0/mcp"
+
+        async def start(self):
+            events.append("start")
+
+        async def stop(self):
+            events.append("stop")
+
+    monkeypatch.setattr("harness.provider_codex.McpToolServer", _FakeMcpToolServer)
+
+    def _boom(*args, **kwargs):
+        raise OSError("ENOSPC: no space left on device")
+
+    monkeypatch.setattr(tempfile, "mkdtemp", _boom)
+
+    provider = _provider(_fake_codex(tmp_path, HAPPY))
+    with pytest.raises(OSError, match="ENOSPC"):
+        await collect(
+            provider.complete(model=ModelId("codex/default"), messages=USER, tools=())
+        )
+
+    # The turn never even reached the point of touching disk beyond the
+    # server: the failure must not hang or get swallowed, and the server
+    # that was already started must still be torn down.
+    assert events == ["start", "stop"]
