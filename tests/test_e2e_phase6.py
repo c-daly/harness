@@ -45,6 +45,8 @@ async def test_tui_session_over_real_mcp_server(tmp_path):
     app = HarnessApp(kernel)
     try:
         async with app.run_test() as pilot:
+            await pilot.pause(0.5)  # checklist mounts
+            await pilot.press("enter")  # accept defaults -- default_enabled=True
             await pilot.pause(0.5)  # mcp start + session driver
             await pilot.click("#prompt")
             await pilot.press(*"add the numbers", "enter")
@@ -107,6 +109,8 @@ async def test_tui_permission_modal_over_mcp_tool(tmp_path):
     )
     try:
         async with app.run_test() as pilot:
+            await pilot.pause(0.5)  # checklist mounts
+            await pilot.press("enter")  # accept defaults -- default_enabled=True
             await pilot.pause(0.5)  # mcp start
             await pilot.click("#prompt")
             await pilot.press(*"run it", "enter")

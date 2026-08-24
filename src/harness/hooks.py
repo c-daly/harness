@@ -21,6 +21,7 @@ class ProposedToolCall:
 class ProposedModelCall:
     call_id: CallId
     model: ModelId
+    pinned: bool = False  # explicit model choice -> routing-exempt (see routing.py)
 
 
 ProposedAction = ProposedToolCall | ProposedModelCall

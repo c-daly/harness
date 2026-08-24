@@ -19,7 +19,19 @@ _NAME_RE = re.compile(r"[A-Za-z0-9_-]+")
 _ENV_VAR_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _RESTARTS = ("never", "on_failure")
 _KNOWN_KEYS = frozenset(
-    {"transport", "command", "args", "cwd", "url", "env", "headers", "restart", "tool_timeout_s"}
+    {
+        "transport",
+        "command",
+        "args",
+        "cwd",
+        "url",
+        "env",
+        "headers",
+        "restart",
+        "tool_timeout_s",
+        "tools_allow",
+        "default_enabled",
+    }
 )
 
 
@@ -41,6 +53,8 @@ class McpServerSpec:
     headers: dict[str, str] = field(default_factory=dict)
     restart: Literal["never", "on_failure"] = "on_failure"
     tool_timeout_s: float = 60.0
+    tools_allow: tuple[str, ...] = ()  # fnmatch globs on server tool names; empty = all
+    default_enabled: bool = True  # pre-checked in the session-start checklist
     source: str = "user"  # "user" | "project" | "adhoc" — attribution, not behavior
 
 
@@ -104,6 +118,12 @@ def _parse_server(name: str, body: dict, *, source: str) -> McpServerSpec:
     args = body.get("args", [])
     if not isinstance(args, list) or not all(isinstance(a, str) for a in args):
         raise McpConfigError(f"server {name!r}: args must be an array of strings")
+    tools_allow = body.get("tools_allow", [])
+    if not isinstance(tools_allow, list) or not all(isinstance(t, str) for t in tools_allow):
+        raise McpConfigError(f"server {name!r}: tools_allow must be an array of strings")
+    default_enabled = body.get("default_enabled", True)
+    if not isinstance(default_enabled, bool):
+        raise McpConfigError(f"server {name!r}: default_enabled must be a boolean")
     return McpServerSpec(
         name=name,
         transport=transport,
@@ -115,6 +135,8 @@ def _parse_server(name: str, body: dict, *, source: str) -> McpServerSpec:
         headers=_refs(body.get("headers", {}), where=f"servers.{name}.headers"),
         restart=restart,
         tool_timeout_s=float(timeout),
+        tools_allow=tuple(tools_allow),
+        default_enabled=default_enabled,
         source=source,
     )
 
@@ -191,6 +213,11 @@ def emit_mcp_toml(specs: tuple) -> str:
             lines.append(f"restart = {_toml_str(spec.restart)}")
         if spec.tool_timeout_s != 60.0:
             lines.append(f"tool_timeout_s = {spec.tool_timeout_s}")
+        if spec.tools_allow:
+            joined = ", ".join(_toml_str(g) for g in spec.tools_allow)
+            lines.append(f"tools_allow = [{joined}]")
+        if not spec.default_enabled:
+            lines.append("default_enabled = false")
         for table, refs in (("env", spec.env), ("headers", spec.headers)):
             if refs:
                 lines.append(f"[servers.{spec.name}.{table}]")

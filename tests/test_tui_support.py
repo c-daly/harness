@@ -1,4 +1,4 @@
-"""Pure TUI logic: history ring, slash parsing, @file expansion, TuiResolver."""
+"""Pure TUI logic: history ring, slash parsing, TuiResolver."""
 
 from harness.hooks import ProposedModelCall, ProposedToolCall
 from harness.interaction import PermissionRequest
@@ -6,7 +6,6 @@ from harness.tui_support import (
     HistoryRing,
     SlashCommand,
     TuiResolver,
-    expand_file_mentions,
     grant_pattern,
     parse_slash_command,
 )
@@ -52,33 +51,6 @@ def test_parse_slash_command():
         name="model", arg="spaced  arg"
     )
     assert parse_slash_command("/") is None  # bare slash is just text
-
-
-def test_expand_file_mentions_inlines_files(tmp_path):
-    f = tmp_path / "notes.txt"
-    f.write_text("alpha\nbeta\n")
-    text, attached, errors = expand_file_mentions(f"summarize @{f}", max_bytes=1024)
-    assert errors == []
-    assert attached == [str(f)]
-    assert "alpha\nbeta" in text
-    assert text.startswith("summarize")  # prompt kept; blocks appended
-    assert "```" in text  # fenced
-
-
-def test_expand_file_mentions_missing_and_oversize(tmp_path):
-    big = tmp_path / "big.bin"
-    big.write_bytes(b"x" * 2048)
-    missing = tmp_path / "nope.txt"
-    text, attached, errors = expand_file_mentions(f"@{missing} and @{big}", max_bytes=1024)
-    assert attached == []
-    assert len(errors) == 2
-    assert any("nope.txt" in e for e in errors)
-    assert any("big.bin" in e and "1024" in e for e in errors)
-
-
-def test_expand_file_mentions_no_mentions_passthrough():
-    text, attached, errors = expand_file_mentions("plain prompt", max_bytes=1024)
-    assert (text, attached, errors) == ("plain prompt", [], [])
 
 
 def test_grant_pattern_for_tool_and_model():
@@ -134,24 +106,6 @@ async def test_tui_resolver_always_without_engine_is_plain_allow():
         reason="ask",
     )
     assert await resolver.resolve(req) is True
-
-
-def test_expand_file_mentions_ignores_emails_and_handles():
-    text, attached, errors = expand_file_mentions("email bob@example.com and ping @alice")
-    assert (text, attached, errors) == ("email bob@example.com and ping @alice", [], [])
-
-
-def test_expand_file_mentions_strips_trailing_punctuation(tmp_path):
-    f = tmp_path / "notes.txt"
-    f.write_text("content")
-    text, attached, errors = expand_file_mentions(f"see @{f}.", max_bytes=1024)
-    assert errors == []
-    assert attached == [str(f)]
-
-
-def test_expand_file_mentions_directory_is_named_as_such(tmp_path):
-    _, _, errors = expand_file_mentions(f"look at @{tmp_path}")
-    assert any("is a directory" in e for e in errors)
 
 
 async def test_always_on_empty_command_bash_grants_session_only_allow_all(tmp_path):

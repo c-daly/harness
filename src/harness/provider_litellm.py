@@ -5,9 +5,11 @@ litellm except through catalog (cost map) and this module.
 """
 
 import json
+import os
 from dataclasses import dataclass
-from typing import Any, AsyncIterator, Sequence
+from typing import TYPE_CHECKING, Any, AsyncIterator, Sequence
 
+from harness.catalog import Catalog, UnknownAliasError
 from harness.errors import (
     AuthFailed,
     ContextOverflow,
@@ -36,6 +38,10 @@ from harness.provider import (
 )
 from harness.tools import ToolSpec
 from harness.types import CallId, ModelId, ToolName
+
+if TYPE_CHECKING:
+    from harness.provider_claude_code import ClaudeCodeProvider
+    from harness.provider_codex import CodexProvider
 
 _FINISH_REASON = {"stop": "end_turn", "tool_calls": "tool_use", "length": "max_tokens"}
 
@@ -199,6 +205,42 @@ def _normalize_chunk(chunk: Any) -> list[Chunk]:
     return out
 
 
+async def _acomplete(
+    *,
+    model: ModelId,
+    messages: Sequence[Message],
+    tools: Sequence[ToolSpec] = (),
+    api_base: str | None = None,
+    api_key: str | None = None,
+) -> AsyncIterator[Chunk]:
+    """The shared litellm streaming core. Endpoint + key are per-call locals so
+    a single provider instance is safe under concurrent (asyncio.gather) calls."""
+    import litellm
+
+    _quiet(litellm)
+    kwargs: dict[str, Any] = {
+        "model": str(model),
+        "messages": _messages_to_openai(messages),
+        "stream": True,
+        "stream_options": {"include_usage": True},
+    }
+    if tools:
+        kwargs["tools"] = _tools_to_openai(tools)
+    if api_base:
+        kwargs["api_base"] = api_base
+    if api_key:
+        kwargs["api_key"] = api_key
+    try:
+        stream = await litellm.acompletion(**kwargs)
+        async for raw in stream:
+            for chunk in _normalize_chunk(raw):
+                yield chunk
+    except ProviderError:
+        raise
+    except Exception as exc:
+        raise map_exception(exc) from exc
+
+
 @dataclass
 class LiteLLMProvider:
     api_base: str | None = None
@@ -211,25 +253,75 @@ class LiteLLMProvider:
         messages: Sequence[Message],
         tools: Sequence[ToolSpec] = (),
     ) -> AsyncIterator[Chunk]:
-        import litellm
+        async for chunk in _acomplete(
+            model=model, messages=messages, tools=tools, api_base=self.api_base
+        ):
+            yield chunk
 
-        _quiet(litellm)
-        kwargs: dict[str, Any] = {
-            "model": str(model),
-            "messages": _messages_to_openai(messages),
-            "stream": True,
-            "stream_options": {"include_usage": True},
-        }
-        if tools:
-            kwargs["tools"] = _tools_to_openai(tools)
-        if self.api_base:
-            kwargs["api_base"] = self.api_base
+
+@dataclass
+class CatalogProvider:
+    """Resolves endpoint + key per call from the model string via the catalog,
+    so any catalog model is reachable in one session. The model string is an
+    ALIAS; an unknown alias falls back to a literal route on ambient env.
+    Entries with backend="claude-code" or backend="codex" route to the
+    matching subscription-CLI provider."""
+
+    catalog: "Catalog"
+    claude_code: "ClaudeCodeProvider | None" = None
+    codex: "CodexProvider | None" = None
+
+    def bind_dispatcher(self, dispatcher) -> None:
+        if self.claude_code is not None:
+            self.claude_code.bind_dispatcher(dispatcher)
+        if self.codex is not None:
+            self.codex.bind_dispatcher(dispatcher)
+
+    async def complete(
+        self,
+        *,
+        model: ModelId,
+        messages: Sequence[Message],
+        tools: Sequence[ToolSpec] = (),
+    ) -> AsyncIterator[Chunk]:
         try:
-            stream = await litellm.acompletion(**kwargs)
-            async for raw in stream:
-                for chunk in _normalize_chunk(raw):
-                    yield chunk
-        except ProviderError:
-            raise
-        except Exception as exc:
-            raise map_exception(exc) from exc
+            resolved = self.catalog.resolve(str(model))
+        except UnknownAliasError:
+            # not a catalog alias: treat the string as a literal route on ambient env
+            async for chunk in _acomplete(model=model, messages=messages, tools=tools):
+                yield chunk
+            return
+        if resolved.backend == "claude-code":
+            if self.claude_code is None:
+                raise ProviderError(
+                    f"model {model!r} needs the claude-code backend, which is not wired"
+                )
+            async for chunk in self.claude_code.complete(
+                model=resolved.route, messages=messages, tools=tools
+            ):
+                yield chunk
+            return
+        if resolved.backend == "codex":
+            if self.codex is None:
+                raise ProviderError(
+                    f"model {model!r} needs the codex backend, which is not wired"
+                )
+            async for chunk in self.codex.complete(
+                model=resolved.route, messages=messages, tools=tools
+            ):
+                yield chunk
+            return
+        api_key = os.environ.get(resolved.api_key_env) if resolved.api_key_env else None
+        if resolved.api_base and api_key is None:
+            # litellm openai/* routes refuse to run without SOME api_key, even
+            # against a local api_base; local servers ignore the value. Local
+            # endpoints must not require an unrelated real credential.
+            api_key = "local-no-key"
+        async for chunk in _acomplete(
+            model=resolved.route,
+            messages=messages,
+            tools=tools,
+            api_base=resolved.api_base,
+            api_key=api_key,
+        ):
+            yield chunk

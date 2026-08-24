@@ -10,9 +10,10 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, ValidationError, field_validator, model_validator
 
 _NAME_RE = re.compile(r"[A-Za-z0-9_-]+")
+_VALID_STRATEGIES = frozenset({"ensemble", "panel", "draft_refine", "escalate"})
 
 
 class FrontmatterError(Exception):
@@ -63,6 +64,11 @@ class CommandDef(_Def):
 class AgentDef(_Def):
     tools: tuple[str, ...] | None = None  # None = all tools
     model: str | None = None
+    # Mixture-of-Models coordination def: when `strategy` is set the agent fans
+    # out to `experts` (positional aliases) via mixture.run_strategy instead of
+    # running a single child loop.
+    strategy: str | None = None  # ensemble | panel | draft_refine | escalate
+    experts: tuple[str, ...] | None = None
 
     @field_validator("tools", mode="before")
     @classmethod
@@ -70,6 +76,20 @@ class AgentDef(_Def):
         if isinstance(value, str):
             return (value,)  # a bare scalar means a one-tool list
         return value
+
+    @model_validator(mode="after")
+    def _strategy_requires_valid_name_and_experts(self) -> "AgentDef":
+        if self.strategy is None:
+            return self
+        if self.strategy not in _VALID_STRATEGIES:
+            raise ValueError(
+                f"strategy {self.strategy!r} must be one of {sorted(_VALID_STRATEGIES)}"
+            )
+        if not self.experts:
+            raise ValueError(
+                f"strategy {self.strategy!r} requires a non-empty 'experts' list"
+            )
+        return self
 
 
 def _load(path: Path, model: type[_Def]):

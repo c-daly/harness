@@ -18,10 +18,18 @@ class UnknownAliasError(Exception):
     pass
 
 
+class UnknownBackendError(Exception):
+    pass
+
+
+KNOWN_BACKENDS: frozenset[str] = frozenset({"claude-code", "codex"})
+
+
 @dataclass(frozen=True)
 class ResolvedModel:
     alias: str
     route: ModelId
+    backend: str | None
     tags: tuple[str, ...]
     api_key_env: str | None
     api_base: str | None
@@ -56,10 +64,16 @@ class Catalog:
         except KeyError:
             raise UnknownAliasError(alias) from None
         route = entry["route"]
+        backend = entry.get("backend")
+        if backend is not None and backend not in KNOWN_BACKENDS:
+            raise UnknownBackendError(
+                f"model {alias!r}: unknown backend {backend!r}; known: {sorted(KNOWN_BACKENDS)}"
+            )
         cost_info = _cost_map_lookup(route)
         return ResolvedModel(
             alias=alias,
             route=ModelId(route),
+            backend=backend,
             tags=tuple(entry.get("tags", ())),
             api_key_env=entry.get("api_key_env"),
             api_base=entry.get("api_base"),

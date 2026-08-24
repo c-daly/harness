@@ -4,31 +4,14 @@ TuiResolver is the decision-provider half of the TUI: the dispatcher awaits
 resolve() while a turn is suspended; the injected ask-callable renders the
 prompt (a Textual modal in production, a stub in tests)."""
 
-import re
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Awaitable, Callable
 
 from harness.hooks import ProposedModelCall, ProposedToolCall
 from harness.interaction import PermissionRequest
 from harness.permissions import PermissionEngine
 
-_MENTION_RE = re.compile(r"@(\S+)")
-_TRAILING_PUNCT = ".,!?;:'\")}]"
-
 Answer = str
-
-
-def _mention_paths(text: str) -> list[str]:
-    """@-tokens that look like paths: must start with /, ~/, ./ or ../
-    (bare @words - emails, handles - are plain text), trailing sentence
-    punctuation stripped."""
-    out = []
-    for raw in _MENTION_RE.findall(text):
-        candidate = raw.rstrip(_TRAILING_PUNCT)
-        if candidate.startswith(("/", "~/", "./", "../")):
-            out.append(candidate)
-    return out
 
 
 class HistoryRing:
@@ -78,42 +61,6 @@ def parse_slash_command(text: str) -> SlashCommand | None:
     if not name:
         return None
     return SlashCommand(name=name, arg=arg.strip())
-
-
-def expand_file_mentions(
-    text: str, *, max_bytes: int = 32 * 1024
-) -> tuple[str, list[str], list[str]]:
-    """Expand @<path> mentions into fenced blocks appended to the prompt.
-
-    Returns (expanded_text, attached_paths, errors). Any error means the
-    caller should NOT send the prompt (errors name the offending path). Bare
-    @words are plain text by design; binary files attach as replacement-
-    character text (the size cap bounds it)."""
-    attached: list[str] = []
-    errors: list[str] = []
-    blocks: list[str] = []
-    for raw in _mention_paths(text):
-        path = Path(raw).expanduser()
-        if path.is_dir():
-            errors.append(f"@{raw}: is a directory, not a file")
-            continue
-        if not path.is_file():
-            errors.append(f"@{raw}: no such file")
-            continue
-        size = path.stat().st_size
-        if size > max_bytes:
-            errors.append(f"@{raw}: {size} bytes exceeds the {max_bytes} byte cap")
-            continue
-        try:
-            content = path.read_text(errors="replace")
-        except OSError as exc:
-            errors.append(f"@{raw}: {exc}")
-            continue
-        attached.append(str(path))
-        blocks.append(f"\n\n[attached {path}, {size} bytes]\n```\n{content}\n```")
-    if errors:
-        return text, [], errors
-    return text + "".join(blocks), attached, []
 
 
 def grant_pattern(request: PermissionRequest) -> tuple[str, dict[str, str]]:

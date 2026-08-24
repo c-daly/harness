@@ -111,3 +111,31 @@ def test_load_agent_scalar_tools_coerces(tmp_path):
     path = tmp_path / "a.md"
     path.write_text("---\nname: a\ndescription: d\ntools: invoke_skill\n---\nbody")
     assert load_agent(path).tools == ("invoke_skill",)
+
+
+def test_load_agent_bad_strategy_name_rejected(tmp_path):
+    path = tmp_path / "bad.md"
+    path.write_text(
+        "---\nname: bad\ndescription: d\nstrategy: typo\nexperts:\n  - a\n---\nbody"
+    )
+    with pytest.raises(FrontmatterError) as exc:
+        load_agent(path)
+    assert "strategy" in str(exc.value)
+
+
+def test_load_agent_strategy_without_experts_rejected(tmp_path):
+    path = tmp_path / "bad.md"
+    path.write_text("---\nname: bad\ndescription: d\nstrategy: ensemble\n---\nbody")
+    with pytest.raises(FrontmatterError) as exc:
+        load_agent(path)
+    assert "experts" in str(exc.value)
+
+
+def test_load_agent_valid_strategy_and_experts_loads(tmp_path):
+    path = tmp_path / "coord.md"
+    path.write_text(
+        "---\nname: coord\ndescription: d\nstrategy: panel\nexperts:\n  - a\n  - b\n---\nbody"
+    )
+    agent = load_agent(path)
+    assert agent.strategy == "panel"
+    assert agent.experts == ("a", "b")

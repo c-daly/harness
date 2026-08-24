@@ -47,6 +47,19 @@ def test_session_lifecycle_rows(tmp_path):
     assert row == (1.0, 20.0, 1)  # last SessionEnded wins; one resume counted
 
 
+def test_session_resumed_inserts_row_when_absent(tmp_path):
+    """I-2: a live/in-memory store (the TUI's stats queue) may see
+    SessionResumed without ever having seen this session's SessionStarted --
+    it must not silently no-op (an UPDATE against an absent row touches
+    nothing), or run_rollup KeyErrors on it forever."""
+    conn = _store(tmp_path)
+    index_envelopes(conn, [_env(1, SessionResumed())])
+    row = conn.execute(
+        "SELECT session_id, resumed_count FROM sessions WHERE session_id = ?", (str(S),)
+    ).fetchone()
+    assert row == (str(S), 1)
+
+
 def test_model_call_cost_computed_from_stamped_pricing(tmp_path):
     conn = _store(tmp_path)
     pricing = {"input_cost_per_token": 2e-6, "output_cost_per_token": 4e-6}

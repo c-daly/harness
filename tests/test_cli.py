@@ -82,6 +82,87 @@ async def test_resume_flag_continues_session(tmp_path):
     assert seqs == sorted(seqs) and len(set(seqs)) == len(seqs)
 
 
+def test_continue_flag_resolves_to_newest_session_id(tmp_path, monkeypatch, capsys):
+    import os
+
+    import harness.cli as cli_mod
+
+    monkeypatch.setattr(cli_mod, "default_engine", lambda project_dir=None: None)
+    monkeypatch.setattr("sys.argv", ["harness", "-p", "first", "--base-dir", str(tmp_path)])
+    cli_mod.main()
+    capsys.readouterr()
+    first_sid = next((tmp_path / "sessions").glob("*.jsonl")).stem
+    # force distinct, deterministic mtimes -- two runs on a fast machine can
+    # otherwise land in the same second and make "newest" ambiguous
+    os.utime(tmp_path / "sessions" / f"{first_sid}.jsonl", (1_000_000, 1_000_000))
+
+    monkeypatch.setattr("sys.argv", ["harness", "-p", "second", "--base-dir", str(tmp_path)])
+    cli_mod.main()
+    capsys.readouterr()
+    all_sids = {p.stem for p in (tmp_path / "sessions").glob("*.jsonl")}
+    second_sid = (all_sids - {first_sid}).pop()
+    os.utime(tmp_path / "sessions" / f"{second_sid}.jsonl", (2_000_000, 2_000_000))
+
+    captured: dict = {}
+    real_build_kernel = cli_mod.build_kernel
+
+    def spy_build_kernel(**kwargs):
+        captured["resume_session_id"] = kwargs.get("resume_session_id")
+        return real_build_kernel(**kwargs)
+
+    monkeypatch.setattr(cli_mod, "build_kernel", spy_build_kernel)
+    monkeypatch.setattr(
+        "sys.argv", ["harness", "--continue", "-p", "third", "--base-dir", str(tmp_path)]
+    )
+    cli_mod.main()
+    assert captured["resume_session_id"] == second_sid
+
+
+def test_continue_flag_with_no_sessions_raises_clear_system_exit(tmp_path, monkeypatch):
+    import pytest
+    import harness.cli as cli_mod
+
+    monkeypatch.setattr(cli_mod, "default_engine", lambda project_dir=None: None)
+    monkeypatch.setattr(
+        "sys.argv", ["harness", "--continue", "-p", "hi", "--base-dir", str(tmp_path)]
+    )
+    with pytest.raises(SystemExit) as exc:
+        cli_mod.main()
+    assert "no sessions" in str(exc.value).lower()
+
+
+def test_continue_and_resume_together_is_argparse_error(tmp_path, monkeypatch, capsys):
+    import pytest
+    import harness.cli as cli_mod
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "harness",
+            "--continue",
+            "--resume",
+            "abc123",
+            "-p",
+            "hi",
+            "--base-dir",
+            str(tmp_path),
+        ],
+    )
+    with pytest.raises(SystemExit) as exc:
+        cli_mod.main()
+    assert exc.value.code == 2  # argparse's own mutually-exclusive-group usage error
+    # An "unrecognized arguments: --continue" error is ALSO exit code 2, so
+    # that alone can't tell a real mutex conflict apart from --continue not
+    # being implemented at all -- pin the actual argparse mutex message.
+    err = capsys.readouterr().err
+    assert "not allowed with argument --continue" in err
+    assert "unrecognized arguments" not in err
+    # test_continue_flag_with_no_sessions_raises_clear_system_exit (above)
+    # already proves --continue alone parses fine and reaches resolution --
+    # together these two rule out "argparse just doesn't know --continue"
+    # as the reason this test passes.
+
+
 async def test_permission_engine_denies_through_kernel(tmp_path):
     from harness.events import HookDecided
     from harness.log import read_session
@@ -186,6 +267,21 @@ def test_main_missing_catalog_is_actionable(tmp_path, capsys, monkeypatch):
         main()
     assert "catalog not found" in str(exc.value)
     assert "--catalog" in str(exc.value)
+
+
+def test_main_broken_routing_toml_is_actionable(tmp_path, monkeypatch):
+    import pytest
+
+    (tmp_path / ".harness").mkdir()
+    (tmp_path / ".harness" / "routing.toml").write_text('[[rules]]\ntags = ["docs"]\n')
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "sys.argv", ["harness", "-p", "x", "--base-dir", str(tmp_path)]
+    )
+    with pytest.raises(SystemExit) as exc:
+        main()
+    assert "routing" in str(exc.value).lower()
+    assert "target" in str(exc.value)
 
 
 def test_allow_flags_become_session_grants(tmp_path):
@@ -505,10 +601,16 @@ def test_mcp_import_writes_scope_file_and_warns(tmp_path, capsys):
 def test_no_prompt_routes_to_tui(tmp_path, monkeypatch):
     launched: dict = {}
 
-    async def fake_run_tui(kernel, *, catalog_path=None, ask=None):
+    async def fake_run_tui(
+        kernel, *, catalog_path=None, ask=None, native_tools=False, workspace_root=None,
+        routing_rules=None,
+    ):
         launched["kernel"] = kernel
         launched["catalog_path"] = catalog_path
         launched["ask"] = ask
+        launched["native_tools"] = native_tools
+        launched["workspace_root"] = workspace_root
+        launched["routing_rules"] = routing_rules
 
     monkeypatch.setattr("harness.tui.run_tui", fake_run_tui)
     run_cli("--base-dir", str(tmp_path))  # no -p
@@ -516,6 +618,9 @@ def test_no_prompt_routes_to_tui(tmp_path, monkeypatch):
     assert kernel.loop.dispatcher.resolver.name == "tui"
     assert type(kernel.provider).__name__ == "EchoProvider"
     assert launched["ask"] is not None  # AppBoundAsk threaded through
+    # threaded through so a /clear kernel rebuild can reproduce the same
+    # build_kernel(native_tools=..., workspace_root=..., routing_rules=...) call
+    assert launched["native_tools"] is True
     kernel.session.close()  # fake_run_tui skipped teardown
 
 

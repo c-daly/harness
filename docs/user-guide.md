@@ -43,10 +43,115 @@ tool calls, and answer permission prompts inline. Key bindings:
 - **Esc** — interrupt the turn in flight (the model stops, in-flight tool
   calls are cancelled cleanly, and you get the prompt back).
 - **Up / Down** — walk your input history.
-- `@path/to/file` — mention a file; the path is expanded into your message.
+- **Tab** — with an `@token` under the cursor, complete it against workspace
+  files (repeated Tab cycles through matches); otherwise Tab behaves as
+  normal (moves focus).
+- **F2** — toggle the activity panel (same as `/panel`; see below).
+- `@path/to/file` — mention a file. Tab-complete it (see above), or just
+  type it out; a bare relative path like `@alpha.py` works, no `./` needed.
+  The mention itself is read through the same dispatcher path — and the
+  same permission gate — a model-issued `read_file` call takes, so it shows
+  up in the event log and an `ask`/`deny` rule on `read_file` applies to it
+  too. The file's content is handed to the model as extra context for that
+  turn only; what gets logged as *your* message, and what a later turn or
+  `/resume` sees, is always the literal text you typed, `@token` included.
+  A path that doesn't resolve to a real file is left as plain text, silently
+  — no error, nothing sent. A file over 16 KiB is truncated (with a note)
+  before it's attached; use offset/limit on `read_file` yourself (or ask
+  the model to) for more.
 - `/help` — list slash commands, including any your plugins add.
+- `/thoughts [collapse|full|off]` — control how a reasoning model's thinking
+  is shown while it streams. `collapse` (the default) streams the live
+  thought, then replaces it with a `(thought for Ns · N chars)` summary once
+  the answer starts -- the raw thought never lands in the transcript or
+  session history. `full` keeps streaming the raw thought alongside the
+  answer and retains it, dimmed, in the transcript above the reply. `off`
+  shows only a `(thinking…)` suffix while thinking is in progress, with no
+  thought text anywhere. Run `/thoughts` with no argument to see the current
+  mode. The mode is session-local and not persisted across restarts. This is
+  what makes a reasoning-heavy local model (e.g. a local Qwen3.6 quant) show
+  visible progress instead of appearing hung during a long thinking phase.
+- `/markdown [on|off]` — render each completed assistant reply as markdown
+  (headings, lists, fenced code, tables) once the turn finishes. On by
+  default; `/markdown off` reverts to plain text if a reply's formatting
+  ever looks worse rendered than raw (e.g. heavy use of literal `#`/`*`/`_`
+  outside of prose). Run `/markdown` with no argument to see the current
+  mode. Session-local, not persisted across restarts. Streaming stays plain
+  by design while a reply is still in progress — the live tail can't reflow
+  as markdown mid-stream without flicker, so only the completed reply in the
+  transcript renders formatted.
+- `/clear` — end the current session cleanly and start a fresh one: new
+  session id, empty history, but the same provider instance, permission
+  engine, and resolver wiring the app started with (kernel rebuild-in-place,
+  not a process restart). Any MCP servers enabled at startup are restarted
+  (fresh connections, same enabled set — the checklist is not re-prompted).
+  Refused with a message while a turn is running.
+- `/compact` — fold the whole transcript into one summary. Issues a single
+  completion through the CURRENT model asking for a handoff-quality summary,
+  then replaces `loop.history` with that summary as a system message and
+  records a `CompactionApplied` event in the session log. It's event-sourced
+  and resume-safe: reading the session back later (including via `--resume`)
+  reconstructs the same collapsed state, because the fold applies the exact
+  same replacement on replay. On failure (the summarize call errors) history
+  is left untouched, nothing is logged, and the error is shown. Refused while
+  a turn (or another `/compact`) is running. Esc cancels an in-flight
+  `/compact` cleanly -- history untouched, nothing logged -- without writing
+  a `UserInterrupt` event: unlike interrupting a real turn, a `/compact` is
+  an internal admin call, not a user turn, so no interrupt fact belongs in
+  the log for it.
+- `/resume` — pick a prior session and reopen it in place (same kernel
+  rebuild `/clear` uses, but reopening instead of starting fresh). Shows a
+  picker listing every other session under `--base-dir`, newest first, each
+  row an age (`3m ago`, `2h ago`, ...) and that session's first prompt; the
+  current session is left out of the list, and a torn or otherwise unreadable
+  log still shows up, marked `[unreadable: ...]`, rather than being hidden.
+  Enter on the (default-highlighted, newest) row resumes it: same provider,
+  permission engine, and resolver wiring as `/clear`, but `loop.history` and
+  the transcript are rebuilt from that session's log instead of starting
+  empty. Escape cancels and leaves the current session untouched. Refused
+  while a turn is running. If there is nothing else to resume, says so and
+  never opens the picker.
+- `/panel` (or **F2**) — toggle the activity panel, a sidebar hidden by
+  default with three tabs: **Files** (every path read/written/edited this
+  session, newest-touched first, with `R`/`W`/`E` markers), **Agents**
+  (every `dispatch_agent` call and every expert an `ensemble` /
+  `consult_panel` / `escalate` call fanned out to, with a running/done/error
+  status), and **Workflows** (the same coordination calls grouped by run,
+  plus an agent-swarm section). Opening or closing the panel is purely
+  local — it reads only what this session has already logged, writes
+  nothing itself, and never interrupts a turn in flight. The agent-swarm
+  section exists only when an MCP server named `agent-swarm` is enabled for
+  the session (see [Session-start server checklist](#session-start-server-checklist));
+  with it disabled the Workflows tab still shows the coordination-run
+  section, just not that one. When present, it fetches the server's
+  workflow state through the same dispatcher and permission gate a
+  model-issued tool call takes — on first opening the Workflows tab and on
+  pressing **r** while the panel has focus, never on a timer — and shows a
+  fetch failure inline instead of crashing the panel.
 
-The bottom line shows live token counts and stats for the session.
+The bottom line shows live token counts and stats for the session. Just above
+the prompt, a persistent status bar tracks the running session at a glance:
+
+- **model** — the current alias or model id (`loop.model`); updates the
+  instant `/model` switches it, no turn required.
+- **ctx N%** — estimated context-window fill: the tool schemas' token
+  footprint plus the conversation history so far, divided by the model's
+  `max_input_tokens` (a `local`-tagged model with no declared limit falls
+  back to 16384). Shrinks after `/compact`. Shown only when the current
+  model resolves against `--catalog`; omitted for a bare `--model` run or
+  the echo provider, since there's no limit to measure against.
+- **$N.NNNN** — running cost from the session's telemetry rollup. Shown
+  alongside `ctx`, under the same catalog-alias condition.
+- **tools N** — completed tool calls so far, from the same rollup the
+  bottom stats line uses.
+
+`/clear` and `/resume` reset it for the new/reopened session (a fresh
+session starts at `tools 0`); it otherwise refreshes at each turn's end. A
+resumed session's `tools`/`$` segments stay blank (its live telemetry index
+never captures the session's own start), but `ctx N%` still tracks
+`loop.history` as the conversation grows. `--catalog`'s file is re-read only
+when it changes on disk; if it's briefly malformed, `ctx`/`$` just drop from
+the bar for that refresh instead of the app erroring.
 
 ### Headless (one-shot)
 
@@ -101,6 +206,28 @@ The `route` is a [LiteLLM](https://docs.litellm.ai/) model string, so any
 provider LiteLLM supports works: Anthropic, OpenAI-compatible endpoints, local
 servers, and so on. Point at a different catalog with `--catalog PATH`.
 
+### Running local models
+
+To run a local model on your hardware, use `scripts/serve-local.sh` to launch a containerized llama.cpp server with GPU acceleration. The script defaults to **Qwen3.6-35B-A3B** (Mixture of Experts), a 35B-parameter model where only ~3.5B params activate per token — fast and VRAM-efficient on a 12 GB GPU:
+
+```bash
+bash scripts/serve-local.sh   # launches on http://localhost:8080
+```
+
+Then configure your `~/.config/harness/models.toml` to route through it (same `[models.local]` section above, but with `route = "openai/qwen"` and `api_base = "http://localhost:8080/v1"` to match llama.cpp's OpenAI-compatible endpoint).
+
+**Quantization options** for Qwen3.6-35B-A3B (all from `unsloth/Qwen3.6-35B-A3B-GGUF`):
+
+| Quantization | Size | Notes |
+|---|---|---|
+| `UD-IQ4_XS` | 17.7 GB | Default; balanced quality and speed. |
+| `UD-Q4_K_M` | 22.1 GB | Higher quality, slower; use if you have VRAM headroom. |
+| `UD-Q3_K_XL` | 16.8 GB | Tighter fit for 12 GB cards; quality trade-off for speed. |
+
+Set a different model with `HARNESS_LOCAL_MODEL` (e.g., `HARNESS_LOCAL_MODEL=unsloth/Qwen3.6-35B-A3B-GGUF:UD-Q4_K_M bash scripts/serve-local.sh`). The old Qwen3-Coder-30B-A3B is still available the same way: `HARNESS_LOCAL_MODEL=unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF:IQ4_XS`.
+
+**Key point:** The `[models.local]` catalog entry defines the *route* your harness uses to call the server; the actual model running inside is whatever `scripts/serve-local.sh` launched (controlled by `HARNESS_LOCAL_MODEL`). The route name is advisory to llama.cpp — the server responds correctly to any OpenAI-compatible request, regardless of whether you named it `llama3` or `qwen`.
+
 ### Catalog fields
 
 | Field | Meaning |
@@ -108,6 +235,7 @@ servers, and so on. Point at a different catalog with `--catalog PATH`.
 | `route` (required) | The LiteLLM model string the alias maps to. |
 | `api_base` | Custom endpoint base URL — for OpenAI-compatible or local servers. |
 | `api_key_env` | Name of the env var holding the API key (a *name*, never the key itself). |
+| `backend` | Selects a non-LiteLLM provider implementation: `"claude-code"` runs turns through the local, logged-in Claude Code CLI on subscription auth (see [Claude on your Claude Code subscription](#claude-on-your-claude-code-subscription)); `"codex"` runs turns through the local, logged-in Codex CLI on subscription auth (see [Codex on your ChatGPT subscription](#codex-on-your-chatgpt-subscription)). Either way `route` becomes `<backend>/<model>` instead of a LiteLLM string. Absent → the LiteLLM route above. |
 | `tags` | Free-form capability labels you can use to organize aliases. |
 | `input_cost_per_token` / `output_cost_per_token` | Pricing overrides. |
 | `max_input_tokens` | Context-window override. |
@@ -255,6 +383,42 @@ env-var *names*, dereferenced at launch — so a config file is safe to commit.
 The importer refuses any `.mcp.json` entry that embeds a literal secret and
 tells you which variable to set instead.
 
+**Narrowing tool exposure per server.** A server can register far more tools
+than you want in scope. `tools_allow` is a list of fnmatch globs on the
+server's own tool names (before the `mcp__<server>__` prefix is added);
+tools that match none of the globs are never registered — they do not exist
+in the tool registry at all, so permission rules and the model can never see
+or call them. An empty (or omitted) `tools_allow` exposes every tool the
+server advertises. `default_enabled` controls whether the server starts
+pre-checked in the session-start checklist; set it to `false` for a server
+you want present but dormant until explicitly opted into for a given session.
+
+```toml
+[servers.agent-swarm]
+command = "/home/fearsidhe/.claude/plugins/cache/fearsidhe-plugins/agent-swarm/1.1.0/bin/mcp-router"
+tools_allow = ["workflow__*", "experiment__*", "router__*"]  # its unique families only
+default_enabled = false  # present in the checklist, dormant unless opted in
+```
+
+### Session-start server checklist
+
+Before any MCP server is dispatchable, the TUI shows a checkbox per configured
+server, pre-checked from `default_enabled`. Enter accepts the selection (Space
+toggles a box). A server you leave unchecked never starts for that session --
+its transport is never launched, it holds no connection, and it registers no
+tools, so it cannot be reached even by a permission rule that would otherwise
+match it. Headless (`-p`) runs skip the checklist -- there is no one to ask --
+and start whatever `default_enabled` says for every configured server.
+
+Once the checklist's selections are live and every started server has
+registered its tools, the TUI checks the final tool registry against the
+active model: for a constrained model (tagged `local`, or with
+`max_input_tokens` under 32768) whose tool schemas alone would eat more
+than 10% of its context window, it shows a warning toast naming the tool
+count and the estimated token cost -- `/tools` lists what's registered so
+you can trim the checklist next time. The same check runs again after any
+`/model` switch. Unconstrained models never trigger it.
+
 Skip MCP entirely for a run with `--no-mcp`, or point at one explicit file with
 `--mcp-config PATH`.
 
@@ -333,5 +497,100 @@ uv run harness outcome SESSION_ID ok --score 0.9 --note "shipped"
 | `<project>/.harness/` | Project-scoped `mcp.toml`, `permissions.toml`, `plugins/` |
 
 Override the session/data root with `--base-dir`. Resume a past session with
-`--resume SESSION_ID`. Tag a run for later querying with `--tag NAME`
-(repeatable).
+`--resume SESSION_ID`, or reopen the most recently active one under
+`--base-dir` without looking up its id via `--continue` (errors clearly if
+there are no sessions to continue; mutually exclusive with `--resume`). Tag a
+run for later querying with `--tag NAME` (repeatable).
+
+---
+
+## Claude on your Claude Code subscription
+
+Entries with `backend = "claude-code"` run turns through your locally
+installed, logged-in Claude Code CLI (headless `claude -p`) instead of an
+API. The harness serves its own tools to Claude over MCP and disables
+Claude Code's built-ins, so permissions and the event log behave exactly as
+with API models. The harness never handles claude.ai credentials — log in
+with `claude` once and the backend uses that.
+
+```toml
+[models.claude]
+backend = "claude-code"
+route = "claude-code/default"   # "claude-code/<model>" passes --model <model>
+input_cost_per_token = 0.0      # subscription: flat-rate, no per-token cost
+output_cost_per_token = 0.0
+tags = ["anthropic", "subscription", "tool-calling", "frontier"]
+```
+
+Requirements: `claude` on PATH and logged in (Pro/Max). One harness turn is
+one Claude Code agent turn; Max-plan rate limits apply.
+
+Any reasoning Claude surfaces (`thinking` content blocks) is streamed to the
+UI as thought chunks and never enters the transcript.
+
+---
+
+## Codex on your ChatGPT subscription
+
+Entries with `backend = "codex"` run turns through your locally installed,
+logged-in Codex CLI (`codex exec --json`) instead of an API. The harness
+serves its own tools to Codex over MCP, injected at spawn time as a dotted
+`-c mcp_servers.harness.url=...` override, and reads the turn back off the
+JSONL event stream. The `codex mcp-server` transport is not usable
+headlessly: it gates every MCP tool call behind a custom `codex/event`
+elicitation that no automated client can answer, while `codex exec` runs
+the same turn, with the same tools, and asks nothing (verified against
+codex-cli 0.147.0). Each turn also gets `-s read-only` and a fresh, empty
+scratch directory as its `cwd`. The harness permission engine gates every
+call to a harness tool; codex's own sandbox is a separate mechanism that
+blocks its built-in shell from writing to disk or reaching the network (see
+"Trust model" below for what it does *not* block).
+
+Every turn also runs under its own scratch `CODEX_HOME`, seeded fresh and
+torn down when the turn ends, so a turn never picks up your real Codex
+profile or its configured MCP servers. Its `config.toml` sets
+`approvals_reviewer = "auto_review"` — without that key `codex exec`
+auto-declines every MCP tool call headlessly; with it, codex-side approval
+prompts never fire, and the harness permission engine is the only approval
+surface a harness tool call goes through. The harness never reads, stores,
+or transmits your ChatGPT credential contents: each turn mechanically
+copies `auth.json` from `$CODEX_HOME` (or `~/.codex` if unset) into that
+per-turn scratch `CODEX_HOME` so the codex CLI can authenticate itself, and
+the copy is removed with the rest of the scratch home when the turn ends.
+Log in once with `codex login` and the backend uses that.
+
+```toml
+[models.codex]
+backend = "codex"
+route = "codex/default"         # "codex/<model>" passes a --model override
+input_cost_per_token = 0.0      # subscription: flat-rate, no per-token cost
+output_cost_per_token = 0.0
+tags = ["openai", "subscription", "tool-calling"]
+```
+
+**Additive, not exclusive.** Unlike the claude-code backend, which disables
+Claude Code's own built-in tools so the harness registry is the only tool
+surface, the codex backend does *not* disable Codex's built-in shell. A
+codex-backed turn gets the harness's tools in addition to whatever Codex can
+already do on its own — tool parity here is additive, not a drop-in match
+for the claude-code backend's exclusivity.
+
+**Trust model.** Writes go through harness tools and the harness permission
+engine — a deny-rule there binds. Reads by codex's own built-in shell do
+not: live verification (codex-cli 0.147.0, 2026-08-16) showed that under
+`-s read-only` codex's shell can `cat` an absolute path anywhere on disk and
+get the content back. The sandbox blocks writes and network, not reads, and
+codex has no read-root confinement setting to turn that off. The empty,
+per-turn scratch `cwd` is steering plus defense-in-depth, not a hard
+boundary: relative paths resolve to nothing there, and a prompt prefix
+tells the model its cwd is empty and to check through harness tools before
+concluding a file is missing — but a codex-backed turn that chooses to read
+an absolute path outside that scratch dir will succeed, unaudited by the
+harness. Stated plainly: a harness deny-rule on a read path does not bind
+codex's own shell.
+
+Requirements: `codex` on PATH and logged in. One harness turn is one Codex
+agent turn.
+
+Any reasoning Codex surfaces (`reasoning` items) is streamed to the UI as
+thought chunks and never enters the transcript.
