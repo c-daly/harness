@@ -129,6 +129,16 @@ emit({"event": "result", "result": {"status": "ERROR",
       "error": "quota exceeded for gemini-3.7-flash-high"}})
 """
 
+# Neither SUCCESS nor ERROR: an agy status value not yet accounted for
+# should raise loudly and name the status, not fall through silently to
+# MalformedStreamError at EOF (which would misreport a recognized-but-
+# unhandled status as "no result event at all").
+UNKNOWN_STATUS = _PREAMBLE + """
+emit({"event": "init", "conversation_id": "sess-5",
+      "init": {"cwd": _cwd, "tools": [], "permission_mode": "always-proceed"}})
+emit({"event": "result", "result": {"status": "CANCELLED"}})
+"""
+
 NO_RESULT = _PREAMBLE + """
 emit({"event": "init", "conversation_id": "sess-4",
       "init": {"cwd": _cwd, "tools": [], "permission_mode": "always-proceed"}})
@@ -438,6 +448,14 @@ async def test_error_result_raises_provider_error(tmp_path):
         )
 
 
+async def test_unexpected_result_status_raises_provider_error_naming_it(tmp_path):
+    provider = _provider(_fake_agy(tmp_path, UNKNOWN_STATUS))
+    with pytest.raises(ProviderError, match="CANCELLED"):
+        await collect(
+            provider.complete(model=ModelId("antigravity/default"), messages=USER, tools=())
+        )
+
+
 async def test_eof_without_result_raises_malformed_stream_error(tmp_path):
     provider = _provider(_fake_agy(tmp_path, NO_RESULT))
     with pytest.raises(MalformedStreamError):
@@ -497,6 +515,25 @@ async def test_real_transcript_replay_matches_live_verification(tmp_path):
     assert usage.output_tokens == 1409
 
 
+def test_render_stdin_prompt_strips_cue_even_with_no_message_text():
+    """Degenerate-input regression: _render_prompt emits ONLY the bare
+    "[assistant]:" cue (no preceding line, no leading newline) when no
+    message in the transcript has any text at all -- a newline-anchored
+    strip silently fails to match that shape and leaks the cue through,
+    which is exactly the live-verified bug this function exists to
+    prevent, just triggered by an empty transcript instead of a normal
+    one."""
+    from harness.provider_antigravity import _render_stdin_prompt
+
+    degenerate = _render_stdin_prompt([Message(role=Role.USER, blocks=())])
+    assert "[assistant]:" not in degenerate
+    assert degenerate == ""
+
+    normal = _render_stdin_prompt(USER)
+    assert "[assistant]:" not in normal
+    assert "say pong" in normal
+
+
 # --- (g)/(h)/(i)/(k): argv, stdin, env, cwd, and scratch-HOME wiring ---
 
 
@@ -526,6 +563,13 @@ async def test_flag_contract(tmp_path, monkeypatch):
     assert argv[0] == "-p"
     assert argv[1]  # non-empty orientation prefix
     assert "say pong" not in argv[1]  # transcript not smuggled into argv
+    # Regression pin for the live-verification bug: -p is the LAST thing agy
+    # reads (appended directly after stdin), so the orientation text must
+    # say the request PRECEDES it, never that a transcript "follows" -- that
+    # exact wording made agy wait for input that had already arrived and
+    # ignore the user's actual request, live-verified and costly to redo.
+    assert "preceding" in argv[1].lower()
+    assert "follows" not in argv[1].lower()
     assert argv[argv.index("--output-format") + 1] == "stream-json"
     assert "--dangerously-skip-permissions" in argv
     assert argv[argv.index("--print-timeout") + 1].endswith("s")  # Go duration syntax
@@ -569,6 +613,21 @@ async def test_model_suffix_becomes_flag(tmp_path):
     assert argv[argv.index("--model") + 1] == "gemini-3.7-flash-high"
 
 
+@pytest.mark.parametrize(
+    "timeout_s, expected",
+    [
+        (600.0, "595s"),  # 5s of headroom under the outer asyncio.timeout backstop
+        (10.0, "5s"),
+        (3.0, "1s"),  # floored: 3 - 5 would be negative
+        (1.0, "1s"),  # floored: never renders "0s" or a negative duration
+    ],
+)
+def test_print_timeout_gives_agy_headroom_under_the_outer_backstop(timeout_s, expected):
+    provider = AntigravityProvider(binary="agy", timeout_s=timeout_s)
+    argv = provider._argv(model=ModelId("antigravity/default"))
+    assert argv[argv.index("--print-timeout") + 1] == expected
+
+
 async def test_missing_auth_files_skipped_silently(tmp_path):
     """No .gemini directory at all in the source HOME (the autouse fixture's
     default): the turn must still run, with an empty-but-present scratch
@@ -577,6 +636,63 @@ async def test_missing_auth_files_skipped_silently(tmp_path):
     await collect(
         provider.complete(model=ModelId("antigravity/default"), messages=USER, tools=())
     )
+
+
+def test_scratch_home_copies_exactly_the_named_auth_files(tmp_path, monkeypatch):
+    """A copytree-shaped implementation would copy the WHOLE .gemini
+    directory; _scratch_home must copy only the exact files _AUTH_FILES
+    names. Proven by planting an unrelated file in the fake source home and
+    asserting its absence from the scratch copy -- a copytree would fail
+    this, a named-file copy loop (what's actually implemented) passes it."""
+    from harness.provider_antigravity import _scratch_home
+
+    fake_user_home = tmp_path / "fake-user-gemini-home"
+    (fake_user_home / ".gemini" / "antigravity-cli").mkdir(parents=True)
+    (fake_user_home / ".gemini" / "oauth_creds.json").write_text("{}")
+    (fake_user_home / ".gemini" / "unrelated_secret.json").write_text("do-not-copy-me")
+    (fake_user_home / ".gemini" / "antigravity-cli" / "unrelated_secret2.json").write_text("nope")
+    monkeypatch.setenv("HOME", str(fake_user_home))
+
+    home = _scratch_home()
+    try:
+        assert (Path(home) / ".gemini" / "oauth_creds.json").is_file()
+        assert not (Path(home) / ".gemini" / "unrelated_secret.json").exists()
+        assert not (Path(home) / ".gemini" / "antigravity-cli" / "unrelated_secret2.json").exists()
+    finally:
+        shutil.rmtree(home, ignore_errors=True)
+
+
+def test_scratch_home_cleans_up_half_built_dir_on_copy_failure(tmp_path, monkeypatch):
+    """A failure partway through copying (e.g. a disk error) must not leave
+    a half-populated scratch HOME behind -- the cleanup-on-internal-failure
+    contract, exercised directly against _scratch_home rather than through
+    the whole provider."""
+    from harness.provider_antigravity import _scratch_home
+
+    fake_user_home = tmp_path / "fake-user-gemini-home"
+    (fake_user_home / ".gemini" / "antigravity-cli").mkdir(parents=True)
+    (fake_user_home / ".gemini" / "oauth_creds.json").write_text("{}")
+    monkeypatch.setenv("HOME", str(fake_user_home))
+
+    created_dirs = []
+    real_mkdtemp = tempfile.mkdtemp
+
+    def _tracking_mkdtemp(*args, **kwargs):
+        d = real_mkdtemp(*args, **kwargs)
+        created_dirs.append(d)
+        return d
+
+    def _boom(*args, **kwargs):
+        raise OSError("disk error mid-copy")
+
+    monkeypatch.setattr(tempfile, "mkdtemp", _tracking_mkdtemp)
+    monkeypatch.setattr(shutil, "copy2", _boom)
+
+    with pytest.raises(OSError, match="disk error mid-copy"):
+        _scratch_home()
+
+    assert created_dirs, "mkdtemp was never called"
+    assert not os.path.exists(created_dirs[-1]), "half-built scratch home was not cleaned up"
 
 
 # --- (j): agy mcp add registration ---
@@ -736,6 +852,12 @@ async def test_abandoning_stream_kills_process_group(tmp_path):
 
 
 def _real_agy_available() -> bool:
+    """Gated on HARNESS_LIVE=1 IN ADDITION TO binary/auth presence: a plain
+    `pytest` run on a machine with a real, logged-in agy must never spend a
+    real subscription turn by accident just because the tools happen to be
+    there. Set HARNESS_LIVE=1 explicitly to opt in."""
+    if not os.environ.get("HARNESS_LIVE"):
+        return False
     if shutil.which("agy") is None:
         return False
     oauth = Path.home() / ".gemini" / "antigravity-cli" / "antigravity-oauth-token"
@@ -743,15 +865,18 @@ def _real_agy_available() -> bool:
 
 
 @pytest.mark.skipif(
-    not _real_agy_available(), reason="real agy binary or ~/.gemini auth not present"
+    not _real_agy_available(),
+    reason="set HARNESS_LIVE=1 with a real agy binary and ~/.gemini auth to run",
 )
 async def test_live_turn_round_trips_through_real_mcp_tool_server(monkeypatch):
     """Consumes real subscription quota -- deliberately the only test in this
-    file that does. Confirms, against the real CLI: registration via `agy
-    mcp add` succeeds, the scratch-HOME auth copy is sufficient to
-    authenticate, a real MCP tool call round-trips through a real
-    McpToolServer to this stub and back, and the assembled response reflects
-    the tool's result."""
+    file that does, and only runs with HARNESS_LIVE=1 set explicitly (see
+    _real_agy_available) even when a real, logged-in agy is present, so a
+    plain `pytest` run never spends a turn by accident. Confirms, against
+    the real CLI: registration via `agy mcp add` succeeds, the scratch-HOME
+    auth copy is sufficient to authenticate, a real MCP tool call
+    round-trips through a real McpToolServer to this stub and back, and the
+    assembled response reflects the tool's result."""
     # Override the autouse _isolated_gemini_home fixture: this test is the
     # one place that needs the REAL ~/.gemini to authenticate.
     monkeypatch.setenv("HOME", _REAL_HOME)

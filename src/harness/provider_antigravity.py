@@ -124,13 +124,20 @@ _SECRET_ENV_KEYS = (
 # -- agy replied to THAT instead of the user's actual request. agy's
 # turn-taking is native (it is a real chat CLI, not a completion endpoint),
 # so the cue is not merely unneeded here, it is actively wrong; strip it.
-_ASSISTANT_CUE_SUFFIX = "\n[assistant]:"
+_ASSISTANT_CUE = "[assistant]:"
 
 
 def _render_stdin_prompt(messages: Sequence[Message]) -> str:
+    """Strip _render_prompt's trailing completion cue for agy's stdin.
+    Anchored on the cue alone, not "\\n[assistant]:": when no message in the
+    transcript has any text, _render_prompt emits ONLY the bare cue with no
+    preceding line, so a newline-anchored strip would silently fail to
+    match and leak the cue through -- the same failure mode this function
+    exists to prevent, just triggered by a degenerate transcript instead of
+    a non-empty one."""
     rendered = _render_prompt(messages)
-    if rendered.endswith(_ASSISTANT_CUE_SUFFIX):
-        rendered = rendered[: -len(_ASSISTANT_CUE_SUFFIX)]
+    if rendered.endswith(_ASSISTANT_CUE):
+        rendered = rendered[: -len(_ASSISTANT_CUE)].rstrip("\n")
     return rendered
 
 # Exactly the files a per-turn scratch HOME needs, copied (never moved) out of
@@ -256,14 +263,20 @@ class AntigravityProvider:
             await server.stop()
 
     def _argv(self, *, model: ModelId) -> list[str]:
+        # agy's own --print-timeout should elapse BEFORE our outer
+        # asyncio.timeout backstop below: that gives agy the chance to shut
+        # down gracefully (and flush a diagnostic to stderr) instead of
+        # racing our SIGKILL. 5s of headroom, floored at 1s so a short
+        # provider timeout never renders "0s" (or a negative duration) into
+        # agy's Go-duration flag parser.
+        print_timeout_s = max(1, int(self.timeout_s) - 5)
         argv = [
             self.binary,
             "-p", _PROMPT_PREFIX,
             "--output-format", "stream-json",
             "--dangerously-skip-permissions",
-            # Go duration syntax (agy's own default is "5m0s"); whole seconds
-            # is always valid regardless of magnitude.
-            "--print-timeout", f"{int(self.timeout_s)}s",
+            # Go duration syntax (agy's own default is "5m0s").
+            "--print-timeout", f"{print_timeout_s}s",
         ]
         suffix = str(model).split("/", 1)[-1]
         if suffix not in ("", "default", str(model)):
@@ -283,6 +296,7 @@ class AntigravityProvider:
                 *argv,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                stdin=asyncio.subprocess.DEVNULL,
                 env=env,
             )
         except OSError as exc:
@@ -384,6 +398,10 @@ class AntigravityProvider:
                                 yield StreamStop(stop_reason="end_turn")
                             elif status == "ERROR":
                                 raise ProviderError(f"antigravity: {result.get('error')}")
+                            else:
+                                raise ProviderError(
+                                    f"antigravity: unexpected result status {status!r}"
+                                )
                     await proc.wait()
             except TimeoutError:
                 timed_out = True
