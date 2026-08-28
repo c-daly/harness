@@ -58,7 +58,7 @@ in the project vault at `vault/10-projects/harness/`.
 
 The core is built: event spine and kernel, provider layer, permissions,
 telemetry, MCP, the Textual TUI, the plugin loader, the native tool inventory,
-and the Claude Code importer. The suite runs ~830 tests.
+and the Claude Code importer. The suite runs ~880 tests.
 
 > Secondary docs drift from code. Where this README or anything under `docs/`
 > disagrees with the source, the source is right — please fix the doc.

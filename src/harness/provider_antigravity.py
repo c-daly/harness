@@ -294,9 +294,10 @@ class AntigravityProvider:
         try:
             proc = await asyncio.create_subprocess_exec(
                 *argv,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
                 stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                
                 env=env,
             )
         except OSError as exc:
@@ -393,6 +394,7 @@ class AntigravityProvider:
                                     usage=Usage(
                                         input_tokens=u.get("input_tokens", 0),
                                         output_tokens=u.get("output_tokens", 0),
+                                        cache_read_tokens=u.get("cache_read_tokens", 0),
                                     )
                                 )
                                 yield StreamStop(stop_reason="end_turn")

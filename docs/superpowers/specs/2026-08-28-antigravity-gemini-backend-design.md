@@ -59,8 +59,9 @@ of `CodexProvider` with the same lifecycle contract:
   COUNTS but never thought text, and an empty ThinkingDelta would render a
   useless "(thought for Ns · 0 chars)" line in the TUI.
 - `result.status == "SUCCESS"` → UsageReport mapping
-  `input=usage.input_tokens, output=usage.output_tokens` (harness Usage has
-  no thinking field; thinking_tokens are not folded in), then StreamStop.
+  `input=usage.input_tokens, output=usage.output_tokens,
+  cache_read=usage.cache_read_tokens` (harness Usage has no thinking field;
+  thinking_tokens are not folded in), then StreamStop.
 - `result.status == "ERROR"` → ProviderError(f"antigravity: {result.error}").
 - Process EOF without a `result` event → MalformedStreamError.
 - Non-JSON lines skipped (agy may interleave noise).

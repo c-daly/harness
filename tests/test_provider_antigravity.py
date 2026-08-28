@@ -37,6 +37,7 @@ if len(sys.argv) > 1 and sys.argv[1] == "mcp":
     open(_here + ".mcpargv", "w").write(json.dumps(sys.argv[1:]))
     open(_here + ".mcpenv", "w").write(json.dumps(sorted(os.environ.keys())))
     open(_here + ".mcphome", "w").write(os.environ.get("HOME") or "")
+    open(_here + ".mcpstdin", "w").write(os.readlink("/proc/self/fd/0"))
     sys.exit(0)
 
 assert "-p" in sys.argv, sys.argv
@@ -93,7 +94,8 @@ emit({"event": "step_update", "step_update": {
       "step_index": 1, "state": "DONE", "step_type": "agent_response", "text_delta": "result-42",
       "duration_seconds": 0.5, "usage": {"input_tokens": 100, "output_tokens": 20}}})
 emit({"event": "result", "result": {"status": "SUCCESS", "response": "echo-result-42",
-      "usage": {"input_tokens": 5821, "output_tokens": 233, "thinking_tokens": 40}}})
+      "usage": {"input_tokens": 5821, "output_tokens": 233, "thinking_tokens": 40,
+                "cache_read_tokens": 512}}})
 """
 
 # A tool step interleaved with agent_response text: proves the parser
@@ -420,7 +422,7 @@ async def test_happy_turn_maps_usage_and_stop(tmp_path):
     assert usage.input_tokens == 5821
     assert usage.output_tokens == 233
     # agy's thinking_tokens is deliberately not folded in (harness Usage has no field for it)
-    assert usage.cache_read_tokens == 0
+    assert usage.cache_read_tokens == 512  # passthrough, spec amendment 2026-08-28
     assert usage.cache_write_tokens == 0
 
 
@@ -701,9 +703,23 @@ def test_scratch_home_cleans_up_half_built_dir_on_copy_failure(tmp_path, monkeyp
 async def test_mcp_registration_runs_before_turn_in_scratch_home(tmp_path):
     binary = _fake_agy(tmp_path, HAPPY)
     provider = _provider(binary)
-    await collect(
-        provider.complete(model=ModelId("antigravity/default"), messages=USER, tools=())
-    )
+    # Plant an identifiable file on fd 0 for the duration of the turn: without
+    # the provider's stdin=DEVNULL on the registration child, the child would
+    # inherit THIS file (in many environments the parent's fd0 is already
+    # /dev/null, which would make a bare readlink assertion vacuous).
+    marker = tmp_path / "stdin-marker"
+    marker.write_text("")
+    saved_fd0 = os.dup(0)
+    marker_fd = os.open(marker, os.O_RDONLY)
+    os.dup2(marker_fd, 0)
+    try:
+        await collect(
+            provider.complete(model=ModelId("antigravity/default"), messages=USER, tools=())
+        )
+    finally:
+        os.dup2(saved_fd0, 0)
+        os.close(saved_fd0)
+        os.close(marker_fd)
 
     mcpargv = json.loads(open(binary + ".mcpargv").read())
     assert mcpargv[:5] == ["mcp", "add", "-t", "http", "harness"]
@@ -713,6 +729,9 @@ async def test_mcp_registration_runs_before_turn_in_scratch_home(tmp_path):
     mcp_home = open(binary + ".mcphome").read()
     turn_home = json.loads(open(binary + ".home").read())["value"]
     assert mcp_home == turn_home  # same scratch HOME for registration and the turn
+
+    # the registration child must not inherit the parent's stdin (DEVNULL pin)
+    assert open(binary + ".mcpstdin").read().endswith("null")
 
 
 async def test_mcp_registration_failure_raises_provider_error(tmp_path):
