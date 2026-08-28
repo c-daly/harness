@@ -1149,6 +1149,25 @@ async def test_slash_model_upgrade_wires_claude_code_backend(tmp_path):
         assert provider.claude_code is not None  # claude-code entries dispatchable
 
 
+async def test_slash_model_upgrade_wires_antigravity_backend(tmp_path):
+    """Same wiring bug, antigravity flavor: a catalog may hold
+    backend = "antigravity" entries, and a bare CatalogProvider fails them
+    with "backend ... not wired" unless /model upgrade wires it too."""
+    catalog_file = tmp_path / "models.toml"
+    catalog_file.write_text(MODELS_TOML_TWO_ALIASES)
+    app = make_app(tmp_path, catalog_path=catalog_file)
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        await pilot.click("#prompt")
+        await pilot.press(*"/model alias-b", "enter")
+        await pilot.pause(0.3)
+        from harness.provider_litellm import CatalogProvider
+
+        provider = app.kernel.loop.provider
+        assert isinstance(provider, CatalogProvider)
+        assert provider.antigravity is not None  # antigravity entries dispatchable
+
+
 async def test_slash_model_upgrade_retargets_subagent_runner(tmp_path):
     """PR #2 review: /model upgrading out of echo mode must retarget the
     SubagentRunner too — it captured the build-time provider, so a swap that

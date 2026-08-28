@@ -40,6 +40,7 @@ from harness.tools import ToolSpec
 from harness.types import CallId, ModelId, ToolName
 
 if TYPE_CHECKING:
+    from harness.provider_antigravity import AntigravityProvider
     from harness.provider_claude_code import ClaudeCodeProvider
     from harness.provider_codex import CodexProvider
 
@@ -264,18 +265,21 @@ class CatalogProvider:
     """Resolves endpoint + key per call from the model string via the catalog,
     so any catalog model is reachable in one session. The model string is an
     ALIAS; an unknown alias falls back to a literal route on ambient env.
-    Entries with backend="claude-code" or backend="codex" route to the
-    matching subscription-CLI provider."""
+    Entries with backend="claude-code", backend="codex", or
+    backend="antigravity" route to the matching subscription-CLI provider."""
 
     catalog: "Catalog"
     claude_code: "ClaudeCodeProvider | None" = None
     codex: "CodexProvider | None" = None
+    antigravity: "AntigravityProvider | None" = None
 
     def bind_dispatcher(self, dispatcher) -> None:
         if self.claude_code is not None:
             self.claude_code.bind_dispatcher(dispatcher)
         if self.codex is not None:
             self.codex.bind_dispatcher(dispatcher)
+        if self.antigravity is not None:
+            self.antigravity.bind_dispatcher(dispatcher)
 
     async def complete(
         self,
@@ -307,6 +311,16 @@ class CatalogProvider:
                     f"model {model!r} needs the codex backend, which is not wired"
                 )
             async for chunk in self.codex.complete(
+                model=resolved.route, messages=messages, tools=tools
+            ):
+                yield chunk
+            return
+        if resolved.backend == "antigravity":
+            if self.antigravity is None:
+                raise ProviderError(
+                    f"model {model!r} needs the antigravity backend, which is not wired"
+                )
+            async for chunk in self.antigravity.complete(
                 model=resolved.route, messages=messages, tools=tools
             ):
                 yield chunk

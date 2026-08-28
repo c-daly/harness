@@ -27,6 +27,17 @@ def test_backend_claude_code_resolves(tmp_path):
     assert resolved.route == "claude-code/default"
 
 
+def test_backend_antigravity_resolves(tmp_path):
+    cat = _catalog(
+        tmp_path,
+        '[models.gemini]\nbackend = "antigravity"\nroute = "antigravity/default"\n'
+        "input_cost_per_token = 0.0\noutput_cost_per_token = 0.0\n",
+    )
+    resolved = cat.resolve("gemini")
+    assert resolved.backend == "antigravity"
+    assert resolved.route == "antigravity/default"
+
+
 def test_unknown_backend_errors_at_resolve(tmp_path):
     cat = _catalog(tmp_path, '[models.x]\nbackend = "frobnicator"\nroute = "x/y"\n')
     with pytest.raises(UnknownBackendError, match="frobnicator"):
