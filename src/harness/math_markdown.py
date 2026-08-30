@@ -44,6 +44,8 @@ _MARKER_CLOSE = "\ue001"
 _MARKER_RE = re.compile(f"({_MARKER_OPEN}\\d+{_MARKER_CLOSE})")
 _ALPHA_VISIBLE = 48
 _PNG_PADDING_PX = 2
+_INLINE_DPI = 80.0
+_DISPLAY_DPI = 180.0
 _BRAILLE_DOTS = (
     (0x01, 0x08),
     (0x02, 0x10),
@@ -470,7 +472,15 @@ class LatexCellImage:
         from PIL import Image
 
         if self._cached_image is None:
-            png = render_formula_png(self.formula.source, color=self.color)
+            # Render inline notation close to its final one-cell pixel height.
+            # Rendering it at display resolution and then shrinking it by more
+            # than 3x makes thin strokes visibly soft.  Standalone equations
+            # retain the higher source resolution used for their larger boxes.
+            png = render_formula_png(
+                self.formula.source,
+                color=self.color,
+                dpi=_DISPLAY_DPI if self.formula.display else _INLINE_DPI,
+            )
             self._cached_image = Image.open(BytesIO(png)).convert("RGBA")
         return self._cached_image
 

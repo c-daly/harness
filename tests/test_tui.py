@@ -543,6 +543,7 @@ async def test_native_sixel_display_uses_textual_widget_not_richlog_controls(
         assert images[0].region.height > 0
         assert images[0].image.mode == "RGBA"
         assert images[0].image.getpixel((0, 0))[3] == 0
+        assert images[0].children[0].background_colors[1] == transcript.background_colors[1]
 
 
 async def test_sixel_widget_tracks_transcript_scrolling(tmp_path, monkeypatch):

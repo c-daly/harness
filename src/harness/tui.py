@@ -577,7 +577,10 @@ class HarnessApp(App[None]):
     .math-sixel {
         position: absolute;
         layer: images;
-        background: transparent;
+        /* textual-image emits terminal clearing cells beneath each Sixel.
+           Match RichLog's surface so those cells don't become dark boxes;
+           the equation PNG itself remains transparent RGBA. */
+        background: $surface;
     }
     #live { height: auto; }
     #stats { dock: bottom; height: 1; }

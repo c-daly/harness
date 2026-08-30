@@ -197,6 +197,7 @@ def test_inline_raster_is_one_text_row_while_display_math_can_be_larger():
 
     assert inline._size(80)[1] == 1
     assert display._size(80)[1] >= 2
+    assert inline._image().height < display._image().height
 
 
 def test_simple_display_math_uses_centered_unicode_without_rasterizing(monkeypatch):
