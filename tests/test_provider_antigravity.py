@@ -799,6 +799,42 @@ async def test_contextvar_dispatch_overrides_bound_dispatcher(tmp_path, monkeypa
 # --- (n): the codex-leak regression contract ---
 
 
+async def test_cancellation_during_server_start_stops_server(monkeypatch):
+    """Cancellation while McpToolServer.start() is polling must not leave
+    its Uvicorn task and listening port alive for the process lifetime."""
+    events = []
+    start_entered = asyncio.Event()
+
+    class _FakeMcpToolServer:
+        def __init__(self, *, specs, dispatch):
+            pass
+
+        async def start(self):
+            events.append("start")
+            start_entered.set()
+            await asyncio.Event().wait()
+
+        async def stop(self):
+            events.append("stop")
+
+    monkeypatch.setattr("harness.provider_antigravity.McpToolServer", _FakeMcpToolServer)
+
+    provider = _provider("agy")
+    task = asyncio.create_task(
+        collect(
+            provider.complete(
+                model=ModelId("antigravity/default"), messages=USER, tools=()
+            )
+        )
+    )
+    await asyncio.wait_for(start_entered.wait(), timeout=1.0)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert events == ["start", "stop"]
+
+
 async def test_scratch_setup_failure_still_stops_started_server(tmp_path, monkeypatch):
     """Critical fix: if scratch-dir setup (tempfile.mkdtemp, e.g. under
     ENOSPC) raises after the McpToolServer has already been started, the

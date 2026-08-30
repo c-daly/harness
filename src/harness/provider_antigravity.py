@@ -225,14 +225,17 @@ class AntigravityProvider:
                 "build_kernel wires this via bind_dispatcher"
             )
         server = McpToolServer(specs=tools, dispatch=dispatch)
-        await server.start()
         scratch_home = None
         scratch_cwd = None
         gen = None
         try:
+            # Startup belongs inside the cleanup scope: start() creates the
+            # Uvicorn task before polling for readiness, so cancellation or a
+            # startup failure during that poll must still stop the partial
+            # server and release its listening port.
+            await server.start()
             # Created inside this try so a failure here (e.g. ENOSPC) still
-            # reaches the finally below and stops the McpToolServer already
-            # started above.
+            # reaches the finally below and stops the McpToolServer.
             scratch_home = _scratch_home()
             scratch_cwd = tempfile.mkdtemp(prefix="harness-antigravity-cwd-")
             try:
