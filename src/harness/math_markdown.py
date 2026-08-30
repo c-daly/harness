@@ -3,9 +3,10 @@
 Rich's Markdown renderer intentionally implements ordinary Markdown, not math
 extensions.  This module recognizes the conventional ``$...$`` / ``$$...$$``
 and ``\\(...\\)`` / ``\\[...\\]`` delimiters outside code spans and fences,
-typesets their contents with Matplotlib MathText, and embeds the resulting RGBA
-images in the Rich render tree.  The cell renderer preserves transparent pixels
-instead of baking in a light or dark background, so the same equation follows
+and typesets their contents with Matplotlib MathText.  Simple inline expressions
+use crisp Unicode glyphs; expressions with two-dimensional layout use an RGBA
+image whose high-density cell projection preserves transparent pixels instead
+of baking in a light or dark background.  The same equation therefore follows
 the active Textual theme.
 
 MathText is a deliberately portable TeX-compatible math subset.  A construct it
@@ -22,7 +23,6 @@ from io import BytesIO
 from typing import TYPE_CHECKING
 
 from rich.align import Align
-from rich.color import Color
 from rich.console import Console, ConsoleOptions, RenderResult
 from rich.markdown import Markdown, MarkdownContext, MarkdownElement
 from rich.measure import Measurement
@@ -38,8 +38,16 @@ if TYPE_CHECKING:
 _MARKER_OPEN = "\ue000"
 _MARKER_CLOSE = "\ue001"
 _MARKER_RE = re.compile(f"({_MARKER_OPEN}\\d+{_MARKER_CLOSE})")
-_ALPHA_VISIBLE = 24
+_ALPHA_VISIBLE = 48
 _PNG_PADDING_PX = 2
+_BRAILLE_DOTS = (
+    (0x01, 0x08),
+    (0x02, 0x10),
+    (0x04, 0x20),
+    (0x40, 0x80),
+)
+_INLINE_PRIMES = {"′", "″", "‴", "⁗"}
+_SPACED_OPERATORS = {"+", "=", "×", "÷", "<", ">", "≤", "≥", "→", "←", "↔", "⇒", "⇐", "⇔"}
 
 
 @dataclass(frozen=True)
@@ -258,8 +266,62 @@ def render_formula_png(
         raise LatexRenderError(str(exc)) from exc
 
 
+@lru_cache(maxsize=256)
+def render_inline_formula_text(source: str) -> str | None:
+    """Return a crisp one-line Unicode form when MathText has no 2-D layout.
+
+    Simple symbol expressions are substantially clearer as terminal glyphs
+    than as a one- or two-row raster.  Fractions, scripts, radicals, limits,
+    accents, and other vertically positioned expressions return ``None`` and
+    continue through the transparent image renderer.
+    """
+    from matplotlib.font_manager import FontProperties
+    from matplotlib.mathtext import MathTextParser
+
+    try:
+        parsed = MathTextParser("path").parse(
+            f"${source}$",
+            dpi=100,
+            prop=FontProperties(size=16, math_fontfamily="stix"),
+        )
+    except Exception:
+        return None
+    if parsed.rects or not parsed.glyphs:
+        return None
+
+    glyphs: list[tuple[float, float, float, str]] = []
+    for _, font_size, codepoint, _, x, y in parsed.glyphs:
+        try:
+            character = chr(codepoint)
+        except (OverflowError, ValueError):
+            return None
+        if not character.isprintable():
+            return None
+        glyphs.append((float(x), float(y), float(font_size), character))
+
+    baseline_glyphs = [glyph for glyph in glyphs if glyph[3] not in _INLINE_PRIMES]
+    if not baseline_glyphs:
+        return None
+    baselines = [glyph[1] for glyph in baseline_glyphs]
+    font_sizes = [glyph[2] for glyph in baseline_glyphs]
+    if max(baselines) - min(baselines) > 2 or max(font_sizes) - min(font_sizes) > 1:
+        return None
+
+    output: list[str] = []
+    for _, _, _, character in sorted(glyphs):
+        if character in _SPACED_OPERATORS:
+            if output and not output[-1].endswith(" "):
+                output.append(" ")
+            output.extend((character, " "))
+        elif character == ",":
+            output.extend((character, " "))
+        else:
+            output.append(character)
+    return "".join(output).strip()
+
+
 class LatexCellImage:
-    """A transparent RGBA equation rendered with terminal half-cell glyphs."""
+    """A transparent RGBA equation rendered with high-density Braille cells."""
 
     def __init__(self, formula: Formula, *, color: str) -> None:
         self.formula = formula
@@ -273,33 +335,23 @@ class LatexCellImage:
 
     def _size(self, max_width: int) -> tuple[int, int]:
         image = self._image()
-        rows = max(2 if self.formula.display else 1, round(image.height / 13))
-        rows = min(rows, 8 if self.formula.display else 4)
+        rows = max(2 if self.formula.display else 1, round(image.height / 14))
+        rows = min(rows, 7 if self.formula.display else 3)
         width = max(1, round(image.width / image.height * rows * 2))
         if width > max_width:
             rows = max(1, round(rows * max_width / width))
             width = max_width
         return width, rows
 
-    @staticmethod
-    def _rgb(pixel: tuple[int, int, int, int]) -> Color:
-        return Color.from_rgb(pixel[0], pixel[1], pixel[2])
-
-    @classmethod
-    def _segment(
-        cls,
-        upper: tuple[int, int, int, int],
-        lower: tuple[int, int, int, int],
-    ) -> Segment:
-        upper_visible = upper[3] >= _ALPHA_VISIBLE
-        lower_visible = lower[3] >= _ALPHA_VISIBLE
-        if upper_visible and lower_visible:
-            return Segment("▀", style=Style(color=cls._rgb(upper), bgcolor=cls._rgb(lower)))
-        if upper_visible:
-            return Segment("▀", style=Style(color=cls._rgb(upper)))
-        if lower_visible:
-            return Segment("▄", style=Style(color=cls._rgb(lower)))
-        return Segment(" ")
+    def _segment(self, alpha, column: int, row: int) -> Segment:
+        dots = 0
+        for y, dot_row in enumerate(_BRAILLE_DOTS):
+            for x, dot in enumerate(dot_row):
+                if alpha.getpixel((column * 2 + x, row * 4 + y)) >= _ALPHA_VISIBLE:
+                    dots |= dot
+        if not dots:
+            return Segment(" ")
+        return Segment(chr(0x2800 + dots), style=Style(color=self.color))
 
     def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
         from PIL import Image
@@ -310,12 +362,11 @@ class LatexCellImage:
             yield Text(self.formula.original)
             return
         width, rows = self._size(max(1, options.max_width))
-        scaled = image.resize((width, rows * 2), Image.Resampling.LANCZOS)
-        pixels = scaled.load()
-        assert pixels is not None
+        scaled = image.resize((width * 2, rows * 4), Image.Resampling.LANCZOS)
+        alpha = scaled.getchannel("A")
         for row in range(rows):
             for column in range(width):
-                yield self._segment(pixels[column, row * 2], pixels[column, row * 2 + 1])
+                yield self._segment(alpha, column, row)
             yield Segment.line()
 
     def __rich_measure__(self, console: Console, options: ConsoleOptions) -> Measurement:
@@ -360,8 +411,14 @@ class _MathTextElement(MarkdownElement):
             if formula is None:
                 self._text.append(piece, context.current_style)
             else:
-                self._flush_text()
-                self.parts.append(LatexCellImage(formula, color=self.color))
+                inline_text = (
+                    render_inline_formula_text(formula.source) if not formula.display else None
+                )
+                if inline_text is not None:
+                    self._text.append(inline_text, Style(color=self.color))
+                else:
+                    self._flush_text()
+                    self.parts.append(LatexCellImage(formula, color=self.color))
 
     def on_leave(self, context: MarkdownContext) -> None:
         self._flush_text()
@@ -384,7 +441,7 @@ class _MathTextElement(MarkdownElement):
 
         table = Table.grid(padding=0, collapse_padding=True, expand=False)
         for part in self.parts:
-            table.add_column(no_wrap=isinstance(part, LatexCellImage))
+            table.add_column(no_wrap=isinstance(part, LatexCellImage), vertical="middle")
         table.add_row(*self.parts)
         yield Align(table, align=self.justify)
 
@@ -422,5 +479,6 @@ __all__ = [
     "LatexRenderError",
     "MathMarkdown",
     "extract_math",
+    "render_inline_formula_text",
     "render_formula_png",
 ]

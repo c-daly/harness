@@ -11,6 +11,7 @@ from harness.math_markdown import (
     MathMarkdown,
     extract_math,
     render_formula_png,
+    render_inline_formula_text,
 )
 
 
@@ -52,7 +53,7 @@ def test_render_formula_png_has_a_real_transparent_alpha_channel():
 
 
 def test_math_markdown_renders_typeset_cells_and_keeps_surrounding_text():
-    renderable = MathMarkdown("Before $x^2 + y^2 = z^2$ after", color="#ffffff")
+    renderable = MathMarkdown(r"Before $\frac{x}{y}$ after", color="#ffffff")
     console = Console(width=80, record=True, force_terminal=True, color_system="truecolor")
 
     console.print(renderable)
@@ -60,8 +61,40 @@ def test_math_markdown_renders_typeset_cells_and_keeps_surrounding_text():
 
     assert "Before" in rendered
     assert "after" in rendered
-    assert "x^2" not in rendered  # the source was replaced by the typeset image
-    assert any(glyph in rendered for glyph in ("▀", "▄", "█"))
+    assert r"\frac" not in rendered  # the source was replaced by the typeset image
+    assert any(0x2800 < ord(glyph) <= 0x28FF for glyph in rendered)
+    assert not any(glyph in rendered for glyph in ("▀", "▄", "█"))
+
+
+def test_real_reply_formulas_use_dense_cells_without_block_art():
+    source = (
+        "1. The increment \\(\\Delta x\\), deriving the derivative as\n"
+        "\\[f'(x)=\\lim_{\\Delta x\\to0}"
+        "\\frac{f(x+\\Delta x)-f(x)}{\\Delta x}\\]\n"
+        "2. The Dirac delta \\(\\delta(x)\\), deriving its derivative "
+        "\\(\\delta'(x)\\)."
+    )
+    console = Console(width=120, record=True, force_terminal=True, color_system="truecolor")
+
+    console.print(MathMarkdown(source, color="#ffffff"))
+    rendered = console.export_text()
+
+    assert "The increment" in rendered
+    assert "Dirac delta" in rendered
+    assert "Δx" in rendered
+    assert "δ(x)" in rendered
+    assert "δ′(x)" in rendered
+    assert sum(0x2800 < ord(glyph) <= 0x28FF for glyph in rendered) >= 20
+    assert not any(glyph in rendered for glyph in ("▀", "▄", "█"))
+
+
+def test_simple_inline_math_uses_crisp_unicode_but_layout_stays_rasterized():
+    assert render_inline_formula_text(r"\Delta x") == "Δx"
+    assert render_inline_formula_text(r"\delta(x)") == "δ(x)"
+    assert render_inline_formula_text(r"\delta'(x)") == "δ′(x)"
+    assert render_inline_formula_text(r"\alpha + \beta = \gamma") == "α + β = γ"
+    assert render_inline_formula_text(r"x^2") is None
+    assert render_inline_formula_text(r"\frac{x}{y}") is None
 
 
 def test_invalid_latex_falls_back_to_source_instead_of_crashing():
