@@ -17,6 +17,9 @@ completed assistant reply disappear or crash the TUI.
 from __future__ import annotations
 
 import re
+import os
+import subprocess
+import sys
 from dataclasses import dataclass
 from functools import lru_cache
 from io import BytesIO
@@ -48,6 +51,41 @@ _BRAILLE_DOTS = (
 )
 _INLINE_PRIMES = {"′", "″", "‴", "⁗"}
 _SPACED_OPERATORS = {"+", "=", "×", "÷", "<", ">", "≤", "≥", "→", "←", "↔", "⇒", "⇐", "⇔"}
+
+
+def _detect_sixel_support() -> bool:
+    """Detect Sixel before Textual starts consuming terminal responses.
+
+    tmux already performs the outer-terminal capability negotiation, so its
+    per-client flag is both faster and more reliable than issuing a second DA
+    query from a pane.  Outside tmux, textual-image performs the query itself.
+    Headless and redirected processes always use the Unicode fallback.
+    """
+    if os.environ.get("HARNESS_MATH_SIXEL", "").lower() in {"0", "false", "off"}:
+        return False
+    if not sys.__stdout__ or not sys.__stdout__.isatty():
+        return False
+    if os.environ.get("TMUX"):
+        try:
+            result = subprocess.run(
+                ["tmux", "display-message", "-p", "#{sixel_support}"],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=0.5,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return False
+        return result.stdout.strip() == "1"
+    try:
+        from textual_image.renderable.sixel import query_terminal_support
+
+        return query_terminal_support()
+    except Exception:
+        return False
+
+
+_SIXEL_AVAILABLE = _detect_sixel_support()
 
 
 @dataclass(frozen=True)
@@ -353,6 +391,11 @@ class LatexCellImage:
             return Segment(" ")
         return Segment(chr(0x2800 + dots), style=Style(color=self.color))
 
+    def _sixel(self, image: Image.Image, width: int, rows: int):
+        from textual_image.renderable.sixel import Image as SixelImage
+
+        return SixelImage(image, width=width, height=rows)
+
     def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
         from PIL import Image
 
@@ -362,6 +405,9 @@ class LatexCellImage:
             yield Text(self.formula.original)
             return
         width, rows = self._size(max(1, options.max_width))
+        if self.formula.display and _SIXEL_AVAILABLE and not console.no_color:
+            yield from console.render(self._sixel(image, width, rows), options)
+            return
         scaled = image.resize((width * 2, rows * 4), Image.Resampling.LANCZOS)
         alpha = scaled.getchannel("A")
         for row in range(rows):

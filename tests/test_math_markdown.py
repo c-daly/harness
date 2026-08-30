@@ -6,6 +6,7 @@ import pytest
 from PIL import Image
 from rich.console import Console
 
+import harness.math_markdown as math_markdown
 from harness.math_markdown import (
     LatexRenderError,
     MathMarkdown,
@@ -86,6 +87,35 @@ def test_real_reply_formulas_use_dense_cells_without_block_art():
     assert "δ′(x)" in rendered
     assert sum(0x2800 < ord(glyph) <= 0x28FF for glyph in rendered) >= 20
     assert not any(glyph in rendered for glyph in ("▀", "▄", "█"))
+
+
+def test_display_math_uses_native_transparent_sixel_when_available(monkeypatch):
+    monkeypatch.setattr(math_markdown, "_SIXEL_AVAILABLE", True)
+    renderable = MathMarkdown(r"\[\frac{x}{y}\]", color="#ffffff")
+    console = Console(
+        width=80,
+        force_terminal=True,
+        color_system="truecolor",
+        no_color=False,
+    )
+
+    segments = list(console.render(renderable, console.options))
+    sixel = "".join(segment.text for segment in segments if segment.control)
+
+    assert "\x1bP0;1;0q" in sixel  # P2=1 requests a transparent background
+    assert not any(0x2800 < ord(glyph) <= 0x28FF for glyph in sixel)
+
+
+def test_no_color_output_uses_safe_unicode_fallback(monkeypatch):
+    monkeypatch.setattr(math_markdown, "_SIXEL_AVAILABLE", True)
+    renderable = MathMarkdown(r"\[\frac{x}{y}\]", color="#ffffff")
+    console = Console(width=80, no_color=True)
+
+    segments = list(console.render(renderable, console.options))
+    rendered = "".join(segment.text for segment in segments)
+
+    assert "\x1bP" not in rendered
+    assert any(0x2800 < ord(glyph) <= 0x28FF for glyph in rendered)
 
 
 def test_simple_inline_math_uses_crisp_unicode_but_layout_stays_rasterized():
