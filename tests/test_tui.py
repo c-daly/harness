@@ -604,7 +604,7 @@ async def test_complex_inline_math_uses_sixel_without_hiding_prose(tmp_path, mon
 
         assert len(images) == 3
         assert all(image.region.width > 0 and image.region.height > 0 for image in images)
-        assert all(image.region.height == 1 for image in images)
+        assert sorted(image.region.height for image in images) == [1, 2, 2]
         assert not any(segment.control for line in transcript.lines for segment in line)
         assert prose.index("For the quadratic equation") < prose.index(
             "the solutions are"

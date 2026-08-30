@@ -45,6 +45,7 @@ _MARKER_RE = re.compile(f"({_MARKER_OPEN}\\d+{_MARKER_CLOSE})")
 _ALPHA_VISIBLE = 48
 _PNG_PADDING_PX = 2
 _INLINE_DPI = 80.0
+_TALL_INLINE_DPI = 120.0
 _DISPLAY_DPI = 180.0
 _BRAILLE_DOTS = (
     (0x01, 0x08),
@@ -65,6 +66,9 @@ _MATRIX_RE = re.compile(
 _UNBRACED_FONT_COMMAND_RE = re.compile(
     r"\\(?P<command>mathcal|mathbb|mathbf|mathrm|mathsf|mathtt|mathit)"
     r"\s+(?P<atom>\\[A-Za-z]+|[A-Za-z0-9])"
+)
+_TALL_INLINE_RE = re.compile(
+    r"\\(?:d?frac|binom|sqrt|sum|prod|int|oint|lim|substack|overset|underset)\b"
 )
 
 
@@ -468,6 +472,10 @@ class LatexCellImage:
         self._cached_image: Image.Image | None = None
         self._placement_id = str(next(_SIXEL_PLACEMENT_IDS))
 
+    def _inline_rows(self) -> int:
+        """Use a second cell only for notation with genuinely stacked layout."""
+        return 2 if _TALL_INLINE_RE.search(self.formula.source) else 1
+
     def _image(self) -> Image.Image:
         from PIL import Image
 
@@ -476,24 +484,24 @@ class LatexCellImage:
             # Rendering it at display resolution and then shrinking it by more
             # than 3x makes thin strokes visibly soft.  Standalone equations
             # retain the higher source resolution used for their larger boxes.
+            inline_dpi = _TALL_INLINE_DPI if self._inline_rows() == 2 else _INLINE_DPI
             png = render_formula_png(
                 self.formula.source,
                 color=self.color,
-                dpi=_DISPLAY_DPI if self.formula.display else _INLINE_DPI,
+                dpi=_DISPLAY_DPI if self.formula.display else inline_dpi,
             )
             self._cached_image = Image.open(BytesIO(png)).convert("RGBA")
         return self._cached_image
 
     def _size(self, max_width: int, image: Image.Image | None = None) -> tuple[int, int]:
         image = image or self._image()
-        # Inline math shares a baseline with terminal text, so keep it to one
-        # cell row regardless of the source bitmap's DPI.  Display equations
-        # may use the extra vertical resolution that fractions, roots, and
-        # stacked notation benefit from.
+        # Ordinary inline scripts share one terminal row with prose. Stacked
+        # notation gets two rows: enough to keep fractions legible without
+        # returning to the oversized three-row inline layout.
         rows = (
             min(7, max(2, round(image.height / 14)))
             if self.formula.display
-            else 1
+            else self._inline_rows()
         )
         width = max(1, round(image.width / image.height * rows * 2))
         if width > max_width:
@@ -730,7 +738,10 @@ class _MathTextElement(MarkdownElement):
                     options.update_width(max(1, width)),
                     pad=True,
                 )
-            top = (height - item_height) // 2
+            # Put one-line prose on the lower row beside a two-row fraction,
+            # where the equation's visual baseline sits. Odd-height rows keep
+            # their ordinary centered alignment.
+            top = (height - item_height + 1) // 2
             rendered.append((lines, width, top))
 
         for line_index in range(height):

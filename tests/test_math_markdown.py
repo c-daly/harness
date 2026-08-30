@@ -185,8 +185,12 @@ def test_simple_inline_math_uses_crisp_unicode_but_layout_stays_rasterized():
     assert render_inline_formula_text(r"\frac{x}{y}") is None
 
 
-def test_inline_raster_is_one_text_row_while_display_math_can_be_larger():
-    inline = LatexCellImage(
+def test_inline_raster_uses_two_rows_only_for_stacked_notation():
+    compact_inline = LatexCellImage(
+        Formula(source=r"x^2", display=False, original=r"\(x^2\)"),
+        color="#ffffff",
+    )
+    stacked_inline = LatexCellImage(
         Formula(source=r"\frac{x}{y}", display=False, original=r"\(\frac{x}{y}\)"),
         color="#ffffff",
     )
@@ -195,9 +199,11 @@ def test_inline_raster_is_one_text_row_while_display_math_can_be_larger():
         color="#ffffff",
     )
 
-    assert inline._size(80)[1] == 1
+    assert compact_inline._size(80)[1] == 1
+    assert stacked_inline._size(80)[1] == 2
     assert display._size(80)[1] >= 2
-    assert inline._image().height < display._image().height
+    assert compact_inline._image().height < stacked_inline._image().height
+    assert stacked_inline._image().height < display._image().height
 
 
 def test_simple_display_math_uses_centered_unicode_without_rasterizing(monkeypatch):
