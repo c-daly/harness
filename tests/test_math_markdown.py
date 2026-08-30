@@ -8,6 +8,8 @@ from rich.console import Console
 
 import harness.math_markdown as math_markdown
 from harness.math_markdown import (
+    Formula,
+    LatexCellImage,
     LatexRenderError,
     MathMarkdown,
     extract_math,
@@ -106,6 +108,37 @@ def test_display_math_uses_native_transparent_sixel_when_available(monkeypatch):
     assert not any(0x2800 < ord(glyph) <= 0x28FF for glyph in sixel)
 
 
+def test_sixel_support_is_rechecked_after_an_initial_miss(monkeypatch):
+    checks = iter((False, True))
+    monkeypatch.setattr(math_markdown, "_SIXEL_AVAILABLE", False)
+    monkeypatch.setattr(math_markdown, "_SIXEL_LAST_CHECK", float("-inf"))
+    monkeypatch.setattr(math_markdown, "_SIXEL_RECHECK_SECONDS", 0)
+    monkeypatch.setattr(math_markdown, "_detect_sixel_support", lambda: next(checks))
+
+    assert math_markdown._sixel_available() is False
+    assert math_markdown._sixel_available() is True
+    assert math_markdown._sixel_available() is True
+
+
+def test_equation_image_is_decoded_only_once(monkeypatch):
+    cell = LatexCellImage(
+        Formula(source=r"\frac{x}{y}", display=True, original=r"\[\frac{x}{y}\]"),
+        color="#ffffff",
+    )
+    png = render_formula_png(r"\frac{x}{y}", color="#ffffff")
+    calls = 0
+
+    def render_once(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return png
+
+    monkeypatch.setattr(math_markdown, "render_formula_png", render_once)
+
+    assert cell._image() is cell._image()
+    assert calls == 1
+
+
 def test_no_color_output_uses_safe_unicode_fallback(monkeypatch):
     monkeypatch.setattr(math_markdown, "_SIXEL_AVAILABLE", True)
     renderable = MathMarkdown(r"\[\frac{x}{y}\]", color="#ffffff")
@@ -125,6 +158,21 @@ def test_simple_inline_math_uses_crisp_unicode_but_layout_stays_rasterized():
     assert render_inline_formula_text(r"\alpha + \beta = \gamma") == "α + β = γ"
     assert render_inline_formula_text(r"x^2") is None
     assert render_inline_formula_text(r"\frac{x}{y}") is None
+
+
+def test_simple_display_math_uses_centered_unicode_without_rasterizing(monkeypatch):
+    def unexpected_raster(*args, **kwargs):
+        raise AssertionError("simple display math should not be rasterized")
+
+    monkeypatch.setattr(math_markdown, "render_formula_png", unexpected_raster)
+    renderable = MathMarkdown(r"\[(G-F)'=0\]", color="#ffffff")
+    console = Console(width=40, record=True, force_terminal=True, no_color=False)
+
+    console.print(renderable)
+    rendered = console.export_text()
+
+    assert "(G−F)′ = 0" in rendered
+    assert not any(0x2800 < ord(glyph) <= 0x28FF for glyph in rendered)
 
 
 def test_invalid_latex_falls_back_to_source_instead_of_crashing():

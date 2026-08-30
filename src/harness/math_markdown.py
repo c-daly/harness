@@ -3,11 +3,11 @@
 Rich's Markdown renderer intentionally implements ordinary Markdown, not math
 extensions.  This module recognizes the conventional ``$...$`` / ``$$...$$``
 and ``\\(...\\)`` / ``\\[...\\]`` delimiters outside code spans and fences,
-and typesets their contents with Matplotlib MathText.  Simple inline expressions
-use crisp Unicode glyphs; expressions with two-dimensional layout use an RGBA
-image whose high-density cell projection preserves transparent pixels instead
-of baking in a light or dark background.  The same equation therefore follows
-the active Textual theme.
+and typesets their contents with Matplotlib MathText.  Simple one-line
+expressions use crisp Unicode glyphs; expressions with two-dimensional layout
+use a transparent RGBA image rendered as native Sixel where available, with a
+high-density cell fallback.  The same equation therefore follows the active
+Textual theme without baking in a light or dark background.
 
 MathText is a deliberately portable TeX-compatible math subset.  A construct it
 does not understand is shown verbatim; malformed model output must never make a
@@ -20,6 +20,7 @@ import re
 import os
 import subprocess
 import sys
+import time
 from dataclasses import dataclass
 from functools import lru_cache
 from io import BytesIO
@@ -51,6 +52,7 @@ _BRAILLE_DOTS = (
 )
 _INLINE_PRIMES = {"′", "″", "‴", "⁗"}
 _SPACED_OPERATORS = {"+", "=", "×", "÷", "<", ">", "≤", "≥", "→", "←", "↔", "⇒", "⇐", "⇔"}
+_SIXEL_RECHECK_SECONDS = 2.0
 
 
 def _detect_sixel_support() -> bool:
@@ -85,7 +87,25 @@ def _detect_sixel_support() -> bool:
         return False
 
 
-_SIXEL_AVAILABLE = _detect_sixel_support()
+# A false result is deliberately not permanent.  Harness may already be
+# running when a user enables tmux passthrough / Sixel terminal features, and
+# capability detection at module import used to strand that process on the
+# expensive Braille fallback until it was restarted.
+_SIXEL_AVAILABLE = False
+_SIXEL_LAST_CHECK = float("-inf")
+
+
+def _sixel_available() -> bool:
+    global _SIXEL_AVAILABLE, _SIXEL_LAST_CHECK
+
+    if _SIXEL_AVAILABLE:
+        return True
+    now = time.monotonic()
+    if now - _SIXEL_LAST_CHECK < _SIXEL_RECHECK_SECONDS:
+        return False
+    _SIXEL_LAST_CHECK = now
+    _SIXEL_AVAILABLE = _detect_sixel_support()
+    return _SIXEL_AVAILABLE
 
 
 @dataclass(frozen=True)
@@ -359,20 +379,23 @@ def render_inline_formula_text(source: str) -> str | None:
 
 
 class LatexCellImage:
-    """A transparent RGBA equation rendered with high-density Braille cells."""
+    """A transparent equation rendered as Sixel or high-density Braille."""
 
     def __init__(self, formula: Formula, *, color: str) -> None:
         self.formula = formula
         self.color = color
+        self._cached_image: Image.Image | None = None
 
     def _image(self) -> Image.Image:
         from PIL import Image
 
-        png = render_formula_png(self.formula.source, color=self.color)
-        return Image.open(BytesIO(png)).convert("RGBA")
+        if self._cached_image is None:
+            png = render_formula_png(self.formula.source, color=self.color)
+            self._cached_image = Image.open(BytesIO(png)).convert("RGBA")
+        return self._cached_image
 
-    def _size(self, max_width: int) -> tuple[int, int]:
-        image = self._image()
+    def _size(self, max_width: int, image: Image.Image | None = None) -> tuple[int, int]:
+        image = image or self._image()
         rows = max(2 if self.formula.display else 1, round(image.height / 14))
         rows = min(rows, 7 if self.formula.display else 3)
         width = max(1, round(image.width / image.height * rows * 2))
@@ -392,9 +415,17 @@ class LatexCellImage:
         return Segment(chr(0x2800 + dots), style=Style(color=self.color))
 
     def _sixel(self, image: Image.Image, width: int, rows: int):
-        from textual_image.renderable.sixel import Image as SixelImage
+        from textual_image.renderable.sixel import Image as SixelImage, SixelOptions
 
-        return SixelImage(image, width=width, height=rows)
+        # Equations contain one foreground color plus antialiasing.  A small
+        # palette preserves those edges while avoiding the default 256-color
+        # quantization and its much larger terminal payload.
+        return SixelImage(
+            image,
+            width=width,
+            height=rows,
+            sixel_options=SixelOptions(colors=16),
+        )
 
     def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
         from PIL import Image
@@ -404,8 +435,8 @@ class LatexCellImage:
         except LatexRenderError:
             yield Text(self.formula.original)
             return
-        width, rows = self._size(max(1, options.max_width))
-        if self.formula.display and _SIXEL_AVAILABLE and not console.no_color:
+        width, rows = self._size(max(1, options.max_width), image)
+        if self.formula.display and _sixel_available() and not console.no_color:
             yield from console.render(self._sixel(image, width, rows), options)
             return
         scaled = image.resize((width * 2, rows * 4), Image.Resampling.LANCZOS)
@@ -457,11 +488,15 @@ class _MathTextElement(MarkdownElement):
             if formula is None:
                 self._text.append(piece, context.current_style)
             else:
-                inline_text = (
-                    render_inline_formula_text(formula.source) if not formula.display else None
-                )
+                inline_text = render_inline_formula_text(formula.source)
                 if inline_text is not None:
-                    self._text.append(inline_text, Style(color=self.color))
+                    if formula.display:
+                        self._flush_text()
+                        display_text = Text(inline_text, Style(color=self.color))
+                        display_text.justify = "center"
+                        self.parts.append(display_text)
+                    else:
+                        self._text.append(inline_text, Style(color=self.color))
                 else:
                     self._flush_text()
                     self.parts.append(LatexCellImage(formula, color=self.color))
@@ -476,9 +511,14 @@ class _MathTextElement(MarkdownElement):
         # the render tree.
         self._flush_text()
         if not any(isinstance(part, LatexCellImage) for part in self.parts):
-            text = self.parts[0] if self.parts else Text()
-            assert isinstance(text, Text)
-            text.justify = self.justify
+            text = Text()
+            for part in self.parts:
+                assert isinstance(part, Text)
+                text.append_text(part)
+            if len(self.parts) == 1 and isinstance(self.parts[0], Text):
+                text.justify = self.parts[0].justify or self.justify
+            else:
+                text.justify = self.justify
             yield text
             return
         if len(self.parts) == 1 and isinstance(self.parts[0], LatexCellImage):
