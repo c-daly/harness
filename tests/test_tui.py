@@ -16,6 +16,7 @@ from textual.widgets import Input, OptionList, RichLog, Static
 from harness.cli import build_kernel
 from harness.fold import fold
 from harness.log import read_session
+from harness.math_markdown import MathMarkdown
 from harness.mcp_config import McpServerSpec
 from harness.mcp_host import McpHost
 from harness.messages import Role
@@ -494,6 +495,17 @@ async def test_render_reply_markdown_by_default_and_plain_after_toggle_off(tmp_p
         await pilot.press(*"/markdown off", "enter")
         await pilot.pause(0.1)
         assert isinstance(app._render_reply("# hi"), Text)
+
+
+async def test_render_reply_uses_math_markdown_for_latex(tmp_path):
+    app = make_app(tmp_path)
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        rendered = app._render_reply(r"Euler: $e^{i\pi} + 1 = 0$")
+        assert isinstance(rendered, MathMarkdown)
+        assert [formula.source for formula in rendered.formulas.values()] == [
+            r"e^{i\pi} + 1 = 0"
+        ]
 
 
 async def test_completed_reply_with_code_block_and_table_uses_markdown_seam(tmp_path):

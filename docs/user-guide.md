@@ -79,7 +79,14 @@ tool calls, and answer permission prompts inline. Key bindings:
   mode. Session-local, not persisted across restarts. Streaming stays plain
   by design while a reply is still in progress — the live tail can't reflow
   as markdown mid-stream without flicker, so only the completed reply in the
-  transcript renders formatted.
+  transcript renders formatted. With Markdown on, `$...$` / `\\(...\\)` inline
+  math and `$$...$$` / `\\[...\\]` display math are typeset as transparent
+  images using Matplotlib's portable TeX-compatible MathText engine. Common
+  LaTeX constructs such as fractions, roots, sums, integrals, scripts, and
+  Greek symbols retain their mathematical layout and follow the active light
+  or dark theme. Dollar delimiters inside inline/fenced code, escaped dollars,
+  and ordinary currency are left alone. Unsupported or malformed LaTeX falls
+  back to its original source instead of breaking the reply.
 - `/clear` — end the current session cleanly and start a fresh one: new
   session id, empty history, but the same provider instance, permission
   engine, and resolver wiring the app started with (kernel rebuild-in-place,

@@ -13,7 +13,6 @@ import time
 from pathlib import Path
 
 from rich.console import RenderableType
-from rich.markdown import Markdown
 from rich.text import Text
 from textual import on
 from textual.app import App, ComposeResult
@@ -38,6 +37,7 @@ from harness.fold import fold
 from harness.hooks import ProposedToolCall
 from harness.interaction import PermissionRequest
 from harness.log import read_session
+from harness.math_markdown import MathMarkdown
 from harness.mcp_host import McpHost
 from harness.messages import Message, Role
 from harness.provider import TextDelta, ThinkingDelta, collect
@@ -531,7 +531,9 @@ class HarnessApp(App[None]):
         everywhere else. Thought summaries, errors, and system lines call
         say() (-> _plain) directly and never pass through here."""
         if self._markdown_mode:
-            return Markdown(text)
+            theme = self.current_theme
+            math_color = theme.foreground or ("#f4f4f4" if theme.dark else "#202020")
+            return MathMarkdown(text, color=math_color)
         return _plain(text)
 
     def _clear_live(self) -> None:
