@@ -21,6 +21,8 @@ def _catalog(tmp_path):
         "input_cost_per_token = 0.0\noutput_cost_per_token = 0.0\n"
         '\n[models.codex]\nbackend = "codex"\nroute = "codex/default"\n'
         "input_cost_per_token = 0.0\noutput_cost_per_token = 0.0\n"
+        '\n[models.gemini]\nbackend = "antigravity"\nroute = "antigravity/default"\n'
+        "input_cost_per_token = 0.0\noutput_cost_per_token = 0.0\n"
     )
     return Catalog.load(p)
 
@@ -49,6 +51,19 @@ class _FakeCodexBackend:
     async def complete(self, *, model, messages, tools=()):
         self.calls.append((str(model), len(tuple(messages)), len(tuple(tools))))
         yield TextDelta(text="from-codex-backend")
+
+
+class _FakeAntigravityBackend:
+    def __init__(self):
+        self.calls = []
+        self.bound = None
+
+    def bind_dispatcher(self, dispatcher):
+        self.bound = dispatcher
+
+    async def complete(self, *, model, messages, tools=()):
+        self.calls.append((str(model), len(tuple(messages)), len(tuple(tools))))
+        yield TextDelta(text="from-antigravity-backend")
 
 
 async def test_backend_entry_routes_to_claude_code(tmp_path):
@@ -104,6 +119,39 @@ def test_bind_dispatcher_forwards_to_both(tmp_path):
     provider.bind_dispatcher(sentinel)
     assert fake_claude.bound is sentinel
     assert fake_codex.bound is sentinel
+
+
+async def test_backend_entry_routes_to_antigravity(tmp_path):
+    fake = _FakeAntigravityBackend()
+    provider = CatalogProvider(_catalog(tmp_path), antigravity=fake)
+    message, _, _ = await collect(
+        provider.complete(model=ModelId("gemini"), messages=USER, tools=())
+    )
+    assert message.text() == "from-antigravity-backend"
+    assert fake.calls == [("antigravity/default", 1, 0)]  # route passed through
+
+
+async def test_backend_entry_without_wiring_is_loud_antigravity(tmp_path):
+    provider = CatalogProvider(_catalog(tmp_path))  # antigravity=None
+    with pytest.raises(ProviderError, match="antigravity"):
+        await collect(provider.complete(model=ModelId("gemini"), messages=USER, tools=()))
+
+
+def test_bind_dispatcher_forwards_to_all_three(tmp_path):
+    fake_claude = _FakeClaudeBackend()
+    fake_codex = _FakeCodexBackend()
+    fake_antigravity = _FakeAntigravityBackend()
+    provider = CatalogProvider(
+        _catalog(tmp_path),
+        claude_code=fake_claude,
+        codex=fake_codex,
+        antigravity=fake_antigravity,
+    )
+    sentinel = object()
+    provider.bind_dispatcher(sentinel)
+    assert fake_claude.bound is sentinel
+    assert fake_codex.bound is sentinel
+    assert fake_antigravity.bound is sentinel
 
 
 # --- keyless local endpoints: litellm openai/* routes refuse to run without

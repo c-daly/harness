@@ -445,11 +445,15 @@ def _run_main() -> None:
             )
         # the catalog-aware provider resolves endpoint+key per call from the alias,
         # so the model string carried through dispatch is the ALIAS, not the route
+        from harness.provider_antigravity import AntigravityProvider
         from harness.provider_claude_code import ClaudeCodeProvider
         from harness.provider_codex import CodexProvider
 
         provider: ModelProvider = CatalogProvider(
-            catalog, claude_code=ClaudeCodeProvider(), codex=CodexProvider()
+            catalog,
+            claude_code=ClaudeCodeProvider(),
+            codex=CodexProvider(),
+            antigravity=AntigravityProvider(),
         )
         model = ModelId(args.model)
         pricing = resolved.pricing_dict() or None
@@ -475,11 +479,15 @@ def _run_main() -> None:
                 f"routing default {routing_rules.default!r} is not a known alias; "
                 f"known aliases: {', '.join(catalog.aliases()) or '(none)'}"
             )
+        from harness.provider_antigravity import AntigravityProvider
         from harness.provider_claude_code import ClaudeCodeProvider
         from harness.provider_codex import CodexProvider
 
         provider = CatalogProvider(
-            catalog, claude_code=ClaudeCodeProvider(), codex=CodexProvider()
+            catalog,
+            claude_code=ClaudeCodeProvider(),
+            codex=CodexProvider(),
+            antigravity=AntigravityProvider(),
         )
         model = ModelId(routing_rules.default)
         pricing = resolved.pricing_dict() or None

@@ -1437,6 +1437,7 @@ class HarnessApp(App[None]):
             # refresh reaches delegated work too.
             provider.catalog = catalog
         else:
+            from harness.provider_antigravity import AntigravityProvider
             from harness.provider_claude_code import ClaudeCodeProvider
             from harness.provider_codex import CodexProvider
 
@@ -1445,7 +1446,12 @@ class HarnessApp(App[None]):
             # via the kernel so every holder (loop, subagent runner, kernel)
             # gets the new provider, not just loop.provider.
             self.kernel.set_provider(
-                CatalogProvider(catalog, claude_code=ClaudeCodeProvider(), codex=CodexProvider())
+                CatalogProvider(
+                    catalog,
+                    claude_code=ClaudeCodeProvider(),
+                    codex=CodexProvider(),
+                    antigravity=AntigravityProvider(),
+                )
             )
         # Unpinned subagents inherit the session's CURRENT model — the build-time
         # default (in echo mode not even a catalog alias) would dispatch experts

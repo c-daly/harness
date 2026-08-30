@@ -65,6 +65,14 @@ The source is flat under `src/harness/`. Grouped by role:
   `mcp_serve.py` and injected via a spawn-time `-c mcp_servers.harness.url`
   override (the `codex mcp-server` transport gates every tool call behind an
   elicitation no headless client can answer).
+- `provider_antigravity.py` — subscription-CLI backend: one turn = one
+  headless `agy -p ... --output-format stream-json` child (Google-account
+  OAuth subscription auth), with harness tools served to it over
+  `mcp_serve.py` and registered via a spawn-time `agy mcp add` subprocess
+  (`agy` has no dotted-config-override flag the way codex does). Unlike
+  codex's read-only sandbox, `agy`'s ~57 built-in tools are unconfined by
+  anything the harness controls — the scratch cwd/HOME steer, they do not
+  restrict reads or writes.
 - `catalog.py` — model alias → route/backend resolution.
 
 **Permissions & telemetry**

@@ -235,7 +235,7 @@ Set a different model with `HARNESS_LOCAL_MODEL` (e.g., `HARNESS_LOCAL_MODEL=uns
 | `route` (required) | The LiteLLM model string the alias maps to. |
 | `api_base` | Custom endpoint base URL — for OpenAI-compatible or local servers. |
 | `api_key_env` | Name of the env var holding the API key (a *name*, never the key itself). |
-| `backend` | Selects a non-LiteLLM provider implementation: `"claude-code"` runs turns through the local, logged-in Claude Code CLI on subscription auth (see [Claude on your Claude Code subscription](#claude-on-your-claude-code-subscription)); `"codex"` runs turns through the local, logged-in Codex CLI on subscription auth (see [Codex on your ChatGPT subscription](#codex-on-your-chatgpt-subscription)). Either way `route` becomes `<backend>/<model>` instead of a LiteLLM string. Absent → the LiteLLM route above. |
+| `backend` | Selects a non-LiteLLM provider implementation: `"claude-code"` runs turns through the local, logged-in Claude Code CLI on subscription auth (see [Claude on your Claude Code subscription](#claude-on-your-claude-code-subscription)); `"codex"` runs turns through the local, logged-in Codex CLI on subscription auth (see [Codex on your ChatGPT subscription](#codex-on-your-chatgpt-subscription)); `"antigravity"` runs turns through the local, logged-in Antigravity (`agy`) CLI on Google-account subscription auth (see [Antigravity (Gemini) backend](#antigravity-gemini-backend)). Either way `route` becomes `<backend>/<model>` instead of a LiteLLM string. Absent → the LiteLLM route above. |
 | `tags` | Free-form capability labels you can use to organize aliases. |
 | `input_cost_per_token` / `output_cost_per_token` | Pricing overrides. |
 | `max_input_tokens` | Context-window override. |
@@ -594,3 +594,71 @@ agent turn.
 
 Any reasoning Codex surfaces (`reasoning` items) is streamed to the UI as
 thought chunks and never enters the transcript.
+
+---
+
+## Antigravity (Gemini) backend
+
+Entries with `backend = "antigravity"` run turns through your locally
+installed, logged-in Antigravity CLI (`agy`, Google's successor to
+gemini-cli) instead of an API. Auth is your Google account's OAuth
+subscription grant, not a per-token API key — log in once through `agy`'s
+own login flow and the backend uses that. The harness serves its own tools
+to `agy` over MCP: a per-turn `McpToolServer` is registered with a separate
+`agy mcp add -t http harness <url>/` subprocess ahead of the turn (`agy` has
+no dotted-config-override flag the way codex does; the CLI is the only
+stable registration surface), and `--dangerously-skip-permissions` stands in
+for the config-seeding codex needs for headless MCP tool approval.
+
+`agy` has no config-dir override env var, so every turn runs under a whole
+scratch `HOME` (a fresh, `0700` tempdir), seeded fresh and torn down when the
+turn ends, so a turn never picks up your real Antigravity profile or its
+configured MCP servers. The harness never reads, stores, or transmits your
+Google account credential contents: each turn mechanically copies the auth
+files `agy` needs (`oauth_creds.json`, `google_accounts.json`,
+`installation_id`, `settings.json`, `projects.json`, `state.json` under
+`~/.gemini`, and `antigravity-oauth-token`, `installation_id`,
+`settings.json` under `~/.gemini/antigravity-cli`) into that per-turn
+scratch `HOME` so the `agy` CLI can authenticate itself, and the copies are
+removed with the rest of the scratch home when the turn ends. Log in once
+through `agy`'s own Google-account login flow and the backend uses that.
+
+```toml
+[models.gemini]
+backend = "antigravity"
+route = "antigravity/gemini-3.7-flash-high"  # "antigravity/<model>" passes a --model override
+input_cost_per_token = 0.0      # subscription: flat-rate, no per-token cost
+output_cost_per_token = 0.0
+tags = ["google", "subscription", "tool-calling"]
+```
+
+**Additive, not exclusive.** Like the codex backend and unlike the
+claude-code backend, the antigravity backend does *not* disable `agy`'s own
+built-in tools. An antigravity-backed turn gets the harness's tools in
+addition to whatever `agy` can already do on its own — tool parity here is
+additive, not a drop-in match for the claude-code backend's exclusivity.
+
+**Trust model (read this before relying on it).** `agy`'s ~57 built-in tools
+(`run_command`, `write_to_file`, `browser_*`, `view_file`, …) are not
+disabled — the harness permission engine gates every harness-tool call, and
+a deny-rule there binds, but it does not reach `agy`'s own built-ins. The
+per-turn scratch `cwd` and scratch `HOME` steer the model; they do not
+confine it. This is a step *less* contained than the codex backend, not the
+same: codex's own sandbox at least blocks its built-in shell from writing to
+disk or reaching the network, even though it cannot stop reads outside the
+scratch dir. Antigravity ships with no equivalent restriction in v1 — unlike
+codex's read-only sandbox, `agy`'s built-ins can potentially both **read
+and write** outside the scratch directories, unaudited by the harness. `agy`
+exposes `--sandbox` and `--mode plan` flags, but their interaction with MCP
+tool calls is unprobed; investigating and adopting them is a named
+fast-follow, not a v1 guarantee. The orientation prompt prefix (the same
+pattern used for codex) directs the model to do its file, directory, and
+system work through harness tools, but that is steering, not enforcement.
+
+Requirements: `agy` on PATH and logged in. One harness turn is one `agy`
+headless print-mode turn.
+
+`agy` exposes thinking-token *counts* but never thought text, so the
+antigravity backend never emits thinking output in v1 — there is nothing to
+stream to the UI as thought chunks, and (as with every other backend)
+nothing enters the transcript either way.
