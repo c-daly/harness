@@ -570,6 +570,43 @@ async def test_sixel_widget_tracks_transcript_scrolling(tmp_path, monkeypatch):
         assert image.region.y >= transcript.region.y
 
 
+async def test_complex_inline_math_uses_sixel_without_hiding_prose(tmp_path, monkeypatch):
+    monkeypatch.setattr(math_markdown, "_SIXEL_AVAILABLE", True)
+    source = (
+        r"For the quadratic equation \(ax^2+bx+c=0\), the solutions are "
+        r"\(x=\frac{-b\pm\sqrt{b^2-4ac}}{2a}\). In calculus, the Gaussian "
+        r"integral satisfies \(\int_{-\infty}^{\infty}e^{-x^2}\,dx=\sqrt{\pi}\)."
+    )
+    provider = FakeProvider([text_turn(source)])
+    app = make_app(tmp_path, provider=provider, model=ModelId("fake:inline-math"))
+    app.no_color = False
+    app.console.no_color = False
+    app._filters = [
+        line_filter
+        for line_filter in app._filters
+        if not isinstance(line_filter, (Monochrome, NoColor))
+    ]
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        await pilot.click("#prompt")
+        await pilot.press(*"show inline math", "enter")
+        await pilot.pause(0.5)
+        transcript = app.query_one(RichLog)
+        rendered = "\n".join(line.text for line in transcript.lines)
+        prose = " ".join(rendered.split())
+        images = list(app.query(SixelImage))
+
+        assert len(images) == 3
+        assert all(image.region.width > 0 and image.region.height > 0 for image in images)
+        assert not any(segment.control for line in transcript.lines for segment in line)
+        assert prose.index("For the quadratic equation") < prose.index(
+            "the solutions are"
+        )
+        assert prose.index("the solutions are") < prose.index("In calculus")
+        assert "the Gaussian integral satisfies" in prose
+
+
 async def test_completed_reply_with_code_block_and_table_uses_markdown_seam(tmp_path):
     """(b) e2e: a fenced code block + table reply completes without error and
     the transcript write for the reply goes through the _render_reply seam."""

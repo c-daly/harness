@@ -33,7 +33,6 @@ from rich.markdown import Markdown, MarkdownContext, MarkdownElement
 from rich.measure import Measurement
 from rich.segment import Segment
 from rich.style import Style
-from rich.table import Table
 from rich.text import Text
 
 if TYPE_CHECKING:
@@ -511,12 +510,13 @@ class LatexCellImage:
             yield Text(self.formula.original)
             return
         width, rows = self._size(max(1, options.max_width), image)
-        if self.formula.display and _sixel_available() and not console.no_color:
+        if _sixel_available() and not console.no_color:
             if self.sixel_placements is not None:
                 yield from self._sixel_placeholder(image, width, rows)
                 return
-            yield from console.render(self._sixel(image, width, rows), options)
-            return
+            if self.formula.display:
+                yield from console.render(self._sixel(image, width, rows), options)
+                return
         scaled = image.resize((width * 2, rows * 4), Image.Resampling.LANCZOS)
         alpha = scaled.getchannel("A")
         for row in range(rows):
@@ -530,6 +530,13 @@ class LatexCellImage:
         except LatexRenderError:
             width = len(self.formula.original)
         return Measurement(width, width)
+
+
+@dataclass(frozen=True)
+class _FlowImage:
+    renderable: LatexCellImage
+    width: int
+    rows: int
 
 
 class _MathTextElement(MarkdownElement):
@@ -595,6 +602,115 @@ class _MathTextElement(MarkdownElement):
         self._flush_text()
         context.leave_style()
 
+    @staticmethod
+    def _text_tokens(text: Text) -> list[Text]:
+        """Split styled prose into wrap-safe words, spaces, and hard breaks."""
+        return [
+            text[match.start() : match.end()]
+            for match in re.finditer(r"\n|[^\s\n]+[^\S\n]*|[^\S\n]+", text.plain)
+        ]
+
+    def _flow_rows(
+        self, console: Console, max_width: int
+    ) -> list[list[Text | _FlowImage]]:
+        """Lay mixed prose and equation boxes out in document order."""
+        rows: list[list[Text | _FlowImage]] = []
+        row: list[Text | _FlowImage] = []
+        used = 0
+
+        def flush() -> None:
+            nonlocal row, used
+            if row:
+                rows.append(row)
+                row = []
+                used = 0
+
+        def append_text(token: Text) -> None:
+            nonlocal row, used
+            if token.plain == "\n":
+                flush()
+                return
+            if not token.plain:
+                return
+            if not row and token.plain.isspace():
+                return
+            token_width = token.cell_len
+            if token_width > max_width:
+                flush()
+                wrapped = token.wrap(console, max_width, overflow="fold")
+                for index, line in enumerate(wrapped):
+                    if not line:
+                        continue
+                    if index == len(wrapped) - 1 and line.cell_len < max_width:
+                        row = [line]
+                        used = line.cell_len
+                    else:
+                        rows.append([line])
+                return
+            if row and used + token_width > max_width:
+                flush()
+                if token.plain.isspace():
+                    return
+            if row and isinstance(row[-1], Text):
+                row[-1].append_text(token)
+            else:
+                row.append(token.copy())
+            used += token_width
+
+        for part in self.parts:
+            if isinstance(part, Text):
+                for token in self._text_tokens(part):
+                    append_text(token)
+                continue
+            try:
+                width, image_rows = part._size(max_width)
+            except LatexRenderError:
+                append_text(Text(part.formula.original, Style(color=self.color)))
+                continue
+            if row and used + width > max_width:
+                flush()
+            row.append(_FlowImage(part, width, image_rows))
+            used += width
+        flush()
+        return rows
+
+    @staticmethod
+    def _render_flow_row(
+        row: list[Text | _FlowImage],
+        console: Console,
+        options: ConsoleOptions,
+    ) -> RenderResult:
+        height = max(item.rows if isinstance(item, _FlowImage) else 1 for item in row)
+        rendered: list[tuple[list[list[Segment]], int, int]] = []
+        for item in row:
+            if isinstance(item, _FlowImage):
+                width = item.width
+                item_height = item.rows
+                lines = console.render_lines(
+                    item.renderable,
+                    options.update_width(width),
+                    pad=True,
+                )
+            else:
+                width = item.cell_len
+                item_height = 1
+                lines = console.render_lines(
+                    item,
+                    options.update_width(max(1, width)),
+                    pad=True,
+                )
+            top = (height - item_height) // 2
+            rendered.append((lines, width, top))
+
+        for line_index in range(height):
+            for lines, width, top in rendered:
+                item_line = line_index - top
+                if 0 <= item_line < len(lines):
+                    yield from lines[item_line]
+                else:
+                    yield Segment(" " * width)
+            yield Segment.line()
+
     def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
         # Rich renders a block element before calling ``on_leave``.  Flush here
         # so text after the final equation (or an all-text block) is present in
@@ -614,12 +730,8 @@ class _MathTextElement(MarkdownElement):
         if len(self.parts) == 1 and isinstance(self.parts[0], LatexCellImage):
             yield Align(self.parts[0], align="center" if self.parts[0].formula.display else "left")
             return
-
-        table = Table.grid(padding=0, collapse_padding=True, expand=False)
-        for part in self.parts:
-            table.add_column(no_wrap=isinstance(part, LatexCellImage), vertical="middle")
-        table.add_row(*self.parts)
-        yield Align(table, align=self.justify)
+        for row in self._flow_rows(console, max(1, options.max_width)):
+            yield from self._render_flow_row(row, console, options)
 
 
 class _MathHeading(_MathTextElement):

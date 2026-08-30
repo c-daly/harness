@@ -1,5 +1,6 @@
 """LaTeX-aware Markdown rendering for the terminal transcript."""
 
+import re
 from io import BytesIO
 
 import pytest
@@ -184,6 +185,30 @@ def test_simple_display_math_uses_centered_unicode_without_rasterizing(monkeypat
 
     assert "(G−F)′ = 0" in rendered
     assert not any(0x2800 < ord(glyph) <= 0x28FF for glyph in rendered)
+
+
+def test_complex_inline_math_wraps_with_prose_in_document_order():
+    source = (
+        r"For the quadratic equation \(ax^2+bx+c=0\), the solutions are "
+        r"\(x=\frac{-b\pm\sqrt{b^2-4ac}}{2a}\). In calculus, the Gaussian "
+        r"integral satisfies \(\int_{-\infty}^{\infty}e^{-x^2}\,dx=\sqrt{\pi}\)."
+    )
+    console = Console(width=78, force_terminal=True, no_color=False)
+
+    lines = console.render_lines(MathMarkdown(source, color="#ffffff"), console.options)
+    rendered = "\n".join("".join(segment.text for segment in line) for line in lines)
+    prose = re.sub(r"[\u2800-\u28ff]", "", rendered)
+    prose = " ".join(prose.split())
+
+    phrases = (
+        "For the quadratic equation",
+        "the solutions are",
+        "In calculus",
+        "the Gaussian integral satisfies",
+    )
+    positions = [prose.index(phrase) for phrase in phrases]
+    assert positions == sorted(positions)
+    assert all(sum(segment.cell_length for segment in line) <= 78 for line in lines)
 
 
 def test_invalid_latex_falls_back_to_source_instead_of_crashing():
