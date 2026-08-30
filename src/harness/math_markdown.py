@@ -16,14 +16,15 @@ completed assistant reply disappear or crash the TUI.
 
 from __future__ import annotations
 
-import re
 import os
+import re
 import subprocess
 import sys
 import time
 from dataclasses import dataclass
 from functools import lru_cache
 from io import BytesIO
+from itertools import count
 from typing import TYPE_CHECKING
 
 from rich.align import Align
@@ -53,6 +54,13 @@ _BRAILLE_DOTS = (
 _INLINE_PRIMES = {"′", "″", "‴", "⁗"}
 _SPACED_OPERATORS = {"+", "=", "×", "÷", "<", ">", "≤", "≥", "→", "←", "↔", "⇒", "⇐", "⇔"}
 _SIXEL_RECHECK_SECONDS = 2.0
+SIXEL_META_KEY = "harness.sixel"
+_SIXEL_PLACEMENT_IDS = count()
+_MATRIX_RE = re.compile(
+    r"\\begin\{(?P<kind>[pbBvV]?matrix)\}(?P<body>.*?)"
+    r"\\end\{(?P=kind)\}",
+    re.DOTALL,
+)
 
 
 def _detect_sixel_support() -> bool:
@@ -115,8 +123,56 @@ class Formula:
     original: str
 
 
+@dataclass(frozen=True)
+class SixelPlacement:
+    """A Textual Sixel widget waiting to be placed over transcript cells."""
+
+    image: Image.Image
+    width: int
+    rows: int
+
+
 class LatexRenderError(ValueError):
     """A formula is outside the supported TeX-compatible MathText subset."""
+
+
+def _normalize_mathtext_source(source: str) -> str:
+    """Translate common matrix environments into MathText's supported subset.
+
+    Matplotlib MathText deliberately omits LaTeX environments, but it does
+    support ``substack`` and scalable delimiters.  This keeps small matrices
+    typeset without requiring a system TeX installation.
+    """
+
+    # Display math is commonly formatted across source lines for readability,
+    # but MathText only accepts a single logical line.  TeX treats those source
+    # newlines as ordinary whitespace; do the same while preserving explicit
+    # matrix row separators (``\\``).
+    source = re.sub(r"\s+", " ", source.strip())
+
+    delimiters = {
+        "matrix": ("", ""),
+        "pmatrix": ("(", ")"),
+        "bmatrix": ("[", "]"),
+        "Bmatrix": (r"\{", r"\}"),
+        "vmatrix": ("|", "|"),
+        "Vmatrix": (r"\Vert", r"\Vert"),
+    }
+
+    def replace(match: re.Match[str]) -> str:
+        rows = []
+        for row in re.split(r"\\\\", match.group("body")):
+            cells = [cell.strip() for cell in row.split("&")]
+            if any(cells):
+                rows.append(r"\quad ".join(cells))
+        if not rows:
+            return match.group(0)
+        body = r" \\ ".join(rows)
+        left, right = delimiters[match.group("kind")]
+        stack = rf"\substack{{{body}}}"
+        return rf"\left{left}{stack}\right{right}" if left else stack
+
+    return _MATRIX_RE.sub(replace, source)
 
 
 def _is_escaped(text: str, index: int) -> bool:
@@ -302,7 +358,10 @@ def render_formula_png(
                 "mathtext.fontset": "stix",
             }
         ):
-            math_to_image(f"${source}$", raw, prop=prop, dpi=dpi, format="png", color=color)
+            normalized = _normalize_mathtext_source(source)
+            math_to_image(
+                f"${normalized}$", raw, prop=prop, dpi=dpi, format="png", color=color
+            )
         raw.seek(0)
         image = Image.open(raw).convert("RGBA")
         bounds = image.getchannel("A").getbbox()
@@ -381,10 +440,18 @@ def render_inline_formula_text(source: str) -> str | None:
 class LatexCellImage:
     """A transparent equation rendered as Sixel or high-density Braille."""
 
-    def __init__(self, formula: Formula, *, color: str) -> None:
+    def __init__(
+        self,
+        formula: Formula,
+        *,
+        color: str,
+        sixel_placements: dict[str, SixelPlacement] | None = None,
+    ) -> None:
         self.formula = formula
         self.color = color
+        self.sixel_placements = sixel_placements
         self._cached_image: Image.Image | None = None
+        self._placement_id = str(next(_SIXEL_PLACEMENT_IDS))
 
     def _image(self) -> Image.Image:
         from PIL import Image
@@ -427,6 +494,14 @@ class LatexCellImage:
             sixel_options=SixelOptions(colors=16),
         )
 
+    def _sixel_placeholder(self, image: Image.Image, width: int, rows: int) -> RenderResult:
+        assert self.sixel_placements is not None
+        self.sixel_placements[self._placement_id] = SixelPlacement(image, width, rows)
+        marker_style = Style(meta={SIXEL_META_KEY: self._placement_id})
+        for _ in range(rows):
+            yield Segment(" " * width, marker_style)
+            yield Segment.line()
+
     def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
         from PIL import Image
 
@@ -437,6 +512,9 @@ class LatexCellImage:
             return
         width, rows = self._size(max(1, options.max_width), image)
         if self.formula.display and _sixel_available() and not console.no_color:
+            if self.sixel_placements is not None:
+                yield from self._sixel_placeholder(image, width, rows)
+                return
             yield from console.render(self._sixel(image, width, rows), options)
             return
         scaled = image.resize((width * 2, rows * 4), Image.Resampling.LANCZOS)
@@ -463,11 +541,17 @@ class _MathTextElement(MarkdownElement):
     @classmethod
     def create(cls, markdown: Markdown, token) -> "_MathTextElement":
         assert isinstance(markdown, MathMarkdown)
-        return cls(markdown.formulas, markdown.math_color)
+        return cls(markdown.formulas, markdown.math_color, markdown.sixel_placements)
 
-    def __init__(self, formulas: dict[str, Formula], color: str) -> None:
+    def __init__(
+        self,
+        formulas: dict[str, Formula],
+        color: str,
+        sixel_placements: dict[str, SixelPlacement] | None,
+    ) -> None:
         self.formulas = formulas
         self.color = color
+        self.sixel_placements = sixel_placements
         self.parts: list[Text | LatexCellImage] = []
         self._text = Text()
 
@@ -499,7 +583,13 @@ class _MathTextElement(MarkdownElement):
                         self._text.append(inline_text, Style(color=self.color))
                 else:
                     self._flush_text()
-                    self.parts.append(LatexCellImage(formula, color=self.color))
+                    self.parts.append(
+                        LatexCellImage(
+                            formula,
+                            color=self.color,
+                            sixel_placements=self.sixel_placements,
+                        )
+                    )
 
     def on_leave(self, context: MarkdownContext) -> None:
         self._flush_text()
@@ -536,7 +626,7 @@ class _MathHeading(_MathTextElement):
     @classmethod
     def create(cls, markdown: Markdown, token) -> "_MathHeading":
         assert isinstance(markdown, MathMarkdown)
-        heading = cls(markdown.formulas, markdown.math_color)
+        heading = cls(markdown.formulas, markdown.math_color, markdown.sixel_placements)
         heading.style_name = f"markdown.{token.tag}"
         heading.justify = "center" if token.tag == "h1" else "left"
         return heading
@@ -545,9 +635,19 @@ class _MathHeading(_MathTextElement):
 class MathMarkdown(Markdown):
     """Drop-in Rich Markdown renderable with transparent LaTeX equations."""
 
-    def __init__(self, markup: str, *, color: str = "#f4f4f4", **kwargs) -> None:
+    def __init__(
+        self,
+        markup: str,
+        *,
+        color: str = "#f4f4f4",
+        sixel_widgets: bool = False,
+        **kwargs,
+    ) -> None:
         prepared, self.formulas = extract_math(markup)
         self.math_color = color
+        self.sixel_placements: dict[str, SixelPlacement] | None = (
+            {} if sixel_widgets else None
+        )
         # Preserve Rich's native Markdown path byte-for-byte when a reply has
         # no equations.  Only paragraphs containing our private placeholders
         # need the mixed text/image element implementation.
@@ -564,6 +664,8 @@ __all__ = [
     "Formula",
     "LatexRenderError",
     "MathMarkdown",
+    "SIXEL_META_KEY",
+    "SixelPlacement",
     "extract_math",
     "render_inline_formula_text",
     "render_formula_png",

@@ -55,6 +55,17 @@ def test_render_formula_png_has_a_real_transparent_alpha_channel():
     assert image.getpixel((0, 0))[3] == 0  # transparent padding is guaranteed
 
 
+def test_render_formula_png_supports_a_common_latex_matrix_environment():
+    png = render_formula_png(
+        "\\det\n\\begin{pmatrix}\na & b\\\\\nc & d\n\\end{pmatrix}\n=ad-bc",
+        color="#f4f4f4",
+    )
+    image = Image.open(BytesIO(png)).convert("RGBA")
+
+    assert image.width > image.height
+    assert image.getchannel("A").getbbox() is not None
+
+
 def test_math_markdown_renders_typeset_cells_and_keeps_surrounding_text():
     renderable = MathMarkdown(r"Before $\frac{x}{y}$ after", color="#ffffff")
     console = Console(width=80, record=True, force_terminal=True, color_system="truecolor")
