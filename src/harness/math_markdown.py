@@ -60,6 +60,10 @@ _MATRIX_RE = re.compile(
     r"\\end\{(?P=kind)\}",
     re.DOTALL,
 )
+_UNBRACED_FONT_COMMAND_RE = re.compile(
+    r"\\(?P<command>mathcal|mathbb|mathbf|mathrm|mathsf|mathtt|mathit)"
+    r"\s+(?P<atom>\\[A-Za-z]+|[A-Za-z0-9])"
+)
 
 
 def _detect_sixel_support() -> bool:
@@ -148,6 +152,16 @@ def _normalize_mathtext_source(source: str) -> str:
     # newlines as ordinary whitespace; do the same while preserving explicit
     # matrix row separators (``\\``).
     source = re.sub(r"\s+", " ", source.strip())
+    # Full LaTeX lets font commands consume an unbraced next atom (``\mathbf
+    # v``), while MathText requires braces.  Models commonly emit the valid
+    # compact form, so adapt it rather than exposing the delimiters verbatim.
+    source = _UNBRACED_FONT_COMMAND_RE.sub(
+        lambda match: rf"\{match.group('command')}{{{match.group('atom')}}}",
+        source,
+    )
+    # MathText spells the double vertical delimiter ``\Vert`` and does not
+    # recognize LaTeX's left/right aliases.
+    source = source.replace(r"\lVert", r"\Vert").replace(r"\rVert", r"\Vert")
 
     delimiters = {
         "matrix": ("", ""),
@@ -462,8 +476,15 @@ class LatexCellImage:
 
     def _size(self, max_width: int, image: Image.Image | None = None) -> tuple[int, int]:
         image = image or self._image()
-        rows = max(2 if self.formula.display else 1, round(image.height / 14))
-        rows = min(rows, 7 if self.formula.display else 3)
+        # Inline math shares a baseline with terminal text, so keep it to one
+        # cell row regardless of the source bitmap's DPI.  Display equations
+        # may use the extra vertical resolution that fractions, roots, and
+        # stacked notation benefit from.
+        rows = (
+            min(7, max(2, round(image.height / 14)))
+            if self.formula.display
+            else 1
+        )
         width = max(1, round(image.width / image.height * rows * 2))
         if width > max_width:
             rows = max(1, round(rows * max_width / width))

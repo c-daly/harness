@@ -596,15 +596,26 @@ async def test_complex_inline_math_uses_sixel_without_hiding_prose(tmp_path, mon
         rendered = "\n".join(line.text for line in transcript.lines)
         prose = " ".join(rendered.split())
         images = list(app.query(SixelImage))
+        screen_text = "\n".join(
+            "".join(segment.text for segment in strip if not segment.control)
+            for strip in app.screen._compositor.render_strips()
+        )
 
         assert len(images) == 3
         assert all(image.region.width > 0 and image.region.height > 0 for image in images)
+        assert all(image.region.height == 1 for image in images)
         assert not any(segment.control for line in transcript.lines for segment in line)
         assert prose.index("For the quadratic equation") < prose.index(
             "the solutions are"
         )
         assert prose.index("the solutions are") < prose.index("In calculus")
         assert "the Gaussian integral satisfies" in prose
+        # Assert against Textual's final layered screen, not just RichLog's
+        # backing lines.  A full-size transparent overlay can retain the prose
+        # in RichLog while erasing it from the actual terminal compositor.
+        assert "For the quadratic equation" in screen_text
+        assert "the solutions are" in screen_text
+        assert "the Gaussian integral satisfies" in screen_text
 
 
 async def test_completed_reply_with_code_block_and_table_uses_markdown_seam(tmp_path):

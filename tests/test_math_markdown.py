@@ -67,6 +67,19 @@ def test_render_formula_png_supports_a_common_latex_matrix_environment():
     assert image.getchannel("A").getbbox() is not None
 
 
+def test_render_formula_png_accepts_common_unbraced_font_commands_and_norm():
+    sources = (
+        r"X\sim\mathcal N(\mu,\sigma^2)",
+        r"\mathbb E[X]=\mu",
+        r"\mathbf v=(v_1,\ldots,v_n)",
+        r"\lVert\mathbf v\rVert_2=\sqrt{\sum_{i=1}^n v_i^2}",
+    )
+
+    for source in sources:
+        image = Image.open(BytesIO(render_formula_png(source, color="#f4f4f4")))
+        assert image.getchannel("A").getbbox() is not None
+
+
 def test_math_markdown_renders_typeset_cells_and_keeps_surrounding_text():
     renderable = MathMarkdown(r"Before $\frac{x}{y}$ after", color="#ffffff")
     console = Console(width=80, record=True, force_terminal=True, color_system="truecolor")
@@ -170,6 +183,20 @@ def test_simple_inline_math_uses_crisp_unicode_but_layout_stays_rasterized():
     assert render_inline_formula_text(r"\alpha + \beta = \gamma") == "α + β = γ"
     assert render_inline_formula_text(r"x^2") is None
     assert render_inline_formula_text(r"\frac{x}{y}") is None
+
+
+def test_inline_raster_is_one_text_row_while_display_math_can_be_larger():
+    inline = LatexCellImage(
+        Formula(source=r"\frac{x}{y}", display=False, original=r"\(\frac{x}{y}\)"),
+        color="#ffffff",
+    )
+    display = LatexCellImage(
+        Formula(source=r"\frac{x}{y}", display=True, original=r"\[\frac{x}{y}\]"),
+        color="#ffffff",
+    )
+
+    assert inline._size(80)[1] == 1
+    assert display._size(80)[1] >= 2
 
 
 def test_simple_display_math_uses_centered_unicode_without_rasterizing(monkeypatch):

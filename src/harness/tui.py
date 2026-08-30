@@ -94,8 +94,8 @@ class _TranscriptSixel:
     rows: int
 
 
-class MathImageOverlay(Container):
-    """Transparent widget layer that forwards wheel scrolling to the log."""
+class MathTranscriptStack(Container):
+    """Transcript stack that preserves scrolling over equation widgets."""
 
     def on_mouse_scroll_down(self, event) -> None:
         self.app.query_one("#transcript", MathTranscript).scroll_down(animate=False)
@@ -160,7 +160,7 @@ class MathTranscript(RichLog):
                     )
                 cell_offset += segment.cell_length
 
-        overlay = self.app.query_one("#math-overlay", MathImageOverlay)
+        stack = self.app.query_one("#transcript-stack", Container)
         widgets = []
         for placement_id, (x, absolute_y) in located.items():
             placement = wanted[placement_id]
@@ -184,7 +184,10 @@ class MathTranscript(RichLog):
             self._mounted_placement_ids.add(placement_id)
             widgets.append(widget)
         if widgets:
-            overlay.mount(*widgets)
+            # Mount only the equation-sized widgets above the transcript.  A
+            # full-screen transparent sibling still contributes blank cells to
+            # Textual's compositor and therefore erases all prose beneath it.
+            stack.mount(*widgets)
             self._position_sixel_widgets()
             self.call_after_refresh(self._position_sixel_widgets)
 
@@ -571,14 +574,9 @@ class HarnessApp(App[None]):
         width: 100%;
         layer: transcript;
     }
-    #math-overlay {
-        position: absolute;
-        height: 100%;
-        width: 100%;
-        layer: images;
-        background: transparent;
-    }
     .math-sixel {
+        position: absolute;
+        layer: images;
         background: transparent;
     }
     #live { height: auto; }
@@ -679,11 +677,10 @@ class HarnessApp(App[None]):
 
     def compose(self) -> ComposeResult:
         with Vertical():
-            with Container(id="transcript-stack"):
+            with MathTranscriptStack(id="transcript-stack"):
                 yield MathTranscript(
                     id="transcript", wrap=True, markup=False, max_lines=10_000
                 )
-                yield MathImageOverlay(id="math-overlay")
             yield Static(id="live")
         yield Static(id="stats")
         yield Static(id="statusbar")
