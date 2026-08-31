@@ -10,15 +10,10 @@ fold logic of its own, only the DOM plumbing (tabs, refresh timing, the one
 place -- the agent-swarm section -- that reaches back out through a caller
 -supplied dispatch callback).
 
-Coordination-call attribution (the "strategy" grouping key on AgentRow) is a
-best-effort sequential assumption: a stack of currently-open
-ensemble/consult_panel/escalate calls, and every SubagentSpawned seen while
-that stack is non-empty is attributed to its top. This is exact for the
-common case (one coordination call's experts fan out and land before the
-next coordination call is proposed) and does not attempt to disambiguate
-two coordination calls genuinely running concurrently in the same turn --
-SubagentSpawned does not carry its proposing call_id, so there is no way to
-recover that in general.
+Coordination-call attribution (the "strategy" grouping key on AgentRow) is
+exact: SubagentSpawned carries the call_id of the tool call that caused it,
+so coordination calls running concurrently in one turn stay correctly
+separated.
 """
 
 from dataclasses import dataclass, replace
@@ -108,7 +103,7 @@ def fold_agents(events: list[Envelope]) -> list[AgentRow]:
     rows: dict[str, AgentRow] = {}
     order: list[str] = []
     open_dispatch: set[str] = set()
-    strategy_stack: list[str] = []  # open ensemble/consult_panel/escalate call_ids
+    strategy_calls: set[str] = set()  # ensemble/consult_panel/escalate call_ids seen
 
     def upsert(call_id: str, **changes) -> None:
         if call_id not in rows:
@@ -130,20 +125,21 @@ def fold_agents(events: list[Envelope]) -> list[AgentRow]:
                 upsert(call_id, label=label, model=str(model) if model else None)
                 open_dispatch.add(call_id)
             elif tool in _STRATEGY_TOOLS:
-                strategy_stack.append(call_id)
+                strategy_calls.add(call_id)
         elif isinstance(ev, ToolCallCompleted):
             call_id = str(ev.call_id)
             if call_id in open_dispatch:
                 open_dispatch.discard(call_id)
                 upsert(call_id, status="error" if ev.is_error else "done")
-            elif strategy_stack and strategy_stack[-1] == call_id:
-                strategy_stack.pop()
         elif isinstance(ev, SubagentSpawned):
-            if strategy_stack:
-                group = strategy_stack[-1]
+            group = str(ev.call_id) if ev.call_id is not None else None
+            # a dispatch_agent spawn already has its own row keyed by the
+            # dispatch call; only coordination experts get a child-keyed row
+            if group is not None and group in strategy_calls:
                 child = str(ev.child_session_id)
                 model = str(ev.model) if ev.model else None
-                upsert(child, label=model or "(agent)", model=model, strategy=group)
+                label = str(ev.agent) if ev.agent else (model or "(agent)")
+                upsert(child, label=label, model=model, strategy=group)
         elif isinstance(ev, SubagentFinished):
             child = str(ev.child_session_id)
             if child in rows and rows[child].strategy is not None:
