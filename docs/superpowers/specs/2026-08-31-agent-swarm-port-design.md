@@ -86,41 +86,46 @@ harness covers all three points today, two of them outright:
 | `hooks/pre-compacting.py` | 277 | **rewrite** → see Decision 3 |
 | router / MCP surface / daemon | ~2,350 | **open** — see Open Questions |
 | workflows, orchestration, experiments, stores | ~13,000 | **stays put** — shell-agnostic |
-| 19 skills / 8 agents / 2 commands | prose | **already converted** by `harness import` |
+| 19 skills / 2 commands | prose | **already converted** by `harness import` |
+| 8 agent definitions | prose | **rewrite frontmatter** — name real tools; drop the Bash transport |
 
 ## Decisions
 
-### 1. Tool visibility is the permission mechanism for agents
+### 1. Agent tool access is visibility, and nothing more
 
 `FilteredRegistry` is not a display filter. Its docstring: *"restricts
 advertisement (specs) AND execution (get)"*, and `dispatcher.py:147` executes
-through it — `self.registry.get(effective.tool)(dict(effective.args))`. It is
-already a per-child enforcement point in the call path.
+through it. It is already a per-child enforcement point in the call path.
 
-It covers agent scoping almost completely. The one thing it cannot express is
-**partial (arg-scoped) permission** — `Bash(mcp*)`, the exact rule the import
-report degraded on all 8 agents.
+All 8 agent-swarm agents declare `tools: Bash(mcp*)` — a **single** tool.
+`implementer.md` states it plainly: *"You have exactly one tool: `Bash`. Every
+real action runs through `mcp-call`."* Bash is a **transport**, not a capability:
+CC subagents could not be handed MCP tools directly, so every action was funnelled
+through a shell shim and `Bash(mcp*)` scoped that shim.
 
-**Decision:** extend visibility rather than introduce a principal into the
-dispatch vocabulary.
+**Decision:** no arg-scoping. Rewrite each agent's frontmatter to name the real
+tools it needs; `FilteredRegistry` hands them over directly. `reviewer` gets
+`read_file`, `glob`, `grep`, and the serena tools — and **no bash at all**. There
+is nothing left to arg-scope.
 
-- `AgentDef.tools` entries gain an optional arg pattern. CC's `Bash(mcp*)`
-  syntax already expresses this; the importer parses it and discards it.
-- `FilteredRegistry.get` returns a wrapper that validates args against the
-  constraint before delegating.
-- A violation raises a distinct error the model can correct against — not
-  `UnknownToolError`, which presents as a phantom missing tool.
+`can_write_files: false` dissolves the same way: omit `write_file`/`edit_file`
+from `tools`. It exists as a separate field only because Bash-as-transport made
+the tool list unable to express it.
 
-This is per-child, closes over its own constraints, and needs no change to the
-shared `HookBus` or to `PermissionEngine`.
+**Rejected:** extending `FilteredRegistry` with arg patterns; threading a
+principal (`agent_id`/`role`/`phase`) through `ProposedToolCall`. Both solve a
+problem that exists only inside Claude Code. Partial tool permission is a
+coherent capability in general — nothing in agent-swarm needs it.
 
-**Rejected:** threading a principal (`agent_id`/`role`/`phase`) through
-`ProposedToolCall` and unifying `FilteredRegistry` with `PermissionEngine`.
-Larger, and unnecessary once the registry is recognised as an enforcement point.
+**Consequence:** the 8 `[degraded] Bash(mcp*) arg-scope dropped` entries in the
+import report are not capability gaps. They are the importer correctly reporting
+that it discarded something which should not survive the port.
 
-**Constraint that forced this:** children get `hooks=self.hooks` — the *parent's
-shared* `HookBus` — while the registry is per-child. A per-agent dispatch hook
-would leak onto concurrent siblings. The registry was always the right home.
+**The one genuine gap:** `max_output_chars`. agent-swarm's agents bound their
+output (2000–5000 chars); harness's `AgentDef` has no such field and
+`SubagentRunner` returns `loop.run_turn()` unbounded. Add the field and enforce
+it at the `SubagentRunner` boundary. **This is the only agent-fidelity change
+harness actually needs.**
 
 `PermissionEngine` keeps main-loop `Ask`/grants and model-call gating
 (`model:<route>`). It is unaffected by this work.
@@ -240,8 +245,8 @@ This needs its own spec. Nothing above depends on the answer.
 
 The port is done when, on harness with no Claude Code in the loop:
 
-1. A `reviewer` agent is denied `bash` outside `mcp*` args, natively, and the
-   denial is legible to the model.
+1. A `reviewer` agent's tool list contains no `bash` at all, and it reaches the
+   read and serena tools directly rather than through an `mcp-call` shim.
 2. A dispatched agent is registered and gated through the router by a harness
    dispatch hook.
 3. The session-start briefing appears via a `SESSION_START` `Inject`.
@@ -253,8 +258,8 @@ The port is done when, on harness with no Claude Code in the loop:
 
 ## Sequencing
 
-1. **Arg-scoped tool visibility** (Decision 1) — unblocks agent fidelity; the
-   only change with no dependencies.
+1. **Agent definitions + `max_output_chars`** (Decision 1) — rewrite the 8
+   frontmatters onto real tools; add the one field harness lacks. No dependencies.
 2. **Hook rewrite** (Decisions 2, 3) — 2 dispatch hooks, 1 session-start
    contribution, 2 subscribers, `PRE_COMPACTION` wired, dead points deleted.
 3. **Telemetry source swap** (Decision 4) — exporter reads harness's store.
