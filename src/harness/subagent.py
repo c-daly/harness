@@ -13,7 +13,7 @@ from harness.loop import AgentLoop
 from harness.provider import ModelProvider
 from harness.session import Session
 from harness.tools import FilteredRegistry, ToolRegistry, ToolSpec
-from harness.types import ModelId, ToolName, new_session_id
+from harness.types import AgentId, ModelId, ToolName, new_session_id
 
 
 _TRUNCATION_MARKER = "\n\u2026[truncated]"
@@ -72,7 +72,13 @@ class SubagentRunner:
             chosen = model
             pinned = True
         child_id = new_session_id()
-        spawn_env = parent.append(SubagentSpawned(child_session_id=child_id, model=chosen))
+        spawn_env = parent.append(
+            SubagentSpawned(
+                child_session_id=child_id,
+                agent=AgentId(agent) if agent is not None else None,
+                model=chosen,
+            )
+        )
         child = Session(
             self.base, child_id, parent=(parent.id, spawn_env.seq), default_model=chosen
         )

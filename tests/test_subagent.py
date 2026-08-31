@@ -280,3 +280,29 @@ async def test_agent_without_a_bound_returns_full_output(tmp_path):
     result = await runner.run(prompt="go", model=None, parent=parent, agent="chatty")
 
     assert result == "y" * 500
+
+
+async def test_spawn_event_records_which_agent_ran(tmp_path):
+    parent = Session(tmp_path, SessionId("parent"))
+    parent.start()
+    runner = _runner(tmp_path, FakeProvider([text_turn("done")]))
+    runner.agents = {"explorer": AgentDef(name="explorer", description="d", body="explore")}
+
+    await runner.run(prompt="go", model=None, parent=parent, agent="explorer")
+
+    events = [e.event for e in read_session(tmp_path, SessionId("parent"))]
+    spawned = [e for e in events if isinstance(e, SubagentSpawned)]
+    assert len(spawned) == 1
+    assert spawned[0].agent == "explorer"
+
+
+async def test_spawn_event_agent_is_none_without_an_agent(tmp_path):
+    parent = Session(tmp_path, SessionId("parent"))
+    parent.start()
+    runner = _runner(tmp_path, FakeProvider([text_turn("done")]))
+
+    await runner.run(prompt="go", model=None, parent=parent)
+
+    events = [e.event for e in read_session(tmp_path, SessionId("parent"))]
+    spawned = [e for e in events if isinstance(e, SubagentSpawned)]
+    assert spawned[0].agent is None
