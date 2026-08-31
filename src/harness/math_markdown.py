@@ -224,8 +224,15 @@ def _find_closer(text: str, start: int, closer: str, *, multiline: bool) -> int:
         index += len(closer)
 
 
-def _fence_at(text: str, index: int) -> tuple[str, int] | None:
-    """Return a Markdown fence at a line start (up to three spaces indented)."""
+def _fence_at(text: str, index: int) -> tuple[str, int, bool] | None:
+    """Return (char, length, may_close) for a fence at a line start.
+
+    Indented up to three spaces, per Markdown.  ``may_close`` is False when the
+    run is followed by anything other than whitespace: CommonMark permits an
+    info string on an OPENING fence only, so ```` ```text hello ```` can open a
+    block but never close one.  Treating it as a close would end the block
+    early and expose the code inside it to the math scanner.
+    """
     if index and text[index - 1] != "\n":
         return None
     cursor = index
@@ -238,7 +245,11 @@ def _fence_at(text: str, index: int) -> tuple[str, int] | None:
     while end < len(text) and text[end] == char:
         end += 1
     length = end - cursor
-    return (char, length) if length >= 3 else None
+    if length < 3:
+        return None
+    line_end = text.find("\n", end)
+    line_end = len(text) if line_end < 0 else line_end
+    return (char, length, not text[end:line_end].strip())
 
 
 def extract_math(markup: str) -> tuple[str, dict[str, Formula]]:
@@ -264,9 +275,10 @@ def extract_math(markup: str) -> tuple[str, dict[str, Formula]]:
             line_end = markup.find("\n", index)
             line_end = len(markup) if line_end < 0 else line_end + 1
             output.append(markup[index:line_end])
+            char, length, may_close = possible_fence
             if fence is None:
-                fence = possible_fence
-            elif possible_fence[0] == fence[0] and possible_fence[1] >= fence[1]:
+                fence = (char, length)
+            elif may_close and char == fence[0] and length >= fence[1]:
                 fence = None
             index = line_end
             continue

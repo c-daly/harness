@@ -46,6 +46,34 @@ def test_math_scanner_preserves_code_escaped_dollars_and_currency():
     assert prepared == source
 
 
+def test_fence_line_with_trailing_content_does_not_close_a_code_block():
+    """CommonMark allows an info string on an OPENING fence only, so a line
+    like ```text hello inside a block continues it. Closing early would let
+    the math scanner rewrite dollar-delimited code that follows."""
+    source = (
+        "```\n"
+        "```text hello\n"
+        "price = '$20'\n"
+        "formula = '$x^2$'\n"
+        "```\n"
+    )
+
+    prepared, formulas = extract_math(source)
+
+    assert formulas == {}
+    assert prepared == source
+
+
+def test_matching_length_bare_fence_still_closes_a_code_block():
+    source = "```\ncode with $5 and $10\n```\n\nProse $x^2$ is math.\n"
+
+    prepared, formulas = extract_math(source)
+
+    assert len(formulas) == 1
+    assert next(iter(formulas.values())).source == "x^2"
+    assert "code with $5 and $10" in prepared
+
+
 def test_render_formula_png_has_a_real_transparent_alpha_channel():
     png = render_formula_png(r"\frac{1}{\sqrt{2\pi}} e^{-x^2/2}", color="#f4f4f4")
     image = Image.open(BytesIO(png)).convert("RGBA")
