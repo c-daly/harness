@@ -64,6 +64,34 @@ def test_fence_line_with_trailing_content_does_not_close_a_code_block():
     assert prepared == source
 
 
+def test_fence_helper_rejects_a_backtick_fence_with_backticks_in_its_info():
+    """CommonMark: a backtick fence's info string may not contain a backtick,
+    so such a line is not a fence at all -- it can neither open nor close.
+
+    extract_math's output is unchanged either way: a rejected line falls
+    through to the code-span branch, which consumes the same span. This keeps
+    the helper honest for any future caller rather than fixing a live defect.
+    """
+    from harness.math_markdown import _fence_at
+
+    assert _fence_at("```js `x`\n", 0) is None
+    assert _fence_at("``` `\n", 0) is None
+    # a plain info string is a valid opening fence that may not close
+    assert _fence_at("```js\n", 0) == ("`", 3, False)
+    # bare fence: opens or closes
+    assert _fence_at("```\n", 0) == ("`", 3, True)
+
+
+def test_tilde_fence_may_carry_backticks_in_its_info_string():
+    """The backtick restriction is specific to backtick fences."""
+    source = "~~~js `x`\nprice = '$20'\n~~~\n"
+
+    prepared, formulas = extract_math(source)
+
+    assert formulas == {}
+    assert prepared == source
+
+
 def test_matching_length_bare_fence_still_closes_a_code_block():
     source = "```\ncode with $5 and $10\n```\n\nProse $x^2$ is math.\n"
 

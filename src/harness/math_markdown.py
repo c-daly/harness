@@ -249,7 +249,15 @@ def _fence_at(text: str, index: int) -> tuple[str, int, bool] | None:
         return None
     line_end = text.find("\n", end)
     line_end = len(text) if line_end < 0 else line_end
-    return (char, length, not text[end:line_end].strip())
+    info = text[end:line_end]
+    if char == "`" and "`" in info:
+        # CommonMark: a backtick fence's info string may not contain a
+        # backtick, so such a line is not a fence -- it can neither open nor
+        # close.  extract_math's output is unchanged either way (a rejected
+        # line falls through to the code-span branch, which consumes the same
+        # span); this keeps the helper honest for any future caller.
+        return None
+    return (char, length, not info.strip())
 
 
 def extract_math(markup: str) -> tuple[str, dict[str, Formula]]:
