@@ -17,6 +17,26 @@ were flagged for hand-port, and the MCP command still carried an unexpanded
 not a compatibility layer — but it means the port is a design problem, not a
 conversion problem.
 
+## Scope, and what this spec may not decide
+
+This is a **port** spec: it answers "how does agent-swarm run natively on
+harness." That framing entitles it to say what the port does not need. It does
+not entitle it to reshape harness.
+
+- **In scope:** declining to build something because the port does not require
+  it. That leaves harness unchanged.
+- **Out of scope:** removing, constraining, or setting policy on harness's own
+  existing surface because a plugin does not exercise it. harness is a
+  Claude-Code-class shell in its own right; its concurrency model, MCP connection
+  lifecycle, performance characteristics, and hook/event surface are harness
+  questions, answered on harness's terms.
+
+Where this spec brushes against one of those, it names it and stops. A plugin
+port is evidence about what a shell needs. It is never the requirements source —
+especially this plugin, so much of whose shape is Claude Code workaround
+structure that deriving harness's design from it would re-import the very
+constraints the port exists to shed.
+
 ## The organizing principle
 
 **A large fraction of agent-swarm is not capability. It is workaround structure
@@ -169,9 +189,16 @@ The distinction that earns its keep is not hooks-vs-events but two families:
 "Deny this dispatch" is not expressible as an append-only fact. That is the whole
 case for hooks, and harness already has that family.
 
-**Decision:** delete `POST_TOOL` and `PROMPT_SUBMIT` from `LifecyclePoint`. They
-advertise capability nothing needs and keep a warning path alive at
-`plugins.py:186`.
+**Decision:** the port wires neither `POST_TOOL` nor `PROMPT_SUBMIT`, and adds no
+new lifecycle points.
+
+Whether harness should *keep* those enum members is **out of scope** (see Scope).
+An earlier draft of this spec deleted them on the grounds that agent-swarm does
+not need them — that is a harness architecture decision derived from one plugin's
+requirements, which this spec is not entitled to make. A shell may well want a
+post-tool interception point for reasons no port would reveal. The observation to
+carry forward is only that they are currently unfired and warn at
+`plugins.py:186`; the disposition is harness's to decide.
 
 ### 3. Compaction ordering
 
@@ -264,10 +291,11 @@ a subtraction" the literal shape of the work rather than a framing device.
 ### Two residuals, neither requiring a daemon
 
 - **Backend startup cost.** The daemon kept serena and other MCP backends warm
-  across sessions; `McpHost` starts them per session. This is a performance
-  question, not an architectural one — measure serena's cold start before
-  deciding it matters. If it does, the answer is connection reuse in `McpHost`,
-  not a second process.
+  across sessions; `McpHost` starts them per session. Removing the daemon means
+  the port no longer exercises cross-session connection reuse — it does **not**
+  mean harness has decided it does not want it. MCP connection lifecycle is a
+  harness-level question and is deliberately left open here. Noted only because
+  the daemon's removal makes it observable.
 - **Cross-session workflow state.** Whether iterate/orchestrate state must
   outlive a top-level session is unresolved. harness has session resume
   (`resume.py`, `sessions.py`) and plugins may hold stores. If continuity is
