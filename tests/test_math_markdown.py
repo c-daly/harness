@@ -64,6 +64,28 @@ def test_fence_line_with_trailing_content_does_not_close_a_code_block():
     assert prepared == source
 
 
+def test_unmatched_backtick_run_does_not_stop_later_math():
+    """CommonMark: an unmatched backtick run is literal text and the rest of
+    the content is parsed normally. Copying the remainder and stopping left
+    every later formula in the reply unrendered."""
+    source = "```js `x`\nprose after\n\n$x^2$ is math.\n"
+
+    _prepared, formulas = extract_math(source)
+
+    assert len(formulas) == 1
+    assert next(iter(formulas.values())).source == "x^2"
+
+
+def test_currency_after_an_unmatched_backtick_run_stays_literal():
+    """Resuming the scan must not resurrect the currency false positive."""
+    source = "Use `echo to print. Cost is $5 and $10.\n"
+
+    prepared, formulas = extract_math(source)
+
+    assert formulas == {}
+    assert prepared == source
+
+
 def test_fence_helper_rejects_a_backtick_fence_with_backticks_in_its_info():
     """CommonMark: a backtick fence's info string may not contain a backtick,
     so such a line is not a fence at all -- it can neither open nor close.

@@ -304,8 +304,14 @@ def extract_math(markup: str) -> tuple[str, dict[str, Formula]]:
             delimiter = markup[index:run_end]
             close = markup.find(delimiter, run_end)
             if close < 0:
-                output.append(markup[index:])
-                break
+                # CommonMark: an unmatched backtick run is literal text and the
+                # rest of the content is parsed normally.  Copying the remainder
+                # and stopping left every later formula in the reply literal.
+                # Currency stays safe via the digit guard below, which protects
+                # ordinary prose already.
+                output.append(delimiter)
+                index = run_end
+                continue
             close += len(delimiter)
             output.append(markup[index:close])
             index = close
