@@ -368,3 +368,38 @@ async def test_dispatch_model_tee_sees_retry_attempts_fresh(tmp_path):
     assert "partial" in text_chunks
     assert "full" in text_chunks and " reply" in text_chunks
     assert message.text() == "full reply"
+
+
+class CallIdEcho:
+    """Reports the ambient call id, proving the dispatcher publishes it."""
+
+    spec = ToolSpec(name=ToolName("callid_echo"), description="echo", parameters={})
+
+    async def __call__(self, args):
+        from harness.callctx import current_call_id
+
+        return str(current_call_id())
+
+
+async def test_dispatcher_publishes_the_call_id_to_the_executing_tool(tmp_path):
+    _session, dispatcher = _kernel_bits(tmp_path)
+    dispatcher.registry.register(CallIdEcho())
+
+    outcome = await dispatcher.dispatch_tool(
+        ProposedToolCall(call_id=CallId("c-echo"), tool=ToolName("callid_echo"), args={})
+    )
+
+    assert outcome.text == "c-echo"
+
+
+async def test_call_id_context_is_cleared_after_the_tool_returns(tmp_path):
+    from harness.callctx import current_call_id
+
+    _session, dispatcher = _kernel_bits(tmp_path)
+    dispatcher.registry.register(CallIdEcho())
+
+    await dispatcher.dispatch_tool(
+        ProposedToolCall(call_id=CallId("c-echo"), tool=ToolName("callid_echo"), args={})
+    )
+
+    assert current_call_id() is None

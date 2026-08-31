@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
+from harness.callctx import current_call_id
 from harness.events import ErrorRaised, SubagentFinished, SubagentSpawned
 from harness.frontmatter import AgentDef
 from harness.hooks import HookBus
@@ -75,6 +76,7 @@ class SubagentRunner:
         spawn_env = parent.append(
             SubagentSpawned(
                 child_session_id=child_id,
+                call_id=current_call_id(),
                 agent=AgentId(agent) if agent is not None else None,
                 model=chosen,
             )

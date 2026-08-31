@@ -306,3 +306,45 @@ async def test_spawn_event_agent_is_none_without_an_agent(tmp_path):
     events = [e.event for e in read_session(tmp_path, SessionId("parent"))]
     spawned = [e for e in events if isinstance(e, SubagentSpawned)]
     assert spawned[0].agent is None
+
+
+async def test_spawn_event_records_its_proposing_call_id(tmp_path):
+    from harness.callctx import reset_current_call_id, set_current_call_id
+    from harness.types import CallId
+
+    parent = Session(tmp_path, SessionId("parent"))
+    parent.start()
+    runner = _runner(tmp_path, FakeProvider([text_turn("done")]))
+
+    token = set_current_call_id(CallId("call-abc"))
+    try:
+        await runner.run(prompt="go", model=None, parent=parent)
+    finally:
+        reset_current_call_id(token)
+
+    events = [e.event for e in read_session(tmp_path, SessionId("parent"))]
+    spawned = [e for e in events if isinstance(e, SubagentSpawned)]
+    assert spawned[0].call_id == "call-abc"
+
+
+async def test_concurrent_spawns_keep_separate_call_ids(tmp_path):
+    """The case tui_panel's stack heuristic cannot get right."""
+    from harness.callctx import reset_current_call_id, set_current_call_id
+    from harness.types import CallId
+
+    parent = Session(tmp_path, SessionId("parent"))
+    parent.start()
+
+    async def spawn_under(call_id: str):
+        runner = _runner(tmp_path, FakeProvider([text_turn("done")]))
+        token = set_current_call_id(CallId(call_id))
+        try:
+            await runner.run(prompt="go", model=None, parent=parent)
+        finally:
+            reset_current_call_id(token)
+
+    await asyncio.gather(spawn_under("call-a"), spawn_under("call-b"))
+
+    events = [e.event for e in read_session(tmp_path, SessionId("parent"))]
+    ids = {e.call_id for e in events if isinstance(e, SubagentSpawned)}
+    assert ids == {"call-a", "call-b"}
