@@ -602,9 +602,9 @@ async def test_complex_inline_math_uses_sixel_without_hiding_prose(tmp_path, mon
             for strip in app.screen._compositor.render_strips()
         )
 
-        assert len(images) == 3
-        assert all(image.region.width > 0 and image.region.height > 0 for image in images)
-        assert sorted(image.region.height for image in images) == [1, 2, 2]
+        assert len(images) == 2
+        assert all(image.region.width > 0 and image.region.height >= 2 for image in images)
+        assert "ax² + bx + c = 0" in screen_text
         assert not any(segment.control for line in transcript.lines for segment in line)
         assert prose.index("For the quadratic equation") < prose.index(
             "the solutions are"

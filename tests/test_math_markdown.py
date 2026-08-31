@@ -181,7 +181,9 @@ def test_simple_inline_math_uses_crisp_unicode_but_layout_stays_rasterized():
     assert render_inline_formula_text(r"\delta(x)") == "δ(x)"
     assert render_inline_formula_text(r"\delta'(x)") == "δ′(x)"
     assert render_inline_formula_text(r"\alpha + \beta = \gamma") == "α + β = γ"
-    assert render_inline_formula_text(r"x^2") is None
+    assert render_inline_formula_text(r"x^2") == "x²"
+    assert render_inline_formula_text(r"x_1") == "x₁"
+    assert render_inline_formula_text(r"x_i^2") == "xᵢ²"
     assert render_inline_formula_text(r"\frac{x}{y}") is None
 
 

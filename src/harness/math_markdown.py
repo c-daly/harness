@@ -54,6 +54,8 @@ _BRAILLE_DOTS = (
     (0x40, 0x80),
 )
 _INLINE_PRIMES = {"′", "″", "‴", "⁗"}
+_SUPERSCRIPTS = str.maketrans("0123456789+-=()ni", "⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻⁼⁽⁾ⁿⁱ")
+_SUBSCRIPTS = str.maketrans("0123456789+-=()aehi jklmnoprstuvx".replace(" ", ""), "₀₁₂₃₄₅₆₇₈₉₊₋₌₍₎ₐₑₕᵢⱼₖₗₘₙₒₚᵣₛₜᵤᵥₓ")
 _SPACED_OPERATORS = {"+", "=", "×", "÷", "<", ">", "≤", "≥", "→", "←", "↔", "⇒", "⇐", "⇔"}
 _SIXEL_RECHECK_SECONDS = 2.0
 SIXEL_META_KEY = "harness.sixel"
@@ -404,19 +406,18 @@ def render_formula_png(
 
 @lru_cache(maxsize=256)
 def render_inline_formula_text(source: str) -> str | None:
-    """Return a crisp one-line Unicode form when MathText has no 2-D layout.
+    """Return a crisp one-line Unicode form for terminal-safe MathText.
 
-    Simple symbol expressions are substantially clearer as terminal glyphs
-    than as a one- or two-row raster.  Fractions, scripts, radicals, limits,
-    accents, and other vertically positioned expressions return ``None`` and
-    continue through the transparent image renderer.
+    Baseline glyphs are preserved directly. Simple raised and lowered glyphs
+    are translated to Unicode superscripts and subscripts; expressions that
+    require true two-dimensional layout continue through the image renderer.
     """
     from matplotlib.font_manager import FontProperties
     from matplotlib.mathtext import MathTextParser
 
     try:
         parsed = MathTextParser("path").parse(
-            f"${source}$",
+            "$" + source + "$",
             dpi=100,
             prop=FontProperties(size=16, math_fontfamily="stix"),
         )
@@ -435,16 +436,36 @@ def render_inline_formula_text(source: str) -> str | None:
             return None
         glyphs.append((float(x), float(y), float(font_size), character))
 
-    baseline_glyphs = [glyph for glyph in glyphs if glyph[3] not in _INLINE_PRIMES]
+    full_size = max(glyph[2] for glyph in glyphs)
+    baseline_glyphs = [
+        glyph
+        for glyph in glyphs
+        if glyph[2] >= full_size - 1 and glyph[3] not in _INLINE_PRIMES
+    ]
     if not baseline_glyphs:
         return None
-    baselines = [glyph[1] for glyph in baseline_glyphs]
-    font_sizes = [glyph[2] for glyph in baseline_glyphs]
-    if max(baselines) - min(baselines) > 2 or max(font_sizes) - min(font_sizes) > 1:
+    baseline = sum(glyph[1] for glyph in baseline_glyphs) / len(baseline_glyphs)
+    if max(glyph[1] for glyph in baseline_glyphs) - min(
+        glyph[1] for glyph in baseline_glyphs
+    ) > 2:
         return None
 
     output: list[str] = []
-    for _, _, _, character in sorted(glyphs):
+    for _, y, font_size, character in sorted(glyphs):
+        if character not in _INLINE_PRIMES and font_size < full_size - 1:
+            table = (
+                _SUPERSCRIPTS
+                if y > baseline + 2
+                else _SUBSCRIPTS
+                if y < baseline - 2
+                else None
+            )
+            if table is None:
+                return None
+            translated = character.translate(table)
+            if translated == character:
+                return None
+            character = translated
         if character in _SPACED_OPERATORS:
             if output and not output[-1].endswith(" "):
                 output.append(" ")
@@ -629,6 +650,17 @@ class _MathTextElement(MarkdownElement):
                         self._text.append(inline_text, Style(color=self.color))
                 else:
                     self._flush_text()
+                    promoted = not formula.display
+                    if promoted:
+                        # A terminal cell cannot make a two-dimensional inline
+                        # raster both compact and legible. Promote it to a
+                        # deliberate display equation between hard line breaks.
+                        self.parts.append(Text("\n"))
+                        formula = Formula(
+                            source=formula.source,
+                            display=True,
+                            original=formula.original,
+                        )
                     self.parts.append(
                         LatexCellImage(
                             formula,
@@ -636,6 +668,8 @@ class _MathTextElement(MarkdownElement):
                             sixel_placements=self.sixel_placements,
                         )
                     )
+                    if promoted:
+                        self.parts.append(Text("\n"))
 
     def on_leave(self, context: MarkdownContext) -> None:
         self._flush_text()
