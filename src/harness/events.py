@@ -170,6 +170,9 @@ class SubagentSpawned(_Event):
     # survive a crash, so it gets the intent fsync
     is_intent: ClassVar[bool] = True
     child_session_id: SessionId
+    # the dispatch_agent / ensemble / consult_panel / escalate call that caused
+    # this spawn. Additive-optional: absent in logs written before this field.
+    call_id: CallId | None = None
     agent: AgentId | None = None
     model: ModelId | None = None
 

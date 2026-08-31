@@ -245,3 +245,106 @@ async def test_explicit_model_arg_beats_agent_default_model(tmp_path):
     events = [e.event for e in read_session(tmp_path, SessionId("parent"))]
     spawned = [e for e in events if isinstance(e, SubagentSpawned)]
     assert spawned and spawned[0].model == "explicit-model"
+
+
+async def test_agent_output_is_truncated_to_max_output_chars(tmp_path):
+    parent = Session(tmp_path, SessionId("parent"))
+    parent.start()
+    runner = _runner(tmp_path, FakeProvider([text_turn("x" * 500)]))
+    runner.agents = {"terse": AgentDef(name="terse", description="d", body="be terse", max_output_chars=100)}
+
+    result = await runner.run(prompt="go", model=None, parent=parent, agent="terse")
+
+    assert result.startswith("x" * 100)
+    assert result.endswith("…[truncated]")
+    assert len(result) < 500
+
+
+async def test_agent_output_under_the_bound_is_untouched(tmp_path):
+    parent = Session(tmp_path, SessionId("parent"))
+    parent.start()
+    runner = _runner(tmp_path, FakeProvider([text_turn("short")]))
+    runner.agents = {"terse": AgentDef(name="terse", description="d", body="be terse", max_output_chars=100)}
+
+    result = await runner.run(prompt="go", model=None, parent=parent, agent="terse")
+
+    assert result == "short"
+
+
+async def test_agent_without_a_bound_returns_full_output(tmp_path):
+    parent = Session(tmp_path, SessionId("parent"))
+    parent.start()
+    runner = _runner(tmp_path, FakeProvider([text_turn("y" * 500)]))
+    runner.agents = {"chatty": AgentDef(name="chatty", description="d", body="talk")}
+
+    result = await runner.run(prompt="go", model=None, parent=parent, agent="chatty")
+
+    assert result == "y" * 500
+
+
+async def test_spawn_event_records_which_agent_ran(tmp_path):
+    parent = Session(tmp_path, SessionId("parent"))
+    parent.start()
+    runner = _runner(tmp_path, FakeProvider([text_turn("done")]))
+    runner.agents = {"explorer": AgentDef(name="explorer", description="d", body="explore")}
+
+    await runner.run(prompt="go", model=None, parent=parent, agent="explorer")
+
+    events = [e.event for e in read_session(tmp_path, SessionId("parent"))]
+    spawned = [e for e in events if isinstance(e, SubagentSpawned)]
+    assert len(spawned) == 1
+    assert spawned[0].agent == "explorer"
+
+
+async def test_spawn_event_agent_is_none_without_an_agent(tmp_path):
+    parent = Session(tmp_path, SessionId("parent"))
+    parent.start()
+    runner = _runner(tmp_path, FakeProvider([text_turn("done")]))
+
+    await runner.run(prompt="go", model=None, parent=parent)
+
+    events = [e.event for e in read_session(tmp_path, SessionId("parent"))]
+    spawned = [e for e in events if isinstance(e, SubagentSpawned)]
+    assert spawned[0].agent is None
+
+
+async def test_spawn_event_records_its_proposing_call_id(tmp_path):
+    from harness.callctx import reset_current_call_id, set_current_call_id
+    from harness.types import CallId
+
+    parent = Session(tmp_path, SessionId("parent"))
+    parent.start()
+    runner = _runner(tmp_path, FakeProvider([text_turn("done")]))
+
+    token = set_current_call_id(CallId("call-abc"))
+    try:
+        await runner.run(prompt="go", model=None, parent=parent)
+    finally:
+        reset_current_call_id(token)
+
+    events = [e.event for e in read_session(tmp_path, SessionId("parent"))]
+    spawned = [e for e in events if isinstance(e, SubagentSpawned)]
+    assert spawned[0].call_id == "call-abc"
+
+
+async def test_concurrent_spawns_keep_separate_call_ids(tmp_path):
+    """The case tui_panel's stack heuristic cannot get right."""
+    from harness.callctx import reset_current_call_id, set_current_call_id
+    from harness.types import CallId
+
+    parent = Session(tmp_path, SessionId("parent"))
+    parent.start()
+
+    async def spawn_under(call_id: str):
+        runner = _runner(tmp_path, FakeProvider([text_turn("done")]))
+        token = set_current_call_id(CallId(call_id))
+        try:
+            await runner.run(prompt="go", model=None, parent=parent)
+        finally:
+            reset_current_call_id(token)
+
+    await asyncio.gather(spawn_under("call-a"), spawn_under("call-b"))
+
+    events = [e.event for e in read_session(tmp_path, SessionId("parent"))]
+    ids = {e.call_id for e in events if isinstance(e, SubagentSpawned)}
+    assert ids == {"call-a", "call-b"}

@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
+from harness.callctx import current_call_id
 from harness.events import ErrorRaised, SubagentFinished, SubagentSpawned
 from harness.frontmatter import AgentDef
 from harness.hooks import HookBus
@@ -13,7 +14,17 @@ from harness.loop import AgentLoop
 from harness.provider import ModelProvider
 from harness.session import Session
 from harness.tools import FilteredRegistry, ToolRegistry, ToolSpec
-from harness.types import ModelId, ToolName, new_session_id
+from harness.types import AgentId, ModelId, ToolName, new_session_id
+
+
+_TRUNCATION_MARKER = "\n\u2026[truncated]"
+
+
+def _bound(text: str, limit: int | None) -> str:
+    """Cap what a child returns to its parent. None = unbounded."""
+    if limit is None or len(text) <= limit:
+        return text
+    return text[:limit] + _TRUNCATION_MARKER
 
 
 @dataclass
@@ -33,6 +44,7 @@ class SubagentRunner:
     ) -> str:
         system_prompt = "You are a focused subagent. Complete the task and report."
         registry: ToolRegistry | FilteredRegistry = self.registry
+        limit: int | None = None
         chosen = model or self.default_model
         # an explicit dispatch_agent model= or an AgentDef.model is a pin (routing-exempt);
         # an unpinned child inherits the routable default_model
@@ -50,6 +62,7 @@ class SubagentRunner:
                 experts = [Expert(model=m) for m in (definition.experts or ())]
                 return await run_strategy(definition.strategy, self, parent, prompt, experts)
             system_prompt = definition.body or system_prompt
+            limit = definition.max_output_chars
             if definition.model is not None:
                 chosen = ModelId(definition.model)
                 pinned = True
@@ -60,7 +73,14 @@ class SubagentRunner:
             chosen = model
             pinned = True
         child_id = new_session_id()
-        spawn_env = parent.append(SubagentSpawned(child_session_id=child_id, model=chosen))
+        spawn_env = parent.append(
+            SubagentSpawned(
+                child_session_id=child_id,
+                call_id=current_call_id(),
+                agent=AgentId(agent) if agent is not None else None,
+                model=chosen,
+            )
+        )
         child = Session(
             self.base, child_id, parent=(parent.id, spawn_env.seq), default_model=chosen
         )
@@ -91,7 +111,7 @@ class SubagentRunner:
                     )
                 )
             parent.append(SubagentFinished(child_session_id=child_id, status="ok"))
-            return result
+            return _bound(result, limit)
         except asyncio.CancelledError:
             parent.append(SubagentFinished(child_session_id=child_id, status="cancelled"))
             raise

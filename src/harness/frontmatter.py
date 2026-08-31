@@ -69,6 +69,16 @@ class AgentDef(_Def):
     # running a single child loop.
     strategy: str | None = None  # ensemble | panel | draft_refine | escalate
     experts: tuple[str, ...] | None = None
+    # None = unbounded. Bounds what the child RETURNS to its parent, not what
+    # the child's own model produced.
+    max_output_chars: int | None = None
+
+    @field_validator("max_output_chars")
+    @classmethod
+    def _max_output_chars_positive(cls, value):
+        if value is not None and value < 1:
+            raise ValueError("max_output_chars must be a positive integer")
+        return value
 
     @field_validator("tools", mode="before")
     @classmethod

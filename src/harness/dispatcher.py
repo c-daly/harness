@@ -30,6 +30,7 @@ from harness.hooks import (
 from harness.interaction import PermissionRequest, Resolver
 from harness.messages import Message
 from harness.provider import Chunk, ModelProvider, Usage, collect
+from harness.callctx import reset_current_call_id, set_current_call_id
 from harness.redaction import StringRedactor, identity_redact
 from harness.session import Session
 from harness.tools import FilteredRegistry, ToolRegistry, ToolSpec
@@ -144,7 +145,11 @@ class Dispatcher:
         )
         started = time.monotonic()
         try:
-            raw = await self.registry.get(effective.tool)(dict(effective.args))
+            token = set_current_call_id(call.call_id)
+            try:
+                raw = await self.registry.get(effective.tool)(dict(effective.args))
+            finally:
+                reset_current_call_id(token)
             is_error = False
         except Exception as exc:
             raw, is_error = f"tool error: {exc}", True

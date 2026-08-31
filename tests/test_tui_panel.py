@@ -164,8 +164,8 @@ def test_fold_agents_ensemble_experts_share_strategy_grouping_key():
                 args={"prompt": "p", "models": ["alpha", "beta"]},
             ),
         ),
-        env(2, SubagentSpawned(child_session_id=child_a, model=ModelId("alpha"))),
-        env(3, SubagentSpawned(child_session_id=child_b, model=ModelId("beta"))),
+        env(2, SubagentSpawned(child_session_id=child_a, call_id=outer, model=ModelId("alpha"))),
+        env(3, SubagentSpawned(child_session_id=child_b, call_id=outer, model=ModelId("beta"))),
         env(4, SubagentFinished(child_session_id=child_a, status="ok")),
         env(5, SubagentFinished(child_session_id=child_b, status="ok")),
         env(6, ToolCallCompleted(call_id=outer, result_text="combined")),
@@ -189,7 +189,7 @@ def test_fold_agents_ensemble_expert_error_status():
                 call_id=outer, tool=ToolName("ensemble"), args={"prompt": "p", "models": ["m"]}
             ),
         ),
-        env(2, SubagentSpawned(child_session_id=child, model=ModelId("m"))),
+        env(2, SubagentSpawned(child_session_id=child, call_id=outer, model=ModelId("m"))),
         env(3, SubagentFinished(child_session_id=child, status="error")),
         env(4, ToolCallCompleted(call_id=outer, result_text="x")),
     ]
@@ -224,3 +224,39 @@ def test_fold_agents_unrelated_subagent_spawned_outside_any_strategy_is_ignored(
     rows = fold_agents(events)
     assert len(rows) == 1
     assert rows[0].call_id == str(cid)
+
+
+def test_fold_agents_concurrent_coordination_calls_attribute_experts_correctly():
+    """Two ensembles open at once. The stack heuristic gave both experts to the
+    top of the stack; the recorded call_id separates them."""
+    ens1, ens2 = new_call_id(), new_call_id()
+    c1, c2 = new_session_id(), new_session_id()
+    events = [
+        env(1, ToolCallProposed(call_id=ens1, tool=ToolName("ensemble"), args={})),
+        env(2, ToolCallProposed(call_id=ens2, tool=ToolName("ensemble"), args={})),
+        # ens2's expert lands first: under the stack heuristic BOTH spawns are
+        # attributed to strategy_stack[-1] (ens2), so c1 is misfiled.
+        env(3, SubagentSpawned(child_session_id=c2, call_id=ens2, model=ModelId("m"))),
+        env(4, SubagentSpawned(child_session_id=c1, call_id=ens1, model=ModelId("m"))),
+    ]
+
+    rows = fold_agents(events)
+
+    by_child = {r.call_id: r.strategy for r in rows}
+    assert by_child[str(c1)] == str(ens1)
+    assert by_child[str(c2)] == str(ens2)
+
+
+def test_fold_agents_pre_upgrade_log_without_call_id_yields_no_expert_rows():
+    """Documented consequence: logs written before SubagentSpawned.call_id
+    existed cannot be attributed to a coordination call, so their experts do
+    not appear. Accepted over keeping the old stack heuristic alive, which was
+    wrong for concurrent coordination calls."""
+    outer = new_call_id()
+    child = new_session_id()
+    events = [
+        env(1, ToolCallProposed(call_id=outer, tool=ToolName("ensemble"), args={})),
+        env(2, SubagentSpawned(child_session_id=child, model=ModelId("m"))),
+    ]
+
+    assert fold_agents(events) == []
