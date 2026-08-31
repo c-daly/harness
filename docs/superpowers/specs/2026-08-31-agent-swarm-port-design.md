@@ -37,35 +37,30 @@ especially this plugin, so much of whose shape is Claude Code workaround
 structure that deriving harness's design from it would re-import the very
 constraints the port exists to shed.
 
-## What "retire" and "delete" mean here
+## agent-swarm is not touched
 
-**Not carried into the harness-native path.** Never "removed from agent-swarm."
+**No change of any kind lands in the agent-swarm repository.** Not a refactor,
+not an adapter layer, not a shared core, not a conditional. agent-swarm continues
+to run under Claude Code exactly as it does today, and this work is invisible to
+it.
 
-agent-swarm continues to run as a Claude Code plugin, unchanged, for as long as
-Claude Code is in use. Every component this spec marks *retire* or *delete* stays
-exactly where it is and keeps working there. `native-tool-blocking.py`, the
-router daemon, and `mcp_call` are load-bearing for the CC deployment today.
+That rules out the obvious-looking architecture. There is **no shared
+shell-agnostic core with a CC adapter and a harness adapter** — that would couple
+the two and require restructuring agent-swarm to expose the seam. What gets built
+is a separate thing that happens to be informed by agent-swarm's design.
 
-What the port produces is a **second deployment target**, not a replacement
-codebase:
+Consequences, stated plainly because they change the size of the work:
 
-```
-              shell-agnostic core  (~13k LOC)
-              workflows · orchestration · experiments · stores
-                    /                          \
-        CC adapter (~4.1k)              harness adapter (~0.3k est.)
-        hooks · native_tools            2 dispatch hooks · 1 lifecycle
-        jsonl_extractor · daemon        2 subscribers · agent defs
-        mcp_call · bypass
-```
-
-The ~4.1k LOC identified is not dead weight — it **is** the CC adapter. That is
-why the hard CC coupling sits exactly there (23 references, 8 files) and nowhere
-in the core. The harness adapter is dramatically thinner because harness supplies
-natively what the CC adapter had to construct.
-
-**Open:** whether CC support is eventually dropped, and on what trigger, is not
-decided here. This spec assumes both targets coexist.
+- The ~13k LOC of workflows, orchestration, experiments, and stores does **not**
+  come along for free. It stays in agent-swarm, serving CC. harness has nothing
+  there until something is built.
+- "Retire" and "delete" in this document mean **never built on the harness side**
+  — describing code that does not need to exist, not code to be removed. Nothing
+  is deleted anywhere.
+- The analysis of agent-swarm's ~4.1k LOC of Claude Code workaround structure
+  keeps its full value: it is what tells us which capabilities are real and which
+  are artefacts of a shell agent-swarm did not own. That is design intelligence,
+  not a migration inventory.
 
 ## The organizing principle
 
@@ -89,8 +84,9 @@ Three subsystems already answer *fight*:
    `~/.claude/projects/*.jsonl` for token usage because CC exposed no
    first-party usage stream to a plugin.
 
-With the daemon and its transport chain (Decision 6), that is **~4.1k LOC** the
-harness path never acquires — the CC adapter, which stays with CC.
+With the daemon and its transport chain (Decision 6), that is **~4.1k LOC** of
+capability harness never needs to build, because it does not have the constraint
+that produced it.
 
 ## The interface is three points, not seventeen thousand lines
 
@@ -136,7 +132,7 @@ harness covers all three points today, two of them outright:
 | `hooks/session-end.py` | 314 | **rewrite** → subscriber on `SessionEnded` |
 | `hooks/pre-compacting.py` | 277 | **rewrite** → see Decision 3 |
 | router / MCP surface / daemon | ~2,350 | **retire** — see Decision 6 |
-| workflows, orchestration, experiments, stores | ~13,000 | **stays put** — shell-agnostic |
+| workflows, orchestration, experiments, stores | ~13,000 | **stays in agent-swarm** — harness gets nothing here from this work |
 | 19 skills / 2 commands | prose | **already converted** by `harness import` |
 | 8 agent definitions | prose | **rewrite frontmatter** — name real tools; drop the Bash transport |
 
@@ -361,11 +357,10 @@ The port is done when, on harness with no Claude Code in the loop:
 3. The session-start briefing appears via a `SESSION_START` `Inject`.
 4. A harness run's token usage and cost reach the OTEL exporter without any
    `~/.claude/projects` file existing.
-5. No component marked **retire**/**delete** appears in the harness path — the
-   harness adapter does not reimplement, wrap, or shim any of them. The test is
-   that the harness adapter is thin, not that agent-swarm has shrunk.
-6. agent-swarm under Claude Code still works, unchanged, throughout. A port that
-   breaks the CC deployment has failed regardless of what else it achieves.
+5. Nothing marked **retire**/**delete** was built on the harness side — not
+   reimplemented, wrapped, or shimmed.
+6. `git -C <agent-swarm> status` is clean and its history unchanged. Any commit
+   to that repository is a failure of this spec, whatever else was achieved.
 
 ## Sequencing
 
