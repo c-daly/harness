@@ -130,6 +130,27 @@ harness actually needs.**
 `PermissionEngine` keeps main-loop `Ask`/grants and model-call gating
 (`model:<route>`). It is unaffected by this work.
 
+**Deferred, explicitly: finer-grained permission control.** Visibility plus the
+existing engine is sufficient *for this port*, not sufficient in general. Known
+directions, none of them in scope here:
+
+- **Arg-scoped rules** — `write_file` only under `src/`, network tools only to
+  allowlisted domains. Rejected above because agent-swarm does not need it, not
+  because it lacks value.
+- **A principal in the dispatch vocabulary** — `agent_id` / `role` / `phase` on
+  `ProposedToolCall`, enabling per-caller rules the flat `allowed` set cannot
+  express. agent-swarm's CC-era design gated through a caller-id registry with
+  three distinct caller paths (main, dispatched subagents, SDK subagents); that
+  is prior art for the shape, not a plan to reinstate.
+- **Dynamic layers** — permissions that change with workflow phase mid-session.
+  `RuleSet.load(path)` is file-only today; `FilteredRegistry` is fixed at spawn.
+- **Denial observability** — see Decision 5.
+
+The engine's bones already anticipate most of this: it is layered, deny-is-
+absolute spans layers, and it sits at priority 1000 behind plugin hooks. That is
+the extension point when finer control is wanted. Nothing in this spec forecloses
+it; the sequencing simply does not pay for it yet.
+
 ### 2. Do not add lifecycle hook points
 
 Checked against what agent-swarm's hooks actually return, rather than against
