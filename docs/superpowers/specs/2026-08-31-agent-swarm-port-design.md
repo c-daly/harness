@@ -1,7 +1,7 @@
 # agent-swarm → harness: the port as subtraction
 
 **Date:** 2026-08-31
-**Status:** design approved, daemon deferred to its own spec
+**Status:** design approved; no open questions
 
 ## Problem
 
@@ -39,7 +39,8 @@ Three subsystems already answer *fight*:
    `~/.claude/projects/*.jsonl` for token usage because CC exposed no
    first-party usage stream to a plugin.
 
-That is ~1.8k LOC that deletes rather than moves.
+With the daemon and its transport chain (Decision 6), that is **~4.1k LOC** that
+deletes rather than moves.
 
 ## The interface is three points, not seventeen thousand lines
 
@@ -84,7 +85,7 @@ harness covers all three points today, two of them outright:
 | `hooks/session-start.py` | 571 | **rewrite** → one `SESSION_START` lifecycle hook returning `Inject` |
 | `hooks/session-end.py` | 314 | **rewrite** → subscriber on `SessionEnded` |
 | `hooks/pre-compacting.py` | 277 | **rewrite** → see Decision 3 |
-| router / MCP surface / daemon | ~2,350 | **open** — see Open Questions |
+| router / MCP surface / daemon | ~2,350 | **retire** — see Decision 6 |
 | workflows, orchestration, experiments, stores | ~13,000 | **stays put** — shell-agnostic |
 | 19 skills / 2 commands | prose | **already converted** by `harness import` |
 | 8 agent definitions | prose | **rewrite frontmatter** — name real tools; drop the Bash transport |
@@ -228,30 +229,59 @@ denial records today, and token telemetry does not need them.
 becomes the telemetry substrate of record (Decision 4), because gaps in a
 load-bearing log cost more than gaps in an incidental one.
 
-## Open questions
+## Decision 6: the daemon dissolves
 
-### The daemon
+`router.py` (501), `mcp_native.py` (766), `backends.py` (300), `daemon.py` (268),
+`daemon_client.py` (312) — ~2.35k LOC — exist to solve **one** Claude Code
+constraint: subagents that can hold no MCP connections of their own and cannot
+answer permission prompts.
 
-`router.py` (501), `mcp_native.py` (766), `backends.py` (300), `daemon.py`
-(268), and `daemon_client.py` (312) — ~2.35k LOC — are two things bolted
-together: an **MCP multiplexer** fronting other MCP servers plus native tools,
-and a **cross-session state holder** for the agent registry, workflow state, and
-worker pool.
+`daemon.py`: *"Single long-lived process. Owns the Router, which owns the
+Controller, which owns all services. Started once, stays alive across sessions."*
+`subagent-mcp-bypass.py`: *"Auto-approves MCP tool calls from subagents to bypass
+the 'prompts unavailable' permission denial."*
 
-harness's `mcp_host.py` already multiplexes MCP servers, so the first half is
-plausibly redundant. The second half is not: harness sessions are independent and
-have no cross-session home.
+The path for a CC subagent to reach one tool:
 
-Three shapes, none chosen:
+```
+subagent → Bash (its only tool) → mcp_call → TCP :7523 → daemon
+  → Router → Controller → backend (Popen'd MCP server)
+```
 
-- **Keep it.** agent-swarm stays a separate long-lived service that harness talks
-  to over MCP. Smallest change; keeps a second process and a second state store.
-- **Absorb it.** Cross-session state becomes a harness plugin with its own store.
-  One process; requires harness to grow a concept it does not have.
-- **Dissolve it.** Make the state per-run rather than cross-session, if the
-  workflows genuinely need no continuity between top-level sessions.
+In harness a subagent is an in-process child session sharing the parent's
+registry (`subagent.py`: *"child sessions, concurrent in-process, parent's
+enforcement applies"*). It reaches a tool by `FilteredRegistry.get(name)`. One
+hop, no broker, no prompt, no bypass.
 
-This needs its own spec. Nothing above depends on the answer.
+**Decision:** no daemon. Bash-as-transport (Decision 1), `mcp_call`,
+`subagent-mcp-bypass.py`, the TCP broker, and the connection multiplexer are a
+single workaround for a constraint harness does not have. They retire together.
+harness's `McpHost` — *"Owns all connections"* — is the whole replacement.
+
+This raises the retired total from ~1.8k to **~4.1k LOC**, and makes "the port is
+a subtraction" the literal shape of the work rather than a framing device.
+
+### Two residuals, neither requiring a daemon
+
+- **Backend startup cost.** The daemon kept serena and other MCP backends warm
+  across sessions; `McpHost` starts them per session. This is a performance
+  question, not an architectural one — measure serena's cold start before
+  deciding it matters. If it does, the answer is connection reuse in `McpHost`,
+  not a second process.
+- **Cross-session workflow state.** Whether iterate/orchestrate state must
+  outlive a top-level session is unresolved. harness has session resume
+  (`resume.py`, `sessions.py`) and plugins may hold stores. If continuity is
+  needed it wants a store, not a long-lived service.
+
+### Supersedes a prior decision
+
+The 2026-07-13 direction had thinktank seats become regular agent-swarm agents by
+registering and routing **through the router TCP daemon** with a source-stamped
+caller-id — the backend framing having been rejected because regular-agent
+semantics were required. Removing the daemon supersedes that *mechanism*. It does
+not contradict the *requirement*: in harness a seat is an `AgentDef` dispatched
+through `SubagentRunner`, which is more straightforwardly a regular agent than
+anything reached over a TCP broker. The intent survives; the transport dies.
 
 ## Non-goals
 
@@ -284,6 +314,7 @@ The port is done when, on harness with no Claude Code in the loop:
 2. **Hook rewrite** (Decisions 2, 3) — 2 dispatch hooks, 1 session-start
    contribution, 2 subscribers, `PRE_COMPACTION` wired, dead points deleted.
 3. **Telemetry source swap** (Decision 4) — exporter reads harness's store.
-4. **Daemon** — separate spec.
+4. **Daemon removal** (Decision 6) — last, because phases 1–3 must demonstrably
+   work without it before it is deleted.
 
 Each phase is independently useful and independently revertible.
