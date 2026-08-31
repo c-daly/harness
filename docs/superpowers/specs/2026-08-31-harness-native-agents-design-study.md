@@ -88,7 +88,35 @@ Everything above is present. What is actually missing:
 1. **`max_output_chars` on `AgentDef`.** agent-swarm's agents bound their output
    (2000–5000 chars); harness has no such field and `SubagentRunner` returns
    `loop.run_turn()` unbounded. Add the field; enforce at the `SubagentRunner`
-   boundary. This is the only concrete gap this study found.
+   boundary.
+
+2. **`SubagentSpawned.agent` is never populated.** The field exists on the event
+   (`events.py:172`), and `SubagentRunner.dispatch` knows the agent — it is a
+   parameter, and `definition` is resolved from it — but `subagent.py:63` appends
+   `SubagentSpawned(child_session_id=child_id, model=chosen)` and drops it. Every
+   dispatch in the log records a model and not which agent ran.
+
+   Consequences today: `tui_panel.py:127` recovers the name by scraping
+   `ToolCallProposed.args`, and `telemetry.py` has no agent attribution at all,
+   so per-agent cost cannot be computed from the log. One-line fix; delete the
+   TUI workaround after.
+
+3. **`SubagentSpawned` carries no proposing `call_id`.** Genuinely missing, and a
+   correctness problem rather than a gap. `tui_panel.py`'s docstring: *"every
+   `SubagentSpawned` seen while that stack is non-empty is attributed to its top
+   ... does not attempt to disambiguate two coordination calls genuinely running
+   concurrently in the same turn — `SubagentSpawned` does not carry its proposing
+   `call_id`, so there is no way to recover that in general."*
+
+   So dispatch attribution is a sequential-assumption heuristic that goes
+   **silently wrong** when two coordination calls overlap — precisely the mixture
+   fan-out case harness is built for. The event is declared `is_intent = True`
+   because *"the spawn record (causal link) must survive a crash"*, yet carries no
+   link to what caused it.
+
+**No new event types are needed.** Both of these are fields on an existing event,
+and both are additive-optional — the same shape as `ModelCallCompleted.stop_reason`
+(*"additive, default keeps old logs valid"*), so old logs stay readable.
 
 That is the list.
 
@@ -132,7 +160,9 @@ Named and left open:
   Wire, delete, or keep — harness's call, on harness's grounds.
 - **Denial observability.** `FilteredRegistry` narrowing emits no event, so "never
   needed bash" and "was refused bash" are indistinguishable. Costs more if the
-  event log becomes a telemetry substrate of record.
+  event log becomes a telemetry substrate of record. Unlike gaps 2 and 3 this
+  would need a *new* event type, which is why it stays a harness question rather
+  than joining the gap list.
 - **Finer-grained permissions.** Visibility plus the engine is sufficient for what
   is here, not in general. Directions: arg-scoped rules, a principal, dynamic
   phase layers. The engine's bones already anticipate them.
@@ -149,5 +179,9 @@ Named and left open:
 
 1. `max_output_chars` is honoured — a subagent exceeding it is truncated at the
    `SubagentRunner` boundary, with the truncation legible.
-2. `git -C <agent-swarm> status` is clean and its history unchanged. Any commit
+2. Per-agent cost is computable from the event log alone, with no reference to
+   `ToolCallProposed.args`.
+3. Two coordination calls fanning out concurrently in one turn attribute their
+   experts correctly, and `tui_panel`'s sequential-assumption heuristic is gone.
+4. `git -C <agent-swarm> status` is clean and its history unchanged. Any commit
    to that repository is a failure, whatever else was achieved.
