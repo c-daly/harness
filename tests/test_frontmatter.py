@@ -139,3 +139,23 @@ def test_load_agent_valid_strategy_and_experts_loads(tmp_path):
     agent = load_agent(path)
     assert agent.strategy == "panel"
     assert agent.experts == ("a", "b")
+
+
+def test_load_agent_rejects_non_positive_max_output_chars(tmp_path):
+    path = tmp_path / "bad.md"
+    path.write_text("---\nname: bad\ndescription: d\nmax_output_chars: 0\n---\nbody")
+    with pytest.raises(FrontmatterError) as exc:
+        load_agent(path)
+    assert "max_output_chars" in str(exc.value)
+
+
+def test_load_agent_accepts_max_output_chars(tmp_path):
+    path = tmp_path / "ok.md"
+    path.write_text("---\nname: ok\ndescription: d\nmax_output_chars: 2000\n---\nbody")
+    assert load_agent(path).max_output_chars == 2000
+
+
+def test_load_agent_without_max_output_chars_is_unbounded(tmp_path):
+    path = tmp_path / "plain.md"
+    path.write_text("---\nname: plain\ndescription: d\n---\nbody")
+    assert load_agent(path).max_output_chars is None

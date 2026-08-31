@@ -16,6 +16,16 @@ from harness.tools import FilteredRegistry, ToolRegistry, ToolSpec
 from harness.types import ModelId, ToolName, new_session_id
 
 
+_TRUNCATION_MARKER = "\n\u2026[truncated]"
+
+
+def _bound(text: str, limit: int | None) -> str:
+    """Cap what a child returns to its parent. None = unbounded."""
+    if limit is None or len(text) <= limit:
+        return text
+    return text[:limit] + _TRUNCATION_MARKER
+
+
 @dataclass
 class SubagentRunner:
     base: Path
@@ -33,6 +43,7 @@ class SubagentRunner:
     ) -> str:
         system_prompt = "You are a focused subagent. Complete the task and report."
         registry: ToolRegistry | FilteredRegistry = self.registry
+        limit: int | None = None
         chosen = model or self.default_model
         # an explicit dispatch_agent model= or an AgentDef.model is a pin (routing-exempt);
         # an unpinned child inherits the routable default_model
@@ -50,6 +61,7 @@ class SubagentRunner:
                 experts = [Expert(model=m) for m in (definition.experts or ())]
                 return await run_strategy(definition.strategy, self, parent, prompt, experts)
             system_prompt = definition.body or system_prompt
+            limit = definition.max_output_chars
             if definition.model is not None:
                 chosen = ModelId(definition.model)
                 pinned = True
@@ -91,7 +103,7 @@ class SubagentRunner:
                     )
                 )
             parent.append(SubagentFinished(child_session_id=child_id, status="ok"))
-            return result
+            return _bound(result, limit)
         except asyncio.CancelledError:
             parent.append(SubagentFinished(child_session_id=child_id, status="cancelled"))
             raise

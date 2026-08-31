@@ -245,3 +245,38 @@ async def test_explicit_model_arg_beats_agent_default_model(tmp_path):
     events = [e.event for e in read_session(tmp_path, SessionId("parent"))]
     spawned = [e for e in events if isinstance(e, SubagentSpawned)]
     assert spawned and spawned[0].model == "explicit-model"
+
+
+async def test_agent_output_is_truncated_to_max_output_chars(tmp_path):
+    parent = Session(tmp_path, SessionId("parent"))
+    parent.start()
+    runner = _runner(tmp_path, FakeProvider([text_turn("x" * 500)]))
+    runner.agents = {"terse": AgentDef(name="terse", description="d", body="be terse", max_output_chars=100)}
+
+    result = await runner.run(prompt="go", model=None, parent=parent, agent="terse")
+
+    assert result.startswith("x" * 100)
+    assert result.endswith("…[truncated]")
+    assert len(result) < 500
+
+
+async def test_agent_output_under_the_bound_is_untouched(tmp_path):
+    parent = Session(tmp_path, SessionId("parent"))
+    parent.start()
+    runner = _runner(tmp_path, FakeProvider([text_turn("short")]))
+    runner.agents = {"terse": AgentDef(name="terse", description="d", body="be terse", max_output_chars=100)}
+
+    result = await runner.run(prompt="go", model=None, parent=parent, agent="terse")
+
+    assert result == "short"
+
+
+async def test_agent_without_a_bound_returns_full_output(tmp_path):
+    parent = Session(tmp_path, SessionId("parent"))
+    parent.start()
+    runner = _runner(tmp_path, FakeProvider([text_turn("y" * 500)]))
+    runner.agents = {"chatty": AgentDef(name="chatty", description="d", body="talk")}
+
+    result = await runner.run(prompt="go", model=None, parent=parent, agent="chatty")
+
+    assert result == "y" * 500
