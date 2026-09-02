@@ -3641,7 +3641,7 @@ git commit -m "feat(experiment): FastMCP server with loop tools and the frozen c
 - Consumes: everything from Tasks 1 to 7; harness `build_kernel`, `run_once`, `FakeProvider`, `tool_call_turn`, `text_turn`, `PermissionEngine`, `RuleSet`, `PermissionRule`, `baseline_ruleset`, `read_session`.
 - Produces: nothing new; proves the spec's section 7 and section 11 claims end to end.
 
-Before writing the dispatch test, check the parameter names of the `dispatch_agent` tool in `src/harness/subagent.py` (`DispatchAgentTool.__post_init__` builds the spec); the tests below use `{"prompt": ..., "agent": ...}` and must match those names.
+The `dispatch_agent` tool's parameters are `prompt` (required), `model` and `agent` (`DispatchAgentTool.__post_init__` in `src/harness/subagent.py`, confirmed 2026-09-01); the subagent test below uses `prompt` and `agent`.
 
 - [ ] **Step 1: Append the failing kernel tests**
 
