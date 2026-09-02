@@ -115,6 +115,18 @@ resolved eval spec frozen at start), `eval_python`, `environment`,
 `ended_at`. `null` versus `{}` for `last_eval_metrics` is load-bearing: the
 gate says "no eval result recorded" for `null` and "criteria not met" for `{}`.
 
+**The journal is the coherent record.** An observation recorded on a loop run
+carries engine-owned facts the model cannot write or alter: `iteration`,
+`eval_index`, `metrics`, `passed`, `criteria` (per-criterion actual, threshold,
+met) and, when the model left `hypothesis` blank, the hypothesis recorded at
+entry to work. They are additive frontmatter keys plus an "Eval
+(engine-recorded)" body section rendered from them, so a human reading the
+markdown sees the verified numbers next to the model's diagnosis, and a
+disagreement between the model's `result` prose and the engine's metrics is
+visible on the page. Entries written through the raw writer carry no such keys
+and are byte-identical to the parked format; the parked reader ignores the
+extra keys on loop entries.
+
 Invariants:
 
 - **A pointer exists iff the run is open** (`run.json.ended_at` is null).
@@ -186,9 +198,10 @@ The frozen contract, unchanged names and signatures:
 | tool | policy while a loop run is open |
 |---|---|
 | `experiment_start_run(experiment, goal)` | denied (the loop owns lifecycle) |
-| `experiment_record_observation(run_id, observation)` | journal phase only |
+| `experiment_record_observation(run_id, observation)` | journal phase only; on a loop run the engine attaches `iteration`, `eval_index`, `metrics`, `passed`, `criteria` and the recorded hypothesis (section 3), and refuses when no eval ran in this visit |
 | `experiment_end_run(run_id, outcome, metrics)` | denied |
 | `experiment_list_runs(experiment)` / `experiment_get_run(run_id)` / `experiment_observations(run_id)` | always |
+| `experiment_compare_runs(experiment)` | always; read-only: every run with outcome, iterations, each criterion's final and best value, and the best run per metric by the criterion's direction, as rows plus a rendered table |
 
 The loop tools:
 
@@ -449,6 +462,11 @@ with `exist_ok=False` and retries on collision.
   `python3 server.py` with the environment scrubbed to the SDK default set,
   the real dispatcher runs with `phase_gate` registered, and start ->
   advance -> run_eval -> done lands under the injected `store_root`.
+- journal coherence: an observation on a loop run carries the engine facts of
+  the eval recorded in that visit (frontmatter and body), byte-identical
+  rendering when there are none, refusal without an eval this visit, and
+  `experiment_compare_runs` tabulates two runs with the best run per metric
+  chosen by direction (`<=` picks the lower value).
 
 ## 11b. Documentation and vault (lands with the code)
 
@@ -475,8 +493,8 @@ with `exist_ok=False` and retries on collision.
 
 ## 12. Deferred, and harness-level questions this plugin surfaces
 
-Plugin follow-ons: arms x trials x compare coordinator (and a `compare_runs`
-reader alongside it); presence-gated memory mirroring of observations (a
+Plugin follow-ons: arms x trials x compare coordinator (cross-arm comparison;
+the single-experiment `experiment_compare_runs` reader is in v1); presence-gated memory mirroring of observations (a
 2026-08-13 contract element, deferred until harness has a way for one plugin
 to detect another's store); constraints time limits enforced in code;
 importing legacy `journal/` entries; a run-summary event when a consumer
@@ -571,8 +589,9 @@ the eval, so the protected digest covers a file the task depends on. A sibling
 
 **Driver scenarios**, each with a fresh store and state dir:
 
-1. The three-attempt loop; `evals/001..003`, two observations, `outcome:
-   success`, no pointer, the refused `done` recorded as an error.
+1. The three-attempt loop; `evals/001..003`, two observations each carrying
+   the engine-recorded facts of its eval, `outcome: success`, no pointer, the
+   refused `done` recorded as an error.
 2. Protected tree: `bash` appends to `eval/scoring.py` during work, then
    `experiment_run_eval` refuses naming the path; `edit_file` on
    `fixtures/input.json` is blocked by the hook.
@@ -591,6 +610,9 @@ the eval, so the protected digest covers a file the task depends on. A sibling
 8. Command-form eval on `selftest-cmd`; the recorded command is the argv.
 9. Escalation: `workspace/ESCALATE`, the eval reports `escalate=1`,
    `experiment_end(escalation, note)` records the outcome and note.
+10. Compare: after a stub-only run ended by hand and a passing run,
+    `experiment_compare_runs` lists both, names the passing run best for
+    `score` and `mismatches`, and its table renders every criterion.
 
 Budget: the scenarios share the plugin server start pattern of the existing
 subprocess test and stay under about forty seconds together.

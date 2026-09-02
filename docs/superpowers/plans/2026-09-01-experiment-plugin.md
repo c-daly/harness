@@ -286,6 +286,8 @@ git commit -m "feat(experiment): scaffold the plugin manifest, skill, command an
 
 ### Task 2: Port the run store
 
+> **Amendment A applies to this task** (journal coherence and `compare_runs`); read it at the end of the plan before starting.
+
 **Files:**
 - Create: `plugins/experiment/store.py`, `tests/fixtures/experiment_parked_run/exp-a/runs/run-001/run.json`, `tests/fixtures/experiment_parked_run/exp-a/runs/run-001/journal/001_first.md`
 - Test: `tests/test_experiment_store.py`
@@ -1647,6 +1649,8 @@ git commit -m "feat(experiment): eval library with criteria validation, frozen s
 ---
 
 ### Task 4: The engine: state, pointers, transitions, gates, eval records
+
+> **Amendment A applies to this task** (journal coherence and `compare_runs`); read it at the end of the plan before starting.
 
 **Files:**
 - Create: `plugins/experiment/engine.py`; replace stub `plugins/experiment/policy.py` with the constants the engine needs (Task 5 completes it)
@@ -3225,6 +3229,8 @@ git commit -m "feat(experiment): phase gate hook with argument injection and ses
 
 ### Task 7: The MCP server
 
+> **Amendment A applies to this task** (journal coherence and `compare_runs`); read it at the end of the plan before starting.
+
 **Files:**
 - Modify: `plugins/experiment/server.py` (replace the Task 1 stub)
 - Test: `tests/test_experiment_server.py`
@@ -4274,6 +4280,8 @@ Then watch for automated review comments and address every one in-branch. Mergin
 
 ### Task 11: The self-test experiment and its scripted driver (spec section 14)
 
+> **Amendment A applies to this task** (journal coherence and `compare_runs`); read it at the end of the plan before starting.
+
 **Files:**
 - Create: `plugins/experiment/examples/selftest/goal.yaml`, `constraints.yaml`, `README.md`, `fixtures/input.json`, `fixtures/expected.json`, `eval/scoring.py`, `eval/test_selftest.py`, `workspace/.gitkeep`
 - Create: `plugins/experiment/examples/selftest-cmd/goal.yaml`, `fixtures/input.json`, `fixtures/expected.json`, `eval/run.py`, `eval/scoring.py` (copy), `workspace/.gitkeep`
@@ -4863,3 +4871,373 @@ Reset between runs: `rm -f examples/selftest/workspace/solution.py`.
 git add plugins/experiment/examples plugins/experiment/README.md tests/test_experiment_selftest.py
 git commit -m "test(experiment): self-test experiment and scripted acceptance driver"
 ```
+
+---
+
+## Amendment A: the journal is the coherent record, plus `experiment_compare_runs`
+
+Decided 2026-09-02 (spec sections 3, 5, 11, 12, 14). Apply these deltas when
+executing Tasks 2, 4, 7 and 11; every other task is unchanged.
+
+### A.1 Task 2 delta: observations carry optional engine-owned extras
+
+In `store.py`, `Observation` gains one additive field and the renderer and
+parser learn about it. Entries without extras render byte-for-byte as before.
+
+```python
+# store.py: replace the Observation dataclass
+@dataclass
+class Observation:
+    """A single experiment observation (one journal attempt)."""
+
+    title: str
+    hypothesis: str = ""
+    changes: str = ""
+    result: str = ""
+    diagnosis: str = ""
+    next_direction: str = ""
+    run_id: Optional[str] = None  # assigned by the writer
+    number: Optional[int] = None  # assigned by the writer
+    extra: dict = field(default_factory=dict)  # engine-owned facts (loop runs only)
+
+
+_EVAL_SECTION = """
+## Eval (engine-recorded)
+iteration: {iteration} | eval: {eval_index} | passed: {passed}
+{criteria}
+metrics: {metrics}
+"""
+
+
+def _render_extra(extra: dict) -> str:
+    if not extra or "metrics" not in extra:
+        return ""
+    lines = []
+    for c in extra.get("criteria", []):
+        if c.get("report"):
+            lines.append(f"- {c['metric']}: {c.get('actual')} (report only)")
+        else:
+            mark = "met" if c.get("met") else "NOT met"
+            lines.append(
+                f"- {c['metric']}: {c.get('actual')} vs {c.get('comparison', '>=')}"
+                f" {c.get('threshold')} -> {mark}"
+            )
+    return _EVAL_SECTION.format(
+        iteration=extra.get("iteration"),
+        eval_index=extra.get("eval_index"),
+        passed=extra.get("passed"),
+        criteria="\n".join(lines) or "- (no criteria)",
+        metrics=json.dumps(extra.get("metrics", {}), sort_keys=True),
+    )
+
+
+def render_observation(obs: Observation, number: int, run_id: str) -> str:
+    front = {"run_id": run_id, "number": number, "created_at": now_iso()}
+    for f in OBS_FIELDS:
+        front[f] = getattr(obs, f)
+    for k, v in (obs.extra or {}).items():
+        if k not in front:
+            front[k] = v
+    body = _OBS_BODY.format(number=number, **{k: getattr(obs, k) for k in OBS_FIELDS})
+    body += _render_extra(obs.extra or {})
+    dumped = yaml.safe_dump(front, sort_keys=False, allow_unicode=True)
+    return f"---\n{dumped}---\n\n{body}"
+
+
+def parse_observation(text: str) -> Observation:
+    m = _FRONT_RE.match(text)
+    if not m:
+        raise ValueError("observation file missing frontmatter")
+    front = yaml.safe_load(m.group(1)) or {}
+    known = {"run_id", "number", "created_at", *OBS_FIELDS}
+    return Observation(
+        title=front.get("title", ""),
+        hypothesis=front.get("hypothesis", ""),
+        changes=front.get("changes", ""),
+        result=front.get("result", ""),
+        diagnosis=front.get("diagnosis", ""),
+        next_direction=front.get("next_direction", ""),
+        run_id=front.get("run_id"),
+        number=front.get("number"),
+        extra={k: v for k, v in front.items() if k not in known},
+    )
+```
+
+Note that `_render_extra` needs `import json` at the top of `store.py` (already
+imported for run.json). Add these tests to `tests/test_experiment_store.py`:
+
+```python
+def test_extra_frontmatter_round_trips_and_renders_section(store, store_mod):
+    run_id = store.start_run("exp-a", "g")
+    extra = {"iteration": 1, "eval_index": 2, "passed": False,
+             "metrics": {"score": 0.333, "mismatches": 2.0},
+             "criteria": [{"metric": "score", "threshold": 0.99, "comparison": ">=",
+                           "actual": 0.333, "met": False, "primary": True, "report": False}]}
+    store.record_observation(run_id, store_mod.Observation(title="stub", extra=extra))
+    (obs,) = store.observations(run_id)
+    assert obs.extra["eval_index"] == 2 and obs.extra["metrics"]["score"] == 0.333
+    text = next((store.run_dir(run_id) / "journal").glob("*.md")).read_text()
+    assert "## Eval (engine-recorded)" in text and "score: 0.333 vs >= 0.99 -> NOT met" in text
+
+
+def test_extra_cannot_shadow_the_six_fields_or_identity(store, store_mod):
+    run_id = store.start_run("exp-a", "g")
+    store.record_observation(run_id, store_mod.Observation(
+        title="t", extra={"title": "evil", "run_id": "other/run-009", "note": "kept"}))
+    (obs,) = store.observations(run_id)
+    assert obs.title == "t" and obs.run_id == run_id and obs.extra == {"note": "kept"}
+```
+
+The existing `test_writes_the_parked_layout_byte_for_byte` must still pass
+unchanged: with an empty `extra` nothing new is rendered.
+
+### A.2 Task 4 delta: `record_observation` and `compare_runs` in the engine
+
+Add to `engine.py` (and keep `assert_loop_phase` for the server's other floors):
+
+```python
+def record_observation(run_id: str, observation, *, ctx: Context) -> str:
+    """Record an observation. On an open loop run the engine attaches the facts of
+    the eval recorded in this visit; without one it refuses."""
+    path = ctx.state_path(run_id)
+    if not path.exists():
+        return ctx.store.record_observation(run_id, observation)  # raw run: plain write
+    state = json.loads(path.read_text())
+    if not state.get("active"):
+        return ctx.store.record_observation(run_id, observation)  # ended run: plain write
+    _require_owned(ctx, run_id)
+    if state["phase"] != "journal":
+        raise EngineError(
+            f"experiment_record_observation is allowed only in the journal phase; run"
+            f" {run_id} is in {state['phase']}"
+        )
+    if not state["eval_recorded_this_visit"] or state["last_eval_metrics"] is None:
+        raise EngineError(
+            "record_observation refused: no eval recorded in this visit; the journal entry"
+            " must describe a measured eval (go work->eval and call experiment_run_eval)"
+        )
+    criteria = state["success_criteria"]
+    details = evals.check_criteria(criteria, state["last_eval_metrics"]).details
+    if not observation.hypothesis and state["hypotheses_tested"]:
+        observation.hypothesis = state["hypotheses_tested"][-1]["hypothesis"]
+    observation.extra = {
+        "iteration": state["iteration"],
+        "eval_index": state["last_eval_index"],
+        "passed": state["last_eval_passed"],
+        "metrics": state["last_eval_metrics"],
+        "criteria": details,
+    }
+    return ctx.store.record_observation(run_id, observation)
+
+
+def compare_runs(experiment: str, *, ctx: Context) -> dict:
+    """Read-only table of every run of an experiment; best run per metric by direction."""
+    runs = ctx.store.list_runs(experiment)
+    rows, criteria_by_run = [], {}
+    for run in runs:
+        path = ctx.state_path(run.run_id)
+        st = json.loads(path.read_text()) if path.exists() else None
+        criteria_by_run[run.run_id] = st["success_criteria"] if st else []
+        rows.append(
+            {
+                "run_id": run.run_id,
+                "outcome": run.outcome,
+                "loop": st is not None,
+                "iterations": st["iteration"] if st else None,
+                "evals": st["last_eval_index"] if st else None,
+                "final_metrics": (st["last_eval_metrics"] or {}) if st else run.metrics,
+                "best_metrics": st["best_metrics"] if st else run.metrics,
+                "observations": len(ctx.store.observations(run.run_id)),
+            }
+        )
+    criteria = next((c for c in reversed(list(criteria_by_run.values())) if c), [])
+    direction = {c["metric"]: ("min" if c["comparison"] in ("<=", "<") else "max")
+                 for c in criteria if not c.get("report")}
+    best: dict[str, str] = {}
+    for metric, how in direction.items():
+        scored = [(r["best_metrics"][metric], r["run_id"]) for r in rows
+                  if isinstance(r["best_metrics"].get(metric), (int, float))]
+        if scored:
+            best[metric] = (min if how == "min" else max)(scored)[1]
+    metrics = list(direction) + [c["metric"] for c in criteria if c.get("report")]
+    header = ["run", "outcome", "iters", "evals"] + [f"{m} (final/best)" for m in metrics]
+    table = [" | ".join(header)]
+    for r in rows:
+        cells = [r["run_id"], str(r["outcome"]), str(r["iterations"]), str(r["evals"])]
+        for m in metrics:
+            f, b = r["final_metrics"].get(m), r["best_metrics"].get(m)
+            star = " *" if best.get(m) == r["run_id"] else ""
+            cells.append(f"{f}/{b}{star}")
+        table.append(" | ".join(cells))
+    return {
+        "experiment": experiment,
+        "criteria": criteria,
+        "direction": direction,
+        "best": best,
+        "runs": rows,
+        "table": "\n".join(table) + ("\n(* best per metric by criterion direction)" if best else ""),
+    }
+```
+
+Add to `tests/test_experiment_engine.py`:
+
+```python
+async def test_record_observation_attaches_engine_facts_and_fills_hypothesis(engine, ws):
+    ctx, exp, r = started(engine, ws)
+    rid = r["run_id"]
+    walk(engine, ctx, rid, "plan", "work", "eval", hypothesis="try X")
+    await engine.run_eval(rid, ctx=ctx)
+    walk(engine, ctx, rid, "journal")
+    oid = engine.record_observation(rid, engine.store_mod.Observation(title="t"), ctx=ctx)
+    (obs,) = ctx.store.observations(rid)
+    assert oid == f"{rid}#001" and obs.hypothesis == "try X"
+    assert obs.extra["eval_index"] == 1 and obs.extra["iteration"] == 0
+    assert obs.extra["metrics"]["accuracy"] == 0.95 and obs.extra["passed"] is True
+    assert obs.extra["criteria"][0]["met"] is True
+
+
+def test_record_observation_refuses_outside_journal_and_without_eval(engine, ws):
+    ctx, exp, r = started(engine, ws)
+    rid = r["run_id"]
+    with pytest.raises(engine.EngineError, match="journal phase"):
+        engine.record_observation(rid, engine.store_mod.Observation(title="t"), ctx=ctx)
+    walk(engine, ctx, rid, "plan", "work", "eval")
+    state_path = ws / "store/exp-a/runs/run-001/state.json"
+    st = json.loads(state_path.read_text())
+    st["phase"] = "journal"  # forced past the transition check; no eval this visit
+    state_path.write_text(json.dumps(st))
+    with pytest.raises(engine.EngineError, match="no eval recorded"):
+        engine.record_observation(rid, engine.store_mod.Observation(title="t"), ctx=ctx)
+
+
+def test_record_observation_on_raw_run_is_a_plain_write(engine, ws):
+    ctx = ctx_for(engine, ws)
+    raw = ctx.store.start_run("exp-a", "raw")
+    engine.record_observation(raw, engine.store_mod.Observation(title="any"), ctx=ctx)
+    (obs,) = ctx.store.observations(raw)
+    assert obs.extra == {}
+
+
+async def test_compare_runs_picks_best_by_direction(engine, ws):
+    criteria = [{"metric": "accuracy", "threshold": 0.9, "primary": True},
+                {"metric": "loss", "threshold": 0.1, "comparison": "<="}]
+    ctx, exp, r = started(engine, ws, criteria=criteria,
+                          eval_text='def test_m():\n    print("[METRIC] accuracy=0.5")\n    print("[METRIC] loss=0.9")\n')
+    rid1 = r["run_id"]
+    walk(engine, ctx, rid1, "plan", "work", "eval")
+    await engine.run_eval(rid1, ctx=ctx)
+    engine.end(rid1, "user_stopped", ctx=ctx)
+    (exp / "eval" / "test_metric.py").write_text(
+        'def test_m():\n    print("[METRIC] accuracy=0.95")\n    print("[METRIC] loss=0.05")\n')
+    r2 = engine.start(str(exp), ctx=ctx)
+    rid2 = r2["run_id"]
+    walk(engine, ctx, rid2, "plan", "work", "eval")
+    await engine.run_eval(rid2, ctx=ctx)
+    walk(engine, ctx, rid2, "journal")
+    engine.record_observation(rid2, engine.store_mod.Observation(title="win"), ctx=ctx)
+    walk(engine, ctx, rid2, "decide", "done")
+    cmp = engine.compare_runs("exp-a", ctx=ctx)
+    assert [row["run_id"] for row in cmp["runs"]] == [rid1, rid2]
+    assert cmp["best"] == {"accuracy": rid2, "loss": rid2}
+    assert cmp["direction"] == {"accuracy": "max", "loss": "min"}
+    assert cmp["runs"][1]["observations"] == 1 and cmp["runs"][1]["outcome"] == "success"
+    assert "accuracy (final/best)" in cmp["table"] and "*" in cmp["table"]
+```
+
+### A.3 Task 7 delta: the server routes observations through the engine and adds the compare tool
+
+Replace `experiment_record_observation` and add one tool:
+
+```python
+@mcp.tool()
+def experiment_record_observation(
+    run_id: str, observation: ObservationIn, store_root: str = "", session_id: str = "",
+    state_dir: str = "",
+) -> str:
+    """Append an observation to a run. On a loop run the engine attaches the facts of
+    the eval recorded in this visit (journal phase only, refuses without an eval)."""
+    ctx = _ctx(store_root, session_id, state_dir)
+    obs = store_mod.Observation(**observation.model_dump())
+    return _dump({"observation_id": engine.record_observation(run_id, obs, ctx=ctx)})
+
+
+@mcp.tool()
+def experiment_compare_runs(experiment: str, store_root: str = "", session_id: str = "",
+                            state_dir: str = "") -> str:
+    """Read-only comparison of every run of an experiment: outcomes, iterations, each
+    criterion's final and best value, and the best run per metric."""
+    ctx = _ctx(store_root, session_id, state_dir)
+    return _dump(engine.compare_runs(experiment, ctx=ctx))
+```
+
+In `tests/test_experiment_server.py`, extend `test_tool_surface` with
+`"experiment_compare_runs"` in the expected set, and in
+`test_full_loop_roundtrip` after the observation is recorded assert:
+
+```python
+    err, text = await call(conn, "experiment_observations", ws, run_id=run_id)
+    assert not err and json.loads(text)[0]["extra"]["eval_index"] == 1
+    err, text = await call(conn, "experiment_compare_runs", ws, experiment="exp-a")
+    assert not err and json.loads(text)["best"]["accuracy"] == run_id
+```
+
+and make `_obs_dict` in `server.py` include `"extra": obs.extra`.
+
+### A.4 Task 11 delta: driver assertions and scenario 10
+
+In scenario 1, after the existing journal assertion, add:
+
+```python
+    obs = sorted((run_dir(tmp_path) / "journal").glob("*.md"))
+    import yaml as _yaml
+    fronts = [_yaml.safe_load(p.read_text().split("---")[1]) for p in obs]
+    assert [f["eval_index"] for f in fronts] == [2, 3]
+    assert fronts[0]["metrics"] == e2["metrics"] and fronts[1]["metrics"] == e3["metrics"]
+    assert fronts[0]["passed"] is False and fronts[1]["passed"] is True
+    assert fronts[1]["hypothesis"] == "compute all three keys"
+    assert "## Eval (engine-recorded)" in obs[0].read_text()
+```
+
+Add scenario 10:
+
+```python
+async def test_scenario_10_compare_runs(tmp_path, ws):
+    first = [
+        x("start", experiment_dir="selftest"),
+        x("advance", run_id=RUN, phase="plan"),
+        x("advance", run_id=RUN, phase="work"),
+        tc("write_file", file_path="selftest/workspace/solution.py", content=STUB),
+        x("advance", run_id=RUN, phase="eval"),
+        x("run_eval", run_id=RUN),
+        x("end", run_id=RUN, outcome="user_stopped", note="stub only"),
+        text_turn("a"),
+    ]
+    run2 = "selftest/run-002"
+    second = [
+        x("start", experiment_dir="selftest"),
+        x("advance", run_id=run2, phase="plan"),
+        x("advance", run_id=run2, phase="work", hypothesis="real"),
+        tc("write_file", file_path="selftest/workspace/solution.py", content=REAL),
+        x("advance", run_id=run2, phase="eval"),
+        x("run_eval", run_id=run2),
+        x("advance", run_id=run2, phase="journal"),
+        x("record_observation", run_id=run2, observation={"title": "real"}),
+        x("advance", run_id=run2, phase="decide"),
+        x("advance", run_id=run2, phase="done"),
+        x("compare_runs", experiment="selftest"),
+        text_turn("b"),
+    ]
+    async with kernel_for(tmp_path, first + second) as kernel:
+        await kernel.loop.run_turn("first")
+        await kernel.loop.run_turn("second")
+        session_id = kernel.session.id
+    cmp = json.loads(next(c for c in calls(tmp_path, session_id) if c[0] == T + "compare_runs")[2])
+    assert [r["run_id"] for r in cmp["runs"]] == [RUN, run2]
+    assert cmp["best"]["score"] == run2 and cmp["best"]["mismatches"] == run2
+    assert cmp["runs"][0]["outcome"] == "user_stopped" and cmp["runs"][1]["outcome"] == "success"
+    assert "score (final/best)" in cmp["table"] and "elapsed_ms (final/best)" in cmp["table"]
+```
+
+Update the spec's section 14 scenario list and the plugin README's tool list
+accordingly (the README gains `experiment_compare_runs` and one sentence on the
+engine-recorded section in journal entries).
