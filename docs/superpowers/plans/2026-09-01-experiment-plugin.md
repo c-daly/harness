@@ -286,7 +286,7 @@ git commit -m "feat(experiment): scaffold the plugin manifest, skill, command an
 
 ### Task 2: Port the run store
 
-> **Amendment A applies to this task** (journal coherence and `compare_runs`); read it at the end of the plan before starting.
+> **Amendments apply to this task**; read the Amendment sections at the end of the plan before starting.
 
 **Files:**
 - Create: `plugins/experiment/store.py`, `tests/fixtures/experiment_parked_run/exp-a/runs/run-001/run.json`, `tests/fixtures/experiment_parked_run/exp-a/runs/run-001/journal/001_first.md`
@@ -838,6 +838,8 @@ git commit -m "feat(experiment): port the run store with the frozen on-disk layo
 ---
 
 ### Task 3: Port the eval library, add criteria validation, the frozen eval spec and the protected-tree digest
+
+> **Amendments apply to this task**; read the Amendment sections at the end of the plan before starting.
 
 **Files:**
 - Create: `plugins/experiment/evals.py`
@@ -1650,7 +1652,7 @@ git commit -m "feat(experiment): eval library with criteria validation, frozen s
 
 ### Task 4: The engine: state, pointers, transitions, gates, eval records
 
-> **Amendment A applies to this task** (journal coherence and `compare_runs`); read it at the end of the plan before starting.
+> **Amendments apply to this task**; read the Amendment sections at the end of the plan before starting.
 
 **Files:**
 - Create: `plugins/experiment/engine.py`; replace stub `plugins/experiment/policy.py` with the constants the engine needs (Task 5 completes it)
@@ -2830,6 +2832,8 @@ git commit -m "feat(experiment): deny-only phase policy validated at import"
 
 ### Task 6: The phase gate hook and session capture
 
+> **Amendments apply to this task**; read the Amendment sections at the end of the plan before starting.
+
 **Files:**
 - Modify: `plugins/experiment/hooks.py` (replace the Task 1 stub)
 - Test: `tests/test_experiment_policy_hooks.py` (append the hook half)
@@ -3229,7 +3233,7 @@ git commit -m "feat(experiment): phase gate hook with argument injection and ses
 
 ### Task 7: The MCP server
 
-> **Amendment A applies to this task** (journal coherence and `compare_runs`); read it at the end of the plan before starting.
+> **Amendments apply to this task**; read the Amendment sections at the end of the plan before starting.
 
 **Files:**
 - Modify: `plugins/experiment/server.py` (replace the Task 1 stub)
@@ -3936,6 +3940,8 @@ git commit -m "test(experiment): kernel end-to-end and real subprocess coverage"
 
 ### Task 9: Plugin README and harness docs
 
+> **Amendments apply to this task**; read the Amendment sections at the end of the plan before starting.
+
 **Files:**
 - Create: `plugins/experiment/README.md`
 - Modify: `docs/user-guide.md` (plugins section), `docs/plugin-authoring.md` (MCP servers section), `README.md` (Plugins bullet)
@@ -4280,7 +4286,7 @@ Then watch for automated review comments and address every one in-branch. Mergin
 
 ### Task 11: The self-test experiment and its scripted driver (spec section 14)
 
-> **Amendment A applies to this task** (journal coherence and `compare_runs`); read it at the end of the plan before starting.
+> **Amendments apply to this task**; read the Amendment sections at the end of the plan before starting.
 
 **Files:**
 - Create: `plugins/experiment/examples/selftest/goal.yaml`, `constraints.yaml`, `README.md`, `fixtures/input.json`, `fixtures/expected.json`, `eval/scoring.py`, `eval/test_selftest.py`, `workspace/.gitkeep`
@@ -5241,3 +5247,965 @@ async def test_scenario_10_compare_runs(tmp_path, ws):
 Update the spec's section 14 scenario list and the plugin README's tool list
 accordingly (the README gains `experiment_compare_runs` and one sentence on the
 engine-recorded section in journal entries).
+
+---
+
+## Amendment B: description and methodology records
+
+Decided 2026-09-02 (spec sections 3, 5, 6, 14). Apply when executing Tasks 2,
+3, 4, 7, 9 and 11; it composes with Amendment A.
+
+### B.1 Task 2 delta: per-run files and the experiment document
+
+Add to `LocalFsExperimentStore` in `store.py`:
+
+```python
+    _RESERVED_RUN_FILES = frozenset({"run.json", "state.json"})
+
+    def write_run_file(self, run_id: str, name: str, text: str) -> Path:
+        """Write a named file into a run directory (methods.md, goal.yaml, ...)."""
+        if "/" in name or "\\" in name or name in self._RESERVED_RUN_FILES or not name:
+            raise ValueError(f"invalid run file name: {name!r}")
+        run_dir = self.run_dir(run_id)
+        if not (run_dir / "run.json").exists():
+            raise KeyError(f"no such run: {run_id!r}")
+        path = run_dir / name
+        atomic_write_text(path, text)
+        return path
+
+    def run_file(self, run_id: str, name: str) -> Optional[str]:
+        path = self.run_dir(run_id) / name
+        return path.read_text() if path.is_file() else None
+
+    def write_experiment_doc(self, experiment: str, text: str) -> Path:
+        directory = self.root / validate_experiment_name(experiment)
+        directory.mkdir(parents=True, exist_ok=True)
+        path = directory / "experiment.md"
+        atomic_write_text(path, text)
+        return path
+
+    def experiment_doc(self, experiment: str) -> Optional[str]:
+        path = self.root / validate_experiment_name(experiment) / "experiment.md"
+        return path.read_text() if path.is_file() else None
+```
+
+Tests for `tests/test_experiment_store.py`:
+
+```python
+def test_run_files_round_trip_and_reserved_names_refused(store):
+    run_id = store.start_run("exp-a", "g")
+    store.write_run_file(run_id, "methods.md", "# m\n")
+    assert store.run_file(run_id, "methods.md") == "# m\n"
+    assert store.run_file(run_id, "absent.md") is None
+    for bad in ("run.json", "state.json", "../x", ""):
+        with pytest.raises(ValueError):
+            store.write_run_file(run_id, bad, "x")
+    with pytest.raises(KeyError):
+        store.write_run_file("exp-a/run-999", "methods.md", "x")
+
+
+def test_experiment_doc_round_trip_and_invisible_to_list_runs(store):
+    assert store.experiment_doc("exp-a") is None
+    run_id = store.start_run("exp-a", "g")
+    store.write_experiment_doc("exp-a", "# exp-a\n")
+    assert store.experiment_doc("exp-a") == "# exp-a\n"
+    assert [r.run_id for r in store.list_runs("exp-a")] == [run_id]
+    with pytest.raises(ValueError):
+        store.write_experiment_doc("../evil", "x")
+```
+
+### B.2 Task 3 delta: two goal fields
+
+In `evals.py`, `Goal` gains `description: Optional[str] = None` and
+`methodology: Optional[str] = None`; `load_goal` sets them from
+`raw.get("description")` and `raw.get("methodology")`. Test:
+
+```python
+def test_loads_description_and_methodology(evals, exp):
+    write_goal(exp, {"objective": "o", "eval": "eval/", "success_criteria": [],
+                     "description": "what and why", "methodology": "how"})
+    goal = evals.load_goal(exp)
+    assert goal.description == "what and why" and goal.methodology == "how"
+    write_goal(exp, {"objective": "o", "eval": "eval/", "success_criteria": []})
+    assert evals.load_goal(exp).description is None
+```
+
+### B.3 Task 4 delta: the engine writes methods.md and experiment.md
+
+Add to `engine.py` (after the helpers):
+
+```python
+import tomllib
+
+
+def _plugin_version() -> str:
+    try:
+        data = tomllib.loads((Path(__file__).parent / "plugin.toml").read_text())
+        return str(data["plugin"]["version"])
+    except Exception:
+        return "unknown"
+
+
+def _resolve_description(goal, exp_dir: Path) -> str:
+    if goal.description:
+        return str(goal.description).strip()
+    readme = exp_dir / "README.md"
+    if readme.is_file():
+        return readme.read_text().strip()
+    return str(goal.context or "").strip() or "(none given)"
+
+
+def _criteria_table(criteria: list[dict]) -> str:
+    rows = ["| metric | comparison | threshold | primary | report-only |", "|---|---|---|---|---|"]
+    for c in criteria:
+        rows.append(
+            f"| {c['metric']} | {c['comparison']} | {c['threshold']} |"
+            f" {'yes' if c.get('primary') else 'no'} | {'yes' if c.get('report') else 'no'} |"
+        )
+    return "\n".join(rows)
+
+
+def _render_methods(run_id: str, state: dict, description: str, methodology: str) -> str:
+    import yaml
+
+    spec = state["eval"]
+    command = evals.build_command(spec, state["eval_python"])
+    front = {
+        "run_id": run_id,
+        "experiment": state["experiment"],
+        "started_at": state["started_at"],
+        "session_id": state["session_id"],
+        "max_iterations": state["max_iterations"],
+        "eval_kind": spec["kind"],
+        "eval_command": command,
+        "interpreter": state["eval_python"],
+        "eval_timeout_s": state["eval_timeout_s"],
+        "environment": sorted(state["environment"]),
+        "criteria": [
+            {k: c[k] for k in ("metric", "comparison", "threshold", "primary", "report")}
+            for c in state["success_criteria"]
+        ],
+        "protected_files": len(state["protected_digest"]),
+        "plugin_version": _plugin_version(),
+    }
+    dumped = yaml.safe_dump(front, sort_keys=False, allow_unicode=True)
+    cons = state["constraints"]
+    env_line = ", ".join(f"{k}={v}" for k, v in sorted(state["environment"].items())) or "(none)"
+    digests = "\n".join(
+        f"- `{path}` {digest[:12]}" for path, digest in sorted(state["protected_digest"].items())
+    ) or "- (none)"
+
+    def bullets(items):
+        return "\n".join(f"- {i}" for i in items) or "- (none)"
+
+    body = f"""# {state['experiment']}: {run_id.rpartition('/')[2]}
+
+## Question
+{state['task'].strip() or '(none given)'}
+
+## Description
+{description}
+
+## Methodology
+{methodology}
+
+### Measurement (generated)
+- eval: {spec['kind']} `{' '.join(command)}`; interpreter `{state['eval_python']}`; timeout {state['eval_timeout_s']} s
+- environment: {env_line}
+- criteria:
+
+{_criteria_table(state['success_criteria'])}
+
+- protected files (sha256, first 12):
+{digests}
+
+## Constraints
+- do not do:
+{bullets(cons['do_not_do'])}
+- known findings:
+{bullets(cons['known_findings'])}
+- escalate if:
+{bullets(cons['escalate_if'])}
+- time limits: max_hours_per_run={cons['max_hours_per_run']}, max_total_gpu_hours={cons['max_total_gpu_hours']}
+
+## Provenance
+- experiment_dir: `{state['experiment_dir']}`
+- target: {state.get('target') or '(standalone)'}
+- harness session: {state['session_id']}
+- plugin version: {front['plugin_version']}
+"""
+    return f"---\n{dumped}---\n\n{body}"
+
+
+def _render_experiment_doc(ctx: Context, experiment: str, state: dict) -> str:
+    import yaml
+
+    cmp = compare_runs(experiment, ctx=ctx)
+    metrics = list(cmp["direction"]) + [c["metric"] for c in cmp["criteria"] if c.get("report")]
+    header = "| run | outcome | iterations | evals | " + " | ".join(f"best {m}" for m in metrics) + " |"
+    sep = "|---|---|---|---|" + "---|" * len(metrics)
+    rows = []
+    for r in cmp["runs"]:
+        cells = [r["run_id"], str(r["outcome"]), str(r["iterations"]), str(r["evals"])]
+        for m in metrics:
+            star = " *" if cmp["best"].get(m) == r["run_id"] else ""
+            cells.append(f"{r['best_metrics'].get(m)}{star}")
+        rows.append("| " + " | ".join(cells) + " |")
+    front = {"experiment": experiment, "updated": store_mod.now_iso(), "runs": len(cmp["runs"])}
+    dumped = yaml.safe_dump(front, sort_keys=False, allow_unicode=True)
+    body = f"""# {experiment}
+
+## Question
+{state['task'].strip() or '(none given)'}
+
+## Description
+{state['description']}
+
+## Methodology
+{state['methodology']}
+
+## Runs
+{header}
+{sep}
+{chr(10).join(rows) if rows else '| (none) | | | | |'}
+(* best per metric by criterion direction)
+"""
+    return f"---\n{dumped}---\n\n{body}"
+
+
+def _refresh_experiment_doc(ctx: Context, experiment: str, state: dict) -> None:
+    try:
+        ctx.store.write_experiment_doc(experiment, _render_experiment_doc(ctx, experiment, state))
+    except Exception:
+        pass  # the landing page is derived; a failure here must not break the run
+```
+
+In `start`, extend the initial `state` dict with:
+
+```python
+        "description": _resolve_description(goal, exp_dir),
+        "methodology": (str(goal.methodology).strip() if goal.methodology else "(none given)"),
+        "target": goal.target,
+```
+
+and replace the `try: ... except Exception:` block that writes state and pointer with:
+
+```python
+    try:
+        ctx.write_state(run_id, state)
+        ctx.write_pointer(run_id, str(exp_dir))
+        ctx.store.write_run_file(run_id, "goal.yaml", (exp_dir / "goal.yaml").read_text())
+        if (exp_dir / "constraints.yaml").exists():
+            ctx.store.write_run_file(
+                run_id, "constraints.yaml", (exp_dir / "constraints.yaml").read_text()
+            )
+        ctx.store.write_run_file(
+            run_id, "methods.md",
+            _render_methods(run_id, state, state["description"], state["methodology"]),
+        )
+    except Exception:
+        ctx.store.end_run(run_id, "aborted", {})
+        raise
+    _refresh_experiment_doc(ctx, experiment, state)
+```
+
+In `_end_state`, after `ctx.clear_pointers_for(run_id)`, add
+`_refresh_experiment_doc(ctx, state["experiment"], state)`. In `compare_runs`,
+add to the returned dict:
+
+```python
+        "description": next((json.loads(ctx.state_path(r.run_id).read_text()).get("description")
+                             for r in reversed(runs) if ctx.state_path(r.run_id).exists()), None),
+        "methodology": next((json.loads(ctx.state_path(r.run_id).read_text()).get("methodology")
+                             for r in reversed(runs) if ctx.state_path(r.run_id).exists()), None),
+```
+
+`_status_dict` is unchanged. Tests for `tests/test_experiment_engine.py`:
+
+```python
+def test_start_writes_methods_and_copies_goal(engine, ws):
+    ctx, exp, r = started(engine, ws, goal_extra={
+        "description": "what and why", "methodology": "how it is measured",
+        "environment": {"TOKEN": "x"}})
+    rid = r["run_id"]
+    methods = ctx.store.run_file(rid, "methods.md")
+    assert methods.startswith("---\n") and "run_id: exp-a/run-001" in methods
+    assert "## Question\nobjective X" in methods
+    assert "## Description\nwhat and why" in methods and "how it is measured" in methods
+    assert "| accuracy | >= | 0.9 | yes | no |" in methods
+    assert "TOKEN=x" in methods and "test_metric.py" in methods and "plugin version:" in methods
+    assert ctx.store.run_file(rid, "goal.yaml") == (exp / "goal.yaml").read_text()
+    assert ctx.store.run_file(rid, "constraints.yaml") is None
+
+
+def test_description_falls_back_to_readme_then_context(engine, ws):
+    ctx = ctx_for(engine, ws)
+    exp = make_experiment(ws, goal_extra={"context": "ctx text"})
+    (exp / "README.md").write_text("# readme text\n")
+    r = engine.start(str(exp), ctx=ctx)
+    assert "readme text" in ctx.store.run_file(r["run_id"], "methods.md")
+    engine.end(r["run_id"], "user_stopped", ctx=ctx)
+    (exp / "README.md").unlink()
+    r2 = engine.start(str(exp), ctx=ctx)
+    assert "ctx text" in ctx.store.run_file(r2["run_id"], "methods.md")
+
+
+async def test_experiment_doc_refreshed_at_start_and_end(engine, ws):
+    ctx, exp, r = started(engine, ws)
+    doc = ctx.store.experiment_doc("exp-a")
+    assert doc.startswith("---\nexperiment: exp-a") and "runs: 1" in doc
+    assert "| exp-a/run-001 | None |" in doc
+    rid = r["run_id"]
+    walk(engine, ctx, rid, "plan", "work", "eval")
+    await engine.run_eval(rid, ctx=ctx)
+    walk(engine, ctx, rid, "journal")
+    engine.record_observation(rid, engine.store_mod.Observation(title="t"), ctx=ctx)
+    walk(engine, ctx, rid, "decide", "done")
+    doc = ctx.store.experiment_doc("exp-a")
+    assert "| exp-a/run-001 | success |" in doc and "0.95 *" in doc
+
+
+def test_compare_runs_carries_description_and_methodology(engine, ws):
+    ctx, exp, r = started(engine, ws, goal_extra={"description": "d", "methodology": "m"})
+    cmp = engine.compare_runs("exp-a", ctx=ctx)
+    assert cmp["description"] == "d" and cmp["methodology"] == "m"
+```
+
+### B.4 Task 7 delta: `experiment_get_run` returns the methods page
+
+```python
+@mcp.tool()
+def experiment_get_run(run_id: str, store_root: str = "", session_id: str = "",
+                       state_dir: str = "") -> str:
+    """One run record by id, plus its methods page when the run has one."""
+    ctx = _ctx(store_root, session_id, state_dir)
+    payload = _run_dict(ctx.store.get_run(run_id))
+    payload["methods"] = ctx.store.run_file(run_id, "methods.md")
+    return _dump(payload)
+```
+
+In `tests/test_experiment_server.py`'s `test_full_loop_roundtrip`, after the
+`experiment_get_run` assertion add `assert "## Methodology" in json.loads(text)["methods"]`.
+
+### B.5 Task 9 delta: README
+
+Under "goal.yaml" add `description` and `methodology` to the field list, and
+add a "Run record" note: every run holds `methods.md` (materials and methods,
+written once at start), verbatim `goal.yaml`/`constraints.yaml` copies, and
+the experiment's `experiment.md` landing page is refreshed at each start and
+end with a runs table.
+
+### B.6 Task 11 delta: the self-test describes itself, and the driver checks it
+
+Add to `plugins/experiment/examples/selftest/goal.yaml` (and the `-cmd` variant):
+
+```yaml
+description: |
+  The experiment that exercises the harness experiment plugin end to end. It is
+  synthetic: the task (reproduce fixtures/expected.json from fixtures/input.json)
+  is trivial so that every outcome the loop can reach is reachable on purpose.
+methodology: |
+  Three attempts by design. Attempt 1 runs on an empty workspace and crashes with
+  ImportError (crash -> work kickback). Attempt 2 uses a stub that reproduces one
+  of three keys (score 0.333: the pytest test passes but the primary criterion
+  fails). Attempt 3 uses the real solution (score 1.0). The eval is
+  eval/test_selftest.py, which imports workspace/solution.py, scores it with
+  eval/scoring.py against the frozen fixture, and prints [METRIC] lines; the
+  engine derives test_pass_rate from the pytest summary. Markers in workspace/
+  select side scenarios: SLOW (timeout) and ESCALATE (escalation).
+```
+
+In scenario 1 add:
+
+```python
+    methods = (run_dir(tmp_path) / "methods.md").read_text()
+    assert "| score | >= | 0.99 | yes | no |" in methods
+    assert "| mismatches | <= | 0 | no | no |" in methods
+    assert "| elapsed_ms | report | None | no | yes |" in methods
+    assert "Three attempts by design" in methods
+    assert (run_dir(tmp_path) / "goal.yaml").read_text() == (ws / "selftest" / "goal.yaml").read_text()
+    assert (run_dir(tmp_path) / "constraints.yaml").exists()
+    doc = (tmp_path / "store" / "selftest" / "experiment.md").read_text()
+    assert "| selftest/run-001 | success |" in doc and "Three attempts by design" in doc
+```
+
+In scenario 10 add:
+
+```python
+    assert "Three attempts by design" in cmp["methodology"]
+    doc = (tmp_path / "store" / "selftest" / "experiment.md").read_text()
+    assert "| selftest/run-001 | user_stopped |" in doc and "| selftest/run-002 | success |" in doc
+```
+
+---
+
+## Amendment C: the journal has a provider (file by default, vault shipped, others registrable)
+
+Decided 2026-09-02 (spec section 4). The plugin is the experiment; the
+pluggable part is the journal. Apply when executing Tasks 2, 3, 4, 6, 7, 9 and
+11; composes with Amendments A and B. **Global rename:** wherever this plan says
+`LocalFsExperimentStore`, read `FileJournalProvider`; the class body and the
+on-disk layout are unchanged.
+
+### C.1 Task 2 delta: the `JournalProvider` hierarchy
+
+In `store.py`, the former `LocalFsExperimentStore` becomes `FileJournalProvider`
+under an abstract `JournalProvider`, and the vault provider returns:
+
+```python
+class JournalProvider(ExperimentWriter, ExperimentReader):
+    """Where an experiment's journal lives and how it is written and read.
+
+    The (reader, writer) contract plus the run files and the experiment page.
+    Ships with `file` (default) and `vault`; register another class in
+    PROVIDERS and it is built from the keys of the experiment's `journal` block.
+    """
+
+    name: str = "abstract"
+
+    @property
+    def root(self) -> Path:
+        raise NotImplementedError
+
+    def describe(self) -> dict:
+        """Enough to rebuild this provider later (stored in the session pointer)."""
+        return {"provider": self.name, "root": str(self.root)}
+
+    @classmethod
+    def from_description(cls, data: dict) -> "JournalProvider":
+        raise NotImplementedError
+
+    def experiment_doc_frontmatter(self, experiment: str, front: dict) -> dict:
+        """Providers may decorate the experiment page's frontmatter."""
+        return front
+
+    # write_run_file / run_file / write_experiment_doc / experiment_doc from Amendment B
+    # live here (unchanged bodies, using self.root).
+
+
+class FileJournalProvider(JournalProvider):
+    """Filesystem-backed provider rooted at an experiments parent directory (the default)."""
+
+    name = "file"
+
+    def __init__(self, root: Path | str):
+        self._root = Path(root)
+
+    @property
+    def root(self) -> Path:
+        return self._root
+
+    @classmethod
+    def from_description(cls, data: dict) -> "FileJournalProvider":
+        return cls(data["root"])
+
+    # ... the whole former LocalFsExperimentStore body (start_run, record_observation,
+    # end_run, list_runs, get_run, observations, runs_dir, run_dir, helpers), with
+    # `self.root` reads replaced by the property (they already use self.root).
+
+
+class VaultJournalProvider(FileJournalProvider):
+    """The vault provider: `<vault>/10-projects/<project>/experiments/`, the parked layout.
+
+    The entity directory must exist (the plugin never creates a vault entity);
+    the experiment page carries vault frontmatter so it reads as a vault page.
+    """
+
+    name = "vault"
+
+    def __init__(self, vault_dir: Path | str, project: str):
+        validate_experiment_name(project)
+        self.vault_dir = Path(vault_dir).expanduser()
+        self.project = project
+        entity = self.vault_dir / "10-projects" / project
+        if not entity.is_dir():
+            raise ValueError(
+                f"vault entity {entity} does not exist; create it first (the experiment"
+                " plugin never creates a vault entity)"
+            )
+        super().__init__(entity / "experiments")
+
+    def describe(self) -> dict:
+        return {"provider": self.name, "root": str(self.root),
+                "vault_dir": str(self.vault_dir), "project": self.project}
+
+    @classmethod
+    def from_description(cls, data: dict) -> "VaultJournalProvider":
+        return cls(data["vault_dir"], data["project"])
+
+    def experiment_doc_frontmatter(self, experiment: str, front: dict) -> dict:
+        return {"project": self.project, "type": "experiment", **front}
+
+
+PROVIDERS: dict[str, type[JournalProvider]] = {
+    "file": FileJournalProvider,
+    "vault": VaultJournalProvider,
+}
+
+
+def make_journal_provider(spec: dict, *, default_root: Path | str, vault_dir: str = "",
+                          base_dir: Path | None = None) -> JournalProvider:
+    """Build a provider from a `journal` block (goal.yaml) or the environment defaults.
+
+    `file`: `root` (relative to base_dir when given) or default_root.
+    `vault`: `project` (required) and `vault_dir` (from the block or the argument).
+    Anything else registered in PROVIDERS is built as cls(**block minus 'provider').
+    """
+    spec = dict(spec or {})
+    name = str(spec.pop("provider", "file") or "file")
+    cls = PROVIDERS.get(name)
+    if cls is None:
+        raise ValueError(
+            f"unknown journal provider {name!r}; registered: {', '.join(sorted(PROVIDERS))}"
+        )
+    if name == "file":
+        raw = spec.get("root")
+        if raw:
+            root = Path(str(raw)).expanduser()
+            if not root.is_absolute() and base_dir is not None:
+                root = (Path(base_dir) / root).resolve()
+        else:
+            root = Path(default_root)
+        return FileJournalProvider(root)
+    if name == "vault":
+        project = spec.get("project")
+        if not project:
+            raise ValueError("journal provider 'vault' needs a project (the 10-projects entity)")
+        vd = spec.get("vault_dir") or vault_dir
+        if not vd:
+            raise ValueError(
+                "journal provider 'vault' needs a vault directory: set MEMORY_VAULT_DIR in the"
+                " harness environment or vault_dir in the journal block"
+            )
+        return VaultJournalProvider(vd, str(project))
+    return cls(**spec)
+
+
+def provider_from_description(data: dict) -> JournalProvider:
+    cls = PROVIDERS.get(str(data.get("provider", "file")))
+    if cls is None:
+        raise ValueError(f"unknown journal provider in pointer: {data.get('provider')!r}")
+    return cls.from_description(data)
+```
+
+Tests for `tests/test_experiment_store.py` (the existing tests keep passing under
+the rename):
+
+```python
+def test_file_provider_describe_and_rebuild(store_mod, tmp_path):
+    p = store_mod.FileJournalProvider(tmp_path / "j")
+    assert p.name == "file" and p.describe() == {"provider": "file", "root": str(tmp_path / "j")}
+    again = store_mod.provider_from_description(p.describe())
+    assert isinstance(again, store_mod.FileJournalProvider) and again.root == p.root
+
+
+def test_vault_provider_layout_frontmatter_and_entity_check(store_mod, tmp_path):
+    vault = tmp_path / "vault"
+    with pytest.raises(ValueError, match="does not exist"):
+        store_mod.VaultJournalProvider(vault, "LOGOS")
+    (vault / "10-projects" / "LOGOS").mkdir(parents=True)
+    p = store_mod.VaultJournalProvider(vault, "LOGOS")
+    assert p.root == vault / "10-projects" / "LOGOS" / "experiments"
+    rid = p.start_run("exp-a", "g")
+    assert (p.root / "exp-a" / "runs" / "run-001" / "run.json").exists()
+    assert p.experiment_doc_frontmatter("exp-a", {"experiment": "exp-a"}) == {
+        "project": "LOGOS", "type": "experiment", "experiment": "exp-a"}
+    d = p.describe()
+    assert d["provider"] == "vault" and d["project"] == "LOGOS"
+    assert store_mod.provider_from_description(d).root == p.root
+    with pytest.raises(ValueError):
+        store_mod.VaultJournalProvider(vault, "../evil")
+
+
+def test_make_journal_provider_selection(store_mod, tmp_path):
+    (tmp_path / "vault" / "10-projects" / "LOGOS").mkdir(parents=True)
+    default = tmp_path / "default"
+    p = store_mod.make_journal_provider({}, default_root=default)
+    assert isinstance(p, store_mod.FileJournalProvider) and p.root == default
+    p = store_mod.make_journal_provider({"provider": "file", "root": "../out"},
+                                        default_root=default, base_dir=tmp_path / "exp")
+    assert p.root == (tmp_path / "out").resolve()
+    p = store_mod.make_journal_provider({"provider": "vault", "project": "LOGOS"},
+                                        default_root=default, vault_dir=str(tmp_path / "vault"))
+    assert isinstance(p, store_mod.VaultJournalProvider)
+    with pytest.raises(ValueError, match="project"):
+        store_mod.make_journal_provider({"provider": "vault"}, default_root=default, vault_dir="x")
+    with pytest.raises(ValueError, match="MEMORY_VAULT_DIR"):
+        store_mod.make_journal_provider({"provider": "vault", "project": "LOGOS"}, default_root=default)
+    with pytest.raises(ValueError, match="registered"):
+        store_mod.make_journal_provider({"provider": "sqlite"}, default_root=default)
+
+
+def test_third_party_provider_is_built_from_its_block(store_mod, tmp_path, monkeypatch):
+    class Recording(store_mod.FileJournalProvider):
+        name = "recording"
+
+        def __init__(self, root, label=""):
+            super().__init__(root)
+            self.label = label
+
+    monkeypatch.setitem(store_mod.PROVIDERS, "recording", Recording)
+    p = store_mod.make_journal_provider({"provider": "recording", "root": str(tmp_path), "label": "x"},
+                                        default_root=tmp_path)
+    assert isinstance(p, Recording) and p.label == "x"
+```
+
+### C.2 Task 3 delta: the `journal` block on the goal
+
+`Goal` gains `journal: Optional[dict] = None`; `load_goal` sets it from
+`raw.get("journal")` and raises `GoalError` if present and not a mapping. Test:
+
+```python
+def test_loads_journal_block_and_rejects_non_mapping(evals, exp):
+    write_goal(exp, {"objective": "o", "eval": "eval/", "success_criteria": [],
+                     "journal": {"provider": "vault", "project": "LOGOS"}})
+    assert evals.load_goal(exp).journal == {"provider": "vault", "project": "LOGOS"}
+    write_goal(exp, {"objective": "o", "eval": "eval/", "success_criteria": [], "journal": "vault"})
+    with pytest.raises(evals.GoalError, match="journal"):
+        evals.load_goal(exp)
+```
+
+### C.3 Task 4 delta: the engine selects and rebuilds providers
+
+`Context` is built from the injected provider description and can be re-pointed:
+
+```python
+class Context:
+    def __init__(self, *, store_root: str, session_id: str, state_dir: str,
+                 provider: str = "file", project: str = "", vault_dir: str = "") -> None:
+        if not store_root or not state_dir:
+            raise EngineError(
+                "experiment tools require the harness experiment plugin hook"
+                " (store_root/state_dir were not injected)"
+            )
+        self.session_id = session_id or ""
+        self.state_dir = Path(state_dir)
+        self.vault_dir = vault_dir or ""
+        self.default_root = Path(store_root)
+        try:
+            self.store = store_mod.make_journal_provider(
+                {"provider": provider or "file", "project": project or None},
+                default_root=self.default_root, vault_dir=self.vault_dir,
+            )
+        except ValueError as exc:
+            raise EngineError(f"journal provider: {exc}") from exc
+
+    @property
+    def store_root(self) -> Path:
+        return self.store.root
+
+    def with_provider(self, provider) -> "Context":
+        clone = Context.__new__(Context)
+        clone.session_id, clone.state_dir, clone.vault_dir = self.session_id, self.state_dir, self.vault_dir
+        clone.default_root, clone.store = self.default_root, provider
+        return clone
+```
+
+`write_pointer` stores the provider's description alongside the run:
+
+```python
+    def write_pointer(self, run_id: str, experiment_dir: str) -> None:
+        self.state_dir.mkdir(parents=True, exist_ok=True)
+        data = {
+            "run_id": run_id,
+            "run_dir": str(self.store.run_dir(run_id)),
+            "experiment_dir": experiment_dir,
+            "session_id": self.session_id,
+            **self.store.describe(),
+        }
+        store_mod.atomic_write_text(self.pointer_path(), json.dumps(data))
+```
+
+Selection at start, placed right after `constraints = evals.load_constraints(exp_dir)`
+and before the open-run scans:
+
+```python
+def select_provider(goal, exp_dir: Path, ctx: Context) -> tuple[Context, str]:
+    """(ctx, how): the goal's journal block, else the environment default."""
+    if not goal.journal:
+        return ctx, f"environment default ({ctx.store.name} at {ctx.store.root})"
+    try:
+        provider = store_mod.make_journal_provider(
+            goal.journal, default_root=ctx.default_root, vault_dir=ctx.vault_dir, base_dir=exp_dir
+        )
+    except ValueError as exc:
+        raise EngineError(f"goal.yaml journal: {exc}") from exc
+    return ctx.with_provider(provider), f"goal.yaml journal ({provider.name} at {provider.root})"
+```
+
+```python
+    ctx, how = select_provider(goal, exp_dir, ctx)
+```
+
+The result carries `"store_root": str(ctx.store.root)`, `"provider":
+ctx.store.name`, and `"store_root_note": " ; ".join(x for x in (how,
+store_root_note) if x)`. `resume` locates the run through the environment
+default, any pointer's provider description, or the given directory's goal:
+
+```python
+def resume(run_id: str, *, ctx: Context, experiment_dir: Optional[str] = None) -> dict:
+    if not ctx.state_path(run_id).exists():
+        located = None
+        for p in ctx.all_pointers():
+            if p.get("run_id") == run_id and p.get("provider"):
+                try:
+                    located = store_mod.provider_from_description(p)
+                except (ValueError, KeyError):
+                    continue
+                break
+        if located is None and experiment_dir:
+            exp_dir = Path(experiment_dir).expanduser().resolve()
+            try:
+                goal = evals.load_goal(exp_dir)
+            except (FileNotFoundError, ValueError) as exc:
+                raise EngineError(f"{exp_dir}: {exc}") from exc
+            located = select_provider(goal, exp_dir, ctx)[0].store
+        if located is None:
+            raise EngineError(
+                f"run {run_id} is not under {ctx.store.root} and no session pointer names it;"
+                " pass experiment_dir so the run's goal.yaml can locate its journal"
+            )
+        ctx = ctx.with_provider(located)
+    state = ctx.read_state(run_id)
+    if not state["active"]:
+        raise EngineError(f"run {run_id} is not active (exit_reason={state['exit_reason']})")
+    ctx.write_pointer(run_id, state["experiment_dir"])
+    state.setdefault("resumed_by", []).append(ctx.session_id)
+    ctx.write_state(run_id, state)
+    return _status_dict(run_id, state)
+```
+
+In Amendment B's `_render_experiment_doc`, build `front` and then pass it
+through `ctx.store.experiment_doc_frontmatter(experiment, front)` before
+dumping. Tests for `tests/test_experiment_engine.py` (replace the `ctx_for`
+helper's signature with `ctx_for(engine, ws, session="sess-1", **kw)` that
+forwards `kw` to `Context`):
+
+```python
+def test_journal_block_file_root_relative_to_experiment(engine, ws):
+    ctx = ctx_for(engine, ws)
+    exp = make_experiment(ws, goal_extra={"journal": {"provider": "file", "root": "../journal-out"}})
+    r = engine.start(str(exp), ctx=ctx)
+    assert r["provider"] == "file" and r["store_root"] == str((ws / "journal-out").resolve())
+    assert "goal.yaml journal" in r["store_root_note"]
+    assert (ws / "journal-out" / "exp-a" / "runs" / "run-001" / "state.json").exists()
+    assert not (ws / "store").exists()
+
+
+def test_journal_block_vault_lands_in_the_entity(engine, ws, tmp_path):
+    vault = tmp_path / "vault"
+    (vault / "10-projects" / "LOGOS").mkdir(parents=True)
+    ctx = ctx_for(engine, ws, vault_dir=str(vault))
+    exp = make_experiment(ws, goal_extra={"journal": {"provider": "vault", "project": "LOGOS"}})
+    r = engine.start(str(exp), ctx=ctx)
+    assert r["provider"] == "vault"
+    assert r["store_root"] == str(vault / "10-projects" / "LOGOS" / "experiments")
+    doc = (vault / "10-projects" / "LOGOS" / "experiments" / "exp-a" / "experiment.md").read_text()
+    assert doc.startswith("---\nproject: LOGOS\ntype: experiment\n")
+    pointer = json.loads((ws / "state" / "sess-1.json").read_text())
+    assert pointer["provider"] == "vault" and pointer["project"] == "LOGOS"
+
+
+def test_environment_default_vault_provider(engine, ws, tmp_path):
+    vault = tmp_path / "vault"
+    (vault / "10-projects" / "LOGOS").mkdir(parents=True)
+    ctx = ctx_for(engine, ws, provider="vault", project="LOGOS", vault_dir=str(vault))
+    r = engine.start(str(make_experiment(ws)), ctx=ctx)
+    assert r["provider"] == "vault" and "environment default" in r["store_root_note"]
+
+
+def test_provider_errors_teach(engine, ws, tmp_path):
+    exp = make_experiment(ws, goal_extra={"journal": {"provider": "vault", "project": "LOGOS"}})
+    with pytest.raises(engine.EngineError, match="MEMORY_VAULT_DIR"):
+        engine.start(str(exp), ctx=ctx_for(engine, ws))
+    with pytest.raises(engine.EngineError, match="does not exist"):
+        engine.start(str(exp), ctx=ctx_for(engine, ws, vault_dir=str(tmp_path / "vault")))
+    exp2 = make_experiment(ws, name="exp-b", goal_extra={"journal": {"provider": "sqlite"}})
+    with pytest.raises(engine.EngineError, match="registered"):
+        engine.start(str(exp2), ctx=ctx_for(engine, ws))
+    with pytest.raises(engine.EngineError, match="journal provider"):
+        ctx_for(engine, ws, provider="vault", project="LOGOS")  # no vault dir
+
+
+def test_resume_locates_a_run_through_pointer_or_goal(engine, ws):
+    ctx = ctx_for(engine, ws)
+    exp = make_experiment(ws, goal_extra={"journal": {"provider": "file", "root": "../journal-out"}})
+    r = engine.start(str(exp), ctx=ctx)
+    other = ctx_for(engine, ws, session="sess-2")
+    assert engine.resume(r["run_id"], ctx=other)["phase"] == "read"          # via sess-1's pointer
+    engine.end(r["run_id"], "user_stopped", ctx=other)
+    r2 = engine.start(str(exp), ctx=ctx)
+    for p in (ws / "state").glob("*.json"):
+        p.unlink()
+    with pytest.raises(engine.EngineError, match="experiment_dir"):
+        engine.resume(r2["run_id"], ctx=other)
+    assert engine.resume(r2["run_id"], ctx=other, experiment_dir=str(exp))["run_id"] == r2["run_id"]
+```
+
+### C.4 Task 6 delta: the hook injects the provider description
+
+`resolve_store_root` shrinks to the file default (the vault logic moves to the
+provider and the server's teaching errors):
+
+```python
+def resolve_store_root(env=None) -> tuple[Path, str | None, str]:
+    """(root, None, note): HARNESS_EXPERIMENT_DIR, else the XDG data default. Never blocks."""
+    env = os.environ if env is None else env
+    explicit = env.get("HARNESS_EXPERIMENT_DIR")
+    return (Path(explicit).expanduser() if explicit else DEFAULT_STORE_ROOT), None, ""
+
+
+def _environment_provider(env=None) -> dict:
+    env = os.environ if env is None else env
+    return {
+        "provider": (env.get("HARNESS_EXPERIMENT_PROVIDER") or "file").strip().lower(),
+        "project": env.get("HARNESS_EXPERIMENT_PROJECT", ""),
+        "vault_dir": env.get("MEMORY_VAULT_DIR", ""),
+    }
+
+
+_DIR_TOOLS = frozenset({policy.START_TOOL, "mcp__experiment__experiment_resume"})
+
+
+def _rewrite(action: ProposedToolCall, root: Path, note: str, pointer: dict | None = None) -> Rewrite:
+    args = dict(action.args)
+    envp = _environment_provider()
+    if pointer and pointer.get("provider"):
+        args["provider"] = str(pointer["provider"])
+        args["store_root"] = str(pointer.get("root", root))
+        args["project"] = str(pointer.get("project", ""))
+        args["vault_dir"] = str(pointer.get("vault_dir", envp["vault_dir"]))
+    else:
+        args["provider"] = envp["provider"]
+        args["store_root"] = str(root)
+        args["project"] = envp["project"]
+        args["vault_dir"] = envp["vault_dir"]
+    args["session_id"] = _owner()
+    args["state_dir"] = str(state_dir())
+    if str(action.tool) in _DIR_TOOLS:
+        raw = args.get("experiment_dir")
+        if raw:
+            args["experiment_dir"] = str((Path.cwd() / Path(str(raw)).expanduser()).resolve())
+    if str(action.tool) == policy.START_TOOL:
+        args["store_root_note"] = note
+    return Rewrite(action=ProposedToolCall(call_id=action.call_id, tool=action.tool, args=args))
+```
+
+In `phase_gate`, drop the `if root is None: return Block(...)` branch (the root
+is never None now) and pass `pointer` to the `_rewrite` calls in the active-run
+branches. Replace the Task 6 tests `test_resolve_store_root_vault_default_entity`,
+`test_resolve_store_root_missing_default_entity_falls_through_with_note`,
+`test_resolve_store_root_explicit_missing_project_blocks` and
+`test_blocked_store_root_blocks_experiment_tools_only` with:
+
+```python
+def test_resolve_store_root_is_file_default_only(hooks, tmp_path):
+    assert hooks.resolve_store_root({"HARNESS_EXPERIMENT_DIR": str(tmp_path / "x")})[0] == tmp_path / "x"
+    assert hooks.resolve_store_root({})[0] == hooks.DEFAULT_STORE_ROOT
+
+
+def test_rewrite_injects_environment_provider(hooks, ws, tmp_path, monkeypatch):
+    monkeypatch.setenv("HARNESS_EXPERIMENT_PROVIDER", "vault")
+    monkeypatch.setenv("HARNESS_EXPERIMENT_PROJECT", "LOGOS")
+    monkeypatch.setenv("MEMORY_VAULT_DIR", str(tmp_path / "vault"))
+    hooks.capture_session({"session_id": "sess-1"})
+    d = hooks.phase_gate(call("mcp__experiment__experiment_status"))
+    a = d.action.args
+    assert (a["provider"], a["project"], a["vault_dir"]) == ("vault", "LOGOS", str(tmp_path / "vault"))
+    assert a["store_root"] == str(tmp_path / "store")
+
+
+def test_open_run_provider_wins_over_the_environment(engine, hooks, ws, tmp_path, monkeypatch):
+    ctx, exp, r = open_run(engine, hooks, ws)
+    monkeypatch.setenv("HARNESS_EXPERIMENT_DIR", str(tmp_path / "elsewhere"))
+    monkeypatch.setenv("HARNESS_EXPERIMENT_PROVIDER", "vault")
+    d = hooks.phase_gate(call("mcp__experiment__experiment_status", run_id=r["run_id"]))
+    assert d.action.args["provider"] == "file" and d.action.args["store_root"] == str(tmp_path / "store")
+
+
+def test_resume_gets_a_canonical_experiment_dir(hooks, ws):
+    hooks.capture_session({"session_id": "sess-1"})
+    d = hooks.phase_gate(call("mcp__experiment__experiment_resume", run_id="x/run-001", experiment_dir="exp-a"))
+    assert d.action.args["experiment_dir"] == str((ws / "exp-a").resolve())
+```
+
+### C.5 Task 7 delta: the server passes the provider description through
+
+Every tool signature gains `provider: str = "file", project: str = "", vault_dir:
+str = ""` after `state_dir`, and `_ctx` becomes:
+
+```python
+def _ctx(store_root: str, session_id: str, state_dir: str, provider: str = "file",
+         project: str = "", vault_dir: str = "") -> "engine.Context":
+    return engine.Context(store_root=store_root, session_id=session_id, state_dir=state_dir,
+                          provider=provider, project=project, vault_dir=vault_dir)
+```
+
+`experiment_resume` gains `experiment_dir: Optional[str] = None` (passed to
+`engine.resume`). In `tests/test_experiment_server.py`, `injected()` adds
+`"provider": "file", "project": "", "vault_dir": ""`, and add:
+
+```python
+async def test_journal_block_overrides_the_injected_root(conn, ws):
+    goal = yaml.safe_load((ws / "exp-a" / "goal.yaml").read_text())
+    goal["journal"] = {"provider": "file", "root": "../journal-out"}
+    (ws / "exp-a" / "goal.yaml").write_text(yaml.dump(goal))
+    err, text = await call(conn, "experiment_start", ws, experiment_dir="exp-a")
+    assert not err and json.loads(text)["store_root"] == str((ws / "journal-out").resolve())
+    assert (ws / "journal-out" / "exp-a" / "runs" / "run-001" / "state.json").exists()
+```
+
+### C.6 Task 11 delta: two location scenarios
+
+The self-test `goal.yaml` files carry no `journal` block, so they work anywhere.
+Add to the driver (`import yaml` at the top):
+
+```python
+async def test_scenario_11_journal_block_file_root(tmp_path, ws):
+    goal = yaml.safe_load((ws / "selftest" / "goal.yaml").read_text())
+    goal["journal"] = {"provider": "file", "root": "../journal-out"}
+    (ws / "selftest" / "goal.yaml").write_text(yaml.dump(goal))
+    script = [
+        x("start", experiment_dir="selftest"),
+        x("advance", run_id=RUN, phase="plan"),
+        x("status"),
+        text_turn("done"),
+    ]
+    async with kernel_for(tmp_path, script) as kernel:
+        await kernel.loop.run_turn("go")
+        session_id = kernel.session.id
+    out = ws / "journal-out" / "selftest" / "runs" / "run-001"
+    assert (out / "state.json").exists() and (out / "methods.md").exists()
+    assert not (tmp_path / "store").exists()
+    status = json.loads([c for c in calls(tmp_path, session_id) if c[0] == T + "status"][0][2])
+    assert status["phase"] == "plan"  # the advance hit the run's provider, not the environment
+
+
+async def test_scenario_12_vault_provider(tmp_path, ws, monkeypatch):
+    vault = tmp_path / "vault"
+    (vault / "10-projects" / "LOGOS").mkdir(parents=True)
+    monkeypatch.setenv("MEMORY_VAULT_DIR", str(vault))
+    goal = yaml.safe_load((ws / "selftest" / "goal.yaml").read_text())
+    goal["journal"] = {"provider": "vault", "project": "LOGOS"}
+    (ws / "selftest" / "goal.yaml").write_text(yaml.dump(goal))
+    script = [x("start", experiment_dir="selftest"), text_turn("done")]
+    async with kernel_for(tmp_path, script) as kernel:
+        await kernel.loop.run_turn("go")
+        session_id = kernel.session.id
+    started = json.loads([c for c in calls(tmp_path, session_id) if c[0] == T + "start"][0][2])
+    assert started["provider"] == "vault"
+    assert started["store_root"] == str(vault / "10-projects" / "LOGOS" / "experiments")
+    doc = (vault / "10-projects" / "LOGOS" / "experiments" / "selftest" / "experiment.md").read_text()
+    assert doc.startswith("---\nproject: LOGOS\ntype: experiment\n")
+```
+
+### C.7 Task 9 delta: README
+
+Replace the "Environment" section's lead with "Where the journal goes": the
+`journal` block (`provider: vault` + `project`, or `provider: file` + `root`),
+the environment defaults (`HARNESS_EXPERIMENT_PROVIDER`, `HARNESS_EXPERIMENT_DIR`,
+`MEMORY_VAULT_DIR`, `HARNESS_EXPERIMENT_PROJECT`), that the shipped default is
+`file`, and that in-run calls follow the run's recorded provider. Add one
+paragraph on writing a provider: subclass `JournalProvider`, implement
+`from_description`/`describe`, register in `PROVIDERS`, and the `journal`
+block's keys become the constructor arguments.

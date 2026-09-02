@@ -42,7 +42,7 @@ plugins/experiment/
   server.py                FastMCP server: the tool surface (section 5)
   engine.py                the loop: phases, transitions, gates, state.json, evals/ records
   evals.py                 Goal/Constraints loading, criteria validation, run_eval, check_criteria
-  store.py                 ExperimentWriter/Reader contract + filesystem store (frozen layout)
+  store.py                 JournalProvider contract + file and vault providers (frozen layout)
   policy.py                phase deny table + protected paths, as data validated at import
   hooks.py                 phase_gate (stdlib + harness imports only); session_start capture
   skills/experiment.md     the protocol
@@ -69,7 +69,7 @@ denial. The ported skill's frontmatter carries only `name` and `description`
 |---|---|---|
 | `experiment_harness.py`: Goal, Constraints, EvalResult, `run_eval`, `check_criteria`, `[METRIC]` parsing, pytest summary parsing | `evals.py` | ported; `Journal` dropped, the store's `record_observation` is the journal (closes the migration deferred on 2026-08-13) |
 | `experiment_workflow.py`: transition table, iteration counting on decide->plan, cap, decide->done recompute gate, `best_metrics` direction, `record_hypothesis` | `engine.py` | ported; every daemon call becomes a read/write of `state.json`; CLI `main()` dropped; `execution_mode`, `environment` (as loop state) and `max_agents` dropped |
-| `experiment_store.py`: contract ABCs, `LocalFsExperimentStore`, frontmatter observation format, `validate_experiment_name` | `store.py` | ported byte-for-byte on disk; `MemoryMirrorWriter` and `MemoryPluginSink` **deferred, not dropped** (section 12); `VaultExperimentStore` becomes root resolution (section 4) |
+| `experiment_store.py`: contract ABCs, `LocalFsExperimentStore`, frontmatter observation format, `validate_experiment_name` | `store.py` | ported byte-for-byte on disk as `FileJournalProvider`; `MemoryMirrorWriter` and `MemoryPluginSink` **deferred, not dropped** (section 12); `VaultExperimentStore` becomes `VaultJournalProvider` (section 4) |
 | `experiment_server.py`: six contract tools | `server.py` | the six tools keep their frozen names and signatures; loop tools are added beside them; per-project multiplexing replaced by an injected `store_root` |
 | `experiment.yaml` + `permissions.yaml experiment:` | `policy.py` | re-expressed as deny lists (section 7); differences listed there |
 | `skills/experiment/SKILL.md` | `skills/experiment.md` | ported; team/fan-out and remote-environment sections dropped; additions listed in section 8 |
@@ -100,6 +100,11 @@ Two processes, one truth on disk:
   state.json        loop state (below); additive sibling the CC-hosted store never reads
   journal/          NNN_<slug>.md observations, frontmatter canonical (unchanged)
   evals/            NNN.json + NNN.out per eval run, append-only history
+  methods.md        materials and methods, written once at start (below)
+  goal.yaml         verbatim copy of the experiment's goal.yaml at start
+  constraints.yaml  verbatim copy when the experiment has one
+<store_root>/<experiment>/experiment.md
+                    the experiment's landing page: question, description, methodology, runs table
 
 $XDG_STATE_HOME/harness/experiment/active/<session_id>.json
                     {run_id, run_dir, experiment_dir, store_root} while a run is open
@@ -114,6 +119,26 @@ resolved eval spec frozen at start), `eval_python`, `environment`,
 `eval_recorded_this_visit`, `eval_in_flight`, `session_id`, `started_at`,
 `ended_at`. `null` versus `{}` for `last_eval_metrics` is load-bearing: the
 gate says "no eval result recorded" for `null` and "criteria not met" for `{}`.
+
+**The record describes the experiment and its method.** `goal.yaml` may carry
+`description` (what the experiment is and why) and `methodology` (how it is
+measured and the procedure) beside `objective` and `context`; an experiment
+`README.md` stands in for `description` when that field is absent. At start the
+engine writes `runs/run-NNN/methods.md` once and never changes it: canonical
+frontmatter (run, started, session, iteration cap, eval form and command,
+interpreter, timeout, environment names, criteria, protected-file count,
+plugin version) and a materials-and-methods body: Question, Description,
+Methodology (the author's prose, then a generated Measurement subsection with
+the eval command, interpreter, timeout, a criteria table with direction, primary
+and report-only flags, the protected files with digests, and the environment),
+Constraints, Provenance. The run directory also receives verbatim copies of
+`goal.yaml` and `constraints.yaml`, so a run reproduces from its own directory
+even after the experiment is edited. Per experiment,
+`<store_root>/<experiment>/experiment.md` is refreshed at every start and end
+with the current question, description and methodology and a Runs table
+(outcome, iterations, best value per criterion). In vault mode it is the
+experiment's landing page beside its runs. Both files are invisible to the
+parked reader.
 
 **The journal is the coherent record.** An observation recorded on a loop run
 carries engine-owned facts the model cannot write or alter: `iteration`,
@@ -141,27 +166,59 @@ Invariants:
   the event log is the history.
 - All state writes are atomic (tmp + rename).
 
-## 4. Configuration is injected by the hook
+## 4. Where the record lives, and how the server learns it
 
-The plugin declares no manifest `env`: a missing variable would fail the
-server start, and configuration must degrade, not fail. Instead the
-`phase_gate` hook rewrites **every** `mcp__experiment__*` call, in every
-branch that is not a deny, to carry:
+**The journal has a provider.** The record (runs, observations, methods pages,
+the experiment page) is written and read through a `JournalProvider`: the
+(reader, writer) contract plus the run files and the experiment page. Two ship:
+`FileJournalProvider(root)`, the default, rooted at an explicit path or the
+environment root; and `VaultJournalProvider(vault_dir, project)`, rooted at
+`<vault>/10-projects/<project>/experiments/` (the layout the parked store used),
+which requires the entity to exist (the plugin never creates a vault entity) and
+stamps `experiment.md` with vault frontmatter (`project`, `type: experiment`,
+`updated`). Anything somebody writes and registers in the provider table is a
+third option; the frozen contract is the interface, and a provider is built from
+the keys of its `journal` block. The plugin itself is the experiment; the
+journal is the pluggable part (Chris, 2026-09-02).
 
-- `store_root`, resolved in the harness process, first match wins:
-  1. `HARNESS_EXPERIMENT_DIR` if set;
-  2. else, if `MEMORY_VAULT_DIR` is set:
-     `$MEMORY_VAULT_DIR/10-projects/<project>/experiments`, where `project`
-     is `HARNESS_EXPERIMENT_PROJECT` or `experiment` (the new entity). The
-     project must pass `validate_experiment_name` and `10-projects/<project>`
-     must already exist (the plugin never creates a vault entity). An
-     explicitly set project that does not exist Blocks experiment tools with
-     a reason naming the missing directory; a missing default entity falls
-     through to 3 and `experiment_start` says so in its result;
-  3. else `~/.local/share/harness/experiments`.
-  This keeps the 2026-08-13 "vault canonical when present" default. The
-  experiment-to-project mapping stays an open question (2026-08-13 deferred
-  it); `experiment_start` echoes the resolved root in its result.
+**Selection is per experiment, in `goal.yaml`:**
+
+```yaml
+journal:
+  provider: vault        # or file (the default when the block is absent)
+  project: LOGOS         # vault only; the entity must exist
+  root: ../journal-out   # file only; optional, relative to the experiment dir
+```
+
+With no block, the environment decides: `HARNESS_EXPERIMENT_PROVIDER` (`file`
+unless set to `vault`), `HARNESS_EXPERIMENT_DIR` (the file root, default
+`~/.local/share/harness/experiments`), and for a vault default `MEMORY_VAULT_DIR`
+with `HARNESS_EXPERIMENT_PROJECT`. A machine can default to the vault while the
+shipped default stays the filesystem. `experiment_start` echoes the provider,
+its root, and how they were chosen.
+
+**In-run calls follow the run, not the environment.** The session pointer
+records the provider and its parameters (`provider`, `root`, and for the vault
+provider `vault_dir` and `project`); the hook injects them for every
+`mcp__experiment__*` call while a run is open, so `advance`, `run_eval`,
+`record_observation` and the readers rebuild the same provider.
+`experiment_resume(run_id, experiment_dir=None)` finds a run through the
+environment default provider, else any session's pointer, else the `goal.yaml`
+of the given `experiment_dir`. This closes the experiment-to-project mapping the
+2026-08-13 decision deferred.
+
+**How anything reaches the server.** The plugin declares no manifest `env`: a
+missing variable would fail the server start, and configuration must degrade,
+not fail. Instead the `phase_gate` hook rewrites **every** `mcp__experiment__*`
+call, in every branch that is not a deny, to carry:
+
+- `provider`, `store_root`, `project`, `vault_dir`: from the session's pointer
+  while a run is open; otherwise the environment defaults above (provider
+  `file` unless `HARNESS_EXPERIMENT_PROVIDER=vault`; root `HARNESS_EXPERIMENT_DIR`
+  or the XDG default; `project` from `HARNESS_EXPERIMENT_PROJECT`; `vault_dir`
+  from `MEMORY_VAULT_DIR`). The hook never blocks on configuration; a vault
+  provider that cannot be built (no vault directory, missing entity, no project)
+  is a teaching error raised by the server.
 - `session_id`: the owning session, captured by the SESSION_START lifecycle
   hook. Child sessions also fire SESSION_START; the first id is the owner.
   The owner is process-global (one per `load_plugins` result) and is replaced
@@ -174,9 +231,9 @@ branch that is not a deny, to carry:
 The rewrite **overwrites** these keys unconditionally; the server refuses a
 call that arrives without `store_root` ("experiment tools require the harness
 experiment plugin hook"). Rewrites are recorded with full args in `HookDecided`
-and `DispatchResolved`, so the root every run used is auditable from the log.
-A permission prompt for a rewritten call shows the injected arguments; that
-is by design and the README says so.
+and `DispatchResolved`, so the provider and root every run used are auditable
+from the log. A permission prompt for a rewritten call shows the injected
+arguments; that is by design and the README says so.
 
 ## 5. Tool surface (`mcp__experiment__*`)
 
@@ -200,15 +257,15 @@ The frozen contract, unchanged names and signatures:
 | `experiment_start_run(experiment, goal)` | denied (the loop owns lifecycle) |
 | `experiment_record_observation(run_id, observation)` | journal phase only; on a loop run the engine attaches `iteration`, `eval_index`, `metrics`, `passed`, `criteria` and the recorded hypothesis (section 3), and refuses when no eval ran in this visit |
 | `experiment_end_run(run_id, outcome, metrics)` | denied |
-| `experiment_list_runs(experiment)` / `experiment_get_run(run_id)` / `experiment_observations(run_id)` | always |
-| `experiment_compare_runs(experiment)` | always; read-only: every run with outcome, iterations, each criterion's final and best value, and the best run per metric by the criterion's direction, as rows plus a rendered table |
+| `experiment_list_runs(experiment)` / `experiment_get_run(run_id)` / `experiment_observations(run_id)` | always; `experiment_get_run` also returns `methods` (the run's methods page) |
+| `experiment_compare_runs(experiment)` | always; read-only: every run with outcome, iterations, each criterion's final and best value, and the best run per metric by the criterion's direction, as rows plus a rendered table; also the experiment's `description` and `methodology` |
 
 The loop tools:
 
 | tool | does |
 |---|---|
 | `experiment_start(experiment_dir, max_iterations=10)` | requires `goal.yaml`; validates criteria and environment **before** creating anything; refuses with a teaching error if any run of this experiment is open ("resume or end run-NNN first") or another live pointer names this directory; `start_run`; freezes eval spec + protected digest into `state.json`; writes the pointer; a failure after `start_run` marks the run `aborted`. Returns run_id, resolved `store_root` and `experiment_dir`, objective, criteria, constraints, and a bounded prior-runs summary ("showing N of M observations; use experiment_observations for the rest") |
-| `experiment_resume(run_id)` | re-attaches this session to an open run (new pointer); returns status |
+| `experiment_resume(run_id, experiment_dir=None)` | re-attaches this session to an open run (new pointer); locates the run in the fallback root, any pointer, or the given experiment directory's `goal.yaml`; returns status |
 | `experiment_status(run_id=None)` | phase, iteration/max, best and last metrics, constraints, allowed transitions; with no `run_id` resolves this session's pointer, so a model that lost the id can recover it |
 | `experiment_advance(run_id, phase, hypothesis=None)` | transition table; `hypothesis` recorded on entry to `work`; decide->plan increments the iteration and at the cap ends the run with `max_iterations` (pointer cleared); eval->journal refused unless an eval was recorded during this visit; decide->done recomputes criteria (section 6) from `last_eval_metrics` and refuses on `null` ("no eval result recorded") or unmet; `done` ends with `success` (pointer cleared); refuses on an inactive run |
 | `experiment_run_eval(run_id)` | eval phase only; runs the frozen eval spec (section 6); no path or timeout arguments |
@@ -494,7 +551,8 @@ with `exist_ok=False` and retries on collision.
 ## 12. Deferred, and harness-level questions this plugin surfaces
 
 Plugin follow-ons: arms x trials x compare coordinator (cross-arm comparison;
-the single-experiment `experiment_compare_runs` reader is in v1); presence-gated memory mirroring of observations (a
+the single-experiment `experiment_compare_runs` reader is in v1; the
+experiment-to-project mapping is settled by the `journal` block's provider in `goal.yaml`); presence-gated memory mirroring of observations (a
 2026-08-13 contract element, deferred until harness has a way for one plugin
 to detect another's store); constraints time limits enforced in code;
 importing legacy `journal/` entries; a run-summary event when a consumer
@@ -580,7 +638,8 @@ The workspace state selects the outcome, so one experiment reaches every gate:
 lower-is-better best-metrics is exercised, a report-only `elapsed_ms` with a
 null threshold, a `description` on each), sets `environment:
 SELFTEST_TOKEN`, which the eval echoes as the `token_seen` metric to prove
-environment injection, and `eval_timeout_s: 20`. `constraints.yaml` carries
+environment injection, `eval_timeout_s: 20`, and `description` and
+`methodology` prose that the engine freezes into every run's `methods.md`. `constraints.yaml` carries
 `do_not_do`, `known_findings` and an `escalate_if` that a `workspace/ESCALATE`
 marker triggers through the `escalate` metric. `fixtures/input.json` is read by
 the eval, so the protected digest covers a file the task depends on. A sibling
@@ -590,8 +649,10 @@ the eval, so the protected digest covers a file the task depends on. A sibling
 **Driver scenarios**, each with a fresh store and state dir:
 
 1. The three-attempt loop; `evals/001..003`, two observations each carrying
-   the engine-recorded facts of its eval, `outcome: success`, no pointer, the
-   refused `done` recorded as an error.
+   the engine-recorded facts of its eval, `methods.md` naming every criterion
+   with its direction and the copied `goal.yaml`, `experiment.md` listing the
+   run after `done`, `outcome: success`, no pointer, the refused `done`
+   recorded as an error.
 2. Protected tree: `bash` appends to `eval/scoring.py` during work, then
    `experiment_run_eval` refuses naming the path; `edit_file` on
    `fixtures/input.json` is blocked by the hook.
@@ -612,7 +673,8 @@ the eval, so the protected digest covers a file the task depends on. A sibling
    `experiment_end(escalation, note)` records the outcome and note.
 10. Compare: after a stub-only run ended by hand and a passing run,
     `experiment_compare_runs` lists both, names the passing run best for
-    `score` and `mismatches`, and its table renders every criterion.
+    `score` and `mismatches`, carries the experiment's description and
+    methodology, and `experiment.md` lists both runs with the passing one best.
 
 Budget: the scenarios share the plugin server start pattern of the existing
 subprocess test and stay under about forty seconds together.
