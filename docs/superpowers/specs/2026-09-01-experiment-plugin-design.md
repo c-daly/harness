@@ -107,7 +107,8 @@ Two processes, one truth on disk:
                     the experiment's landing page: question, description, methodology, runs table
 
 $XDG_STATE_HOME/harness/experiment/active/<session_id>.json
-                    {run_id, run_dir, experiment_dir, store_root} while a run is open
+                    {run_id, run_dir, experiment_dir, session_id, provider description
+                    (provider, root, and for the vault provider vault_dir + project)} while a run is open
 ```
 
 `state.json`: `phase`, `iteration`, `max_iterations`, `active`, `exit_reason`,
