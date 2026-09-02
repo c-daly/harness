@@ -39,6 +39,7 @@ Created:
 - `plugins/experiment/skills/experiment.md`, `commands/experiment.md`, `agents/experiment-worker.md`, `README.md`.
 - `tests/test_experiment_store.py`, `tests/test_experiment_evals.py`, `tests/test_experiment_engine.py`, `tests/test_experiment_policy_hooks.py`, `tests/test_experiment_server.py`, `tests/test_experiment_plugin.py`, `tests/test_experiment_subprocess.py`.
 - `tests/fixtures/experiment_parked_run/`: a run directory written by the parked code (byte-compat fixture).
+- `plugins/experiment/examples/selftest/` and `examples/selftest-cmd/`: the self-test experiment (spec section 14) and its command-form sibling; `tests/test_experiment_selftest.py`: the scripted acceptance driver.
 
 Modified:
 
@@ -4268,3 +4269,597 @@ EOF
 ```
 
 Then watch for automated review comments and address every one in-branch. Merging is the owner's call.
+
+---
+
+### Task 11: The self-test experiment and its scripted driver (spec section 14)
+
+**Files:**
+- Create: `plugins/experiment/examples/selftest/goal.yaml`, `constraints.yaml`, `README.md`, `fixtures/input.json`, `fixtures/expected.json`, `eval/scoring.py`, `eval/test_selftest.py`, `workspace/.gitkeep`
+- Create: `plugins/experiment/examples/selftest-cmd/goal.yaml`, `fixtures/input.json`, `fixtures/expected.json`, `eval/run.py`, `eval/scoring.py` (copy), `workspace/.gitkeep`
+- Modify: `plugins/experiment/README.md` (dogfood section)
+- Test: `tests/test_experiment_selftest.py`
+
+**Interfaces:**
+- Consumes: everything from Tasks 1 to 8; harness `build_kernel`, `FakeProvider`, `tool_call_turn`, `text_turn`, `read_session`.
+- Produces: nothing new in the plugin; the example directories and the acceptance suite.
+
+- [ ] **Step 1: Create the self-test experiment**
+
+`plugins/experiment/examples/selftest/goal.yaml`:
+
+```yaml
+objective: |
+  Write workspace/solution.py exposing solve(fixture: dict) -> dict that returns
+  {"sum": ..., "max": ..., "sorted": [...]} computed from fixture["numbers"],
+  matching fixtures/expected.json exactly. Compute the values; never copy them.
+eval: eval/
+success_criteria:
+  - metric: score
+    threshold: 0.99
+    comparator: ge
+    primary: true
+    description: fraction of expected keys reproduced exactly
+  - metric: mismatches
+    threshold: 0
+    comparison: "<="
+    description: keys that differ from expected (lower is better)
+  - metric: token_seen
+    threshold: 0
+    comparator: gt
+    description: the eval saw SELFTEST_TOKEN from goal.yaml environment
+  - metric: elapsed_ms
+    threshold: null
+    comparator: report
+    description: solve() wall time in milliseconds, reported only
+environment:
+  SELFTEST_TOKEN: selftest-42
+eval_timeout_s: 20
+context: |
+  Self-test experiment for the harness experiment plugin. workspace/ starts
+  empty on purpose: the first eval crashes with ImportError (no solution), a
+  stub scores low, and the real solution passes. eval/, fixtures/, goal.yaml
+  and constraints.yaml are protected; the eval refuses to run if they change.
+```
+
+`plugins/experiment/examples/selftest/constraints.yaml`:
+
+```yaml
+time_limits:
+  max_hours_per_run: 1
+do_not_do:
+  - Do not edit eval/, fixtures/, goal.yaml or constraints.yaml; they are protected and the eval refuses if they change
+  - Do not hardcode the values from fixtures/expected.json; compute them from the fixture
+known_findings:
+  - The first eval on an empty workspace crashes with ImportError; that is the designed crash -> work kickback, not a bug
+escalate_if:
+  - The eval reports escalate=1 (a workspace/ESCALATE marker is present)
+```
+
+`plugins/experiment/examples/selftest/fixtures/input.json`:
+
+```json
+{"numbers": [3, 1, 4, 1, 5, 9, 2, 6]}
+```
+
+`plugins/experiment/examples/selftest/fixtures/expected.json`:
+
+```json
+{"sum": 31, "max": 9, "sorted": [1, 1, 2, 3, 4, 5, 6, 9]}
+```
+
+`plugins/experiment/examples/selftest/eval/scoring.py`:
+
+```python
+"""Score a solution's answer against the expected mapping."""
+
+
+def score(answer: dict, expected: dict) -> tuple[float, int]:
+    keys = list(expected)
+    hits = sum(1 for k in keys if answer.get(k) == expected[k])
+    return hits / len(keys), len(keys) - hits
+```
+
+`plugins/experiment/examples/selftest/eval/test_selftest.py`:
+
+```python
+"""The self-test eval: imports workspace/solution.py, scores it, prints [METRIC] lines."""
+
+import json
+import os
+import sys
+import time
+from pathlib import Path
+
+EXP = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(EXP / "eval"))
+sys.path.insert(0, str(EXP / "workspace"))
+
+import scoring  # noqa: E402
+
+
+def test_solution():
+    if (EXP / "workspace" / "SLOW").exists():
+        time.sleep(60)  # timeout scenario: longer than goal.yaml eval_timeout_s
+    if (EXP / "workspace" / "ESCALATE").exists():
+        print("[METRIC] escalate=1")
+    import solution  # ImportError on an empty workspace: the designed first crash
+
+    fixture = json.loads((EXP / "fixtures" / "input.json").read_text())
+    expected = json.loads((EXP / "fixtures" / "expected.json").read_text())
+    started = time.perf_counter()
+    answer = solution.solve(fixture)
+    elapsed_ms = (time.perf_counter() - started) * 1000
+    score, mismatches = scoring.score(answer, expected)
+    print(f"[METRIC] score={score:.3f}")
+    print(f"[METRIC] mismatches={mismatches}")
+    print(f"[METRIC] elapsed_ms={elapsed_ms:.1f}")
+    seen = 1 if os.environ.get("SELFTEST_TOKEN") == "selftest-42" else 0
+    print(f"[METRIC] token_seen={seen}")
+    assert score > 0, "nothing matched"
+```
+
+`plugins/experiment/examples/selftest/README.md`:
+
+```markdown
+# selftest
+
+The experiment that tests the experiment plugin. See the plugin README's
+"Dogfood" section for how to run it with a real model, and
+`tests/test_experiment_selftest.py` for the scripted driver.
+
+Attempt 1 crashes (empty workspace), attempt 2 fails the gate (a stub), attempt 3
+passes (the real solution). Markers in `workspace/` select side scenarios:
+`SLOW` (eval sleeps past the timeout) and `ESCALATE` (eval reports `escalate=1`).
+```
+
+`plugins/experiment/examples/selftest-cmd/goal.yaml` (same criteria and environment, command-form eval):
+
+```yaml
+objective: |
+  Same task as selftest, evaluated by a command instead of a pytest directory.
+eval: python3 eval/run.py --replay
+success_criteria:
+  - metric: score
+    threshold: 0.99
+    comparator: ge
+    primary: true
+  - metric: token_seen
+    threshold: 0
+    comparator: gt
+environment:
+  SELFTEST_TOKEN: selftest-42
+eval_timeout_s: 20
+```
+
+`plugins/experiment/examples/selftest-cmd/eval/run.py`:
+
+```python
+"""Command-form eval: python3 eval/run.py --replay (the flag is accepted and ignored)."""
+
+import json
+import os
+import sys
+from pathlib import Path
+
+EXP = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(EXP / "eval"))
+sys.path.insert(0, str(EXP / "workspace"))
+
+import scoring  # noqa: E402
+
+
+def main() -> int:
+    import solution
+
+    fixture = json.loads((EXP / "fixtures" / "input.json").read_text())
+    expected = json.loads((EXP / "fixtures" / "expected.json").read_text())
+    score, mismatches = scoring.score(solution.solve(fixture), expected)
+    print(f"[METRIC] score={score:.3f}")
+    print(f"[METRIC] mismatches={mismatches}")
+    seen = 1 if os.environ.get("SELFTEST_TOKEN") == "selftest-42" else 0
+    print(f"[METRIC] token_seen={seen}")
+    return 0 if score > 0 else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+```
+
+Copy `eval/scoring.py`, `fixtures/input.json` and `fixtures/expected.json` from `selftest/` into `selftest-cmd/`. Add an empty `workspace/.gitkeep` to both.
+
+- [ ] **Step 2: Write the scripted driver**
+
+```python
+# tests/test_experiment_selftest.py
+"""Acceptance: drive the self-test experiment through the real server, scenario by scenario."""
+
+import json
+import shutil
+import subprocess
+import sys
+from contextlib import asynccontextmanager
+from dataclasses import replace
+from pathlib import Path
+
+import pytest
+
+from harness.cli import build_kernel
+from harness.events import PermissionRequested, SubagentSpawned, ToolCallCompleted, ToolCallProposed
+from harness.log import read_session
+from harness.native_tools import baseline_ruleset
+from harness.permissions import PermissionEngine, PermissionRule, RuleSet
+from harness.plugins import load_plugins
+from harness.provider import FakeProvider, text_turn, tool_call_turn
+from harness.types import ModelId, ToolName
+
+PLUGINS_DIR = Path(__file__).parent.parent / "plugins"
+EXAMPLES = PLUGINS_DIR / "experiment" / "examples"
+T = "mcp__experiment__experiment_"
+RUN = "selftest/run-001"
+
+STUB = "def solve(fixture):\n    return {'sum': sum(fixture['numbers']), 'max': 0, 'sorted': []}\n"
+REAL = (
+    "def solve(fixture):\n"
+    "    n = fixture['numbers']\n"
+    "    return {'sum': sum(n), 'max': max(n), 'sorted': sorted(n)}\n"
+)
+
+
+def tc(tool, **args):
+    return tool_call_turn(tool, ToolName(tool), args)
+
+
+def x(name, **args):
+    return tc(T + name, **args)
+
+
+@pytest.fixture
+def ws(tmp_path, monkeypatch):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    shutil.copytree(EXAMPLES / "selftest", ws / "selftest")
+    shutil.copytree(EXAMPLES / "selftest-cmd", ws / "selftest-cmd")
+    monkeypatch.chdir(ws)
+    monkeypatch.setenv("HARNESS_EXPERIMENT_DIR", str(tmp_path / "store"))
+    monkeypatch.setenv("HARNESS_EXPERIMENT_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.delenv("MEMORY_VAULT_DIR", raising=False)
+    return ws
+
+
+def _engine(default=None):
+    rules = [
+        PermissionRule(action="allow", tool="mcp__experiment__*"),
+        PermissionRule(action="allow", tool="invoke_skill"),
+        PermissionRule(action="allow", tool="write_file"),
+        PermissionRule(action="allow", tool="edit_file"),
+        PermissionRule(action="allow", tool="read_file"),
+        PermissionRule(action="allow", tool="bash"),
+        PermissionRule(action="allow", tool="dispatch_agent"),
+    ]
+    return PermissionEngine([RuleSet(rules=rules, default=default), baseline_ruleset()])
+
+
+@asynccontextmanager
+async def kernel_for(tmp_path, script, *, resume_session_id=None):
+    """A live kernel with the experiment server started; call run_turn as many times as needed."""
+    loaded = load_plugins([PLUGINS_DIR])
+    specs = [replace(s, command=sys.executable) for s in loaded.mcp_servers if s.name == "experiment"]
+    kernel = build_kernel(
+        provider=FakeProvider(script), base_dir=tmp_path / "base", model=ModelId("fake"),
+        plugins=loaded, mcp=specs, native_tools=True, workspace_root=tmp_path / "ws",
+        permissions=_engine(), resume_session_id=resume_session_id,
+    )
+    await kernel.mcp.start()
+    if not kernel.resumed:
+        await kernel.loop.start()
+    try:
+        yield kernel
+    finally:
+        await kernel.loop.end()
+        await kernel.mcp.stop()
+        kernel.session.close()
+
+
+def calls(tmp_path, session_id):
+    """[(tool, is_error, text)] in dispatch order for one session."""
+    events = [e.event for e in read_session(tmp_path / "base", session_id)]
+    proposed = {e.call_id: str(e.tool) for e in events if isinstance(e, ToolCallProposed)}
+    return [
+        (proposed[e.call_id], e.is_error, e.result_text or "")
+        for e in events if isinstance(e, ToolCallCompleted) and e.call_id in proposed
+    ]
+
+
+def run_dir(tmp_path, run=RUN):
+    return tmp_path / "store" / run.split("/")[0] / "runs" / run.split("/")[1]
+
+
+def state(tmp_path, run=RUN):
+    return json.loads((run_dir(tmp_path, run) / "state.json").read_text())
+
+
+def eval_record(tmp_path, n, run=RUN):
+    return json.loads((run_dir(tmp_path, run) / "evals" / f"{n:03d}.json").read_text())
+
+
+async def test_scenario_1_three_attempts_reach_done(tmp_path, ws):
+    attempt1 = [
+        x("start", experiment_dir="selftest"),
+        x("advance", run_id=RUN, phase="plan"),
+        x("advance", run_id=RUN, phase="work", hypothesis="see what the eval wants"),
+        x("advance", run_id=RUN, phase="eval"),
+        x("run_eval", run_id=RUN),
+        x("advance", run_id=RUN, phase="work"),  # crash -> work kickback
+        text_turn("attempt 1 done"),
+    ]
+    attempt2 = [
+        tc("write_file", file_path="selftest/workspace/solution.py", content=STUB),
+        x("advance", run_id=RUN, phase="eval"),
+        x("run_eval", run_id=RUN),
+        x("advance", run_id=RUN, phase="journal"),
+        x("record_observation", run_id=RUN, observation={
+            "title": "stub", "hypothesis": "sum only", "changes": "stub solve",
+            "result": "score 0.333", "diagnosis": "max and sorted missing", "next_direction": "compute all"}),
+        x("advance", run_id=RUN, phase="decide"),
+        x("advance", run_id=RUN, phase="done"),   # refused: criteria not met
+        x("advance", run_id=RUN, phase="plan"),
+        text_turn("attempt 2 done"),
+    ]
+    attempt3 = [
+        x("advance", run_id=RUN, phase="work", hypothesis="compute all three keys"),
+        tc("write_file", file_path="selftest/workspace/solution.py", content=REAL),
+        x("advance", run_id=RUN, phase="eval"),
+        x("run_eval", run_id=RUN),
+        x("advance", run_id=RUN, phase="journal"),
+        x("record_observation", run_id=RUN, observation={
+            "title": "real", "hypothesis": "compute all three keys", "changes": "full solve",
+            "result": "score 1.0", "diagnosis": "matches", "next_direction": "done"}),
+        x("advance", run_id=RUN, phase="decide"),
+        x("advance", run_id=RUN, phase="done"),
+        text_turn("attempt 3 done"),
+    ]
+    async with kernel_for(tmp_path, attempt1 + attempt2 + attempt3) as kernel:
+        for prompt in ("attempt 1", "attempt 2", "attempt 3"):
+            await kernel.loop.run_turn(prompt)
+        session_id = kernel.session.id
+
+    e1, e2, e3 = (eval_record(tmp_path, n) for n in (1, 2, 3))
+    assert e1["return_code"] != 0 and e1["metrics"] == {} and e1["passed"] is False
+    assert "ImportError" in (run_dir(tmp_path) / "evals" / "001.out").read_text()
+    assert e2["metrics"]["score"] == pytest.approx(0.333, abs=0.001)
+    assert e2["metrics"]["mismatches"] == 2.0 and e2["metrics"]["token_seen"] == 1.0
+    assert "elapsed_ms" in e2["metrics"] and e2["metrics"]["test_pass_rate"] == 1.0
+    assert e2["passed"] is False
+    assert e3["metrics"]["score"] == 1.0 and e3["passed"] is True
+    st = state(tmp_path)
+    assert st["active"] is False and st["exit_reason"] == "success" and st["iteration"] == 1
+    assert st["best_metrics"]["mismatches"] == 0.0 and st["best_metrics"]["score"] == 1.0
+    assert [h["hypothesis"] for h in st["hypotheses_tested"]] == [
+        "see what the eval wants", "compute all three keys"]
+    run = json.loads((run_dir(tmp_path) / "run.json").read_text())
+    assert run["outcome"] == "success" and run["metrics"]["score"] == 1.0
+    assert len(list((run_dir(tmp_path) / "journal").glob("*.md"))) == 2
+    assert not list((tmp_path / "state").glob("*.json"))
+    done_calls = [c for c in calls(tmp_path, session_id) if c[0] == T + "advance" and "not met" in c[2]]
+    assert len(done_calls) == 1 and done_calls[0][1] is True
+
+
+async def test_scenario_2_protected_tree(tmp_path, ws):
+    script = [
+        x("start", experiment_dir="selftest"),
+        x("advance", run_id=RUN, phase="plan"),
+        x("advance", run_id=RUN, phase="work"),
+        tc("bash", command="echo '# tamper' >> selftest/eval/scoring.py"),
+        x("advance", run_id=RUN, phase="eval"),
+        x("run_eval", run_id=RUN),
+        tc("edit_file", file_path="selftest/fixtures/input.json", old_string="3", new_string="4"),
+        text_turn("done"),
+    ]
+    async with kernel_for(tmp_path, script) as kernel:
+        await kernel.loop.run_turn("go")
+        session_id = kernel.session.id
+    by_tool = {c[0]: c for c in calls(tmp_path, session_id)}
+    assert by_tool["bash"][1] is False
+    assert by_tool[T + "run_eval"][1] is True and "eval/scoring.py" in by_tool[T + "run_eval"][2]
+    assert by_tool["edit_file"][1] is True and "protected" in by_tool["edit_file"][2]
+    assert (ws / "selftest" / "fixtures" / "input.json").read_text().startswith('{"numbers": [3')
+
+
+async def test_scenario_3_phase_discipline_headless(tmp_path, ws):
+    script = [
+        x("start", experiment_dir="selftest"),
+        tc("write_file", file_path="selftest/workspace/notes.txt", content="x"),
+        x("start_run", experiment="other", goal="g"),
+        text_turn("done"),
+    ]
+    async with kernel_for(tmp_path, script) as kernel:
+        await kernel.loop.run_turn("go")
+        session_id = kernel.session.id
+        events = [e.event for e in read_session(tmp_path / "base", session_id)]
+    asked = [e for e in events if isinstance(e, PermissionRequested)]
+    assert asked and RUN in asked[0].reason and "phase read" in asked[0].reason
+    by_tool = {c[0]: c for c in calls(tmp_path, session_id)}
+    assert by_tool["write_file"][1] is True and "denied" in by_tool["write_file"][2]
+    assert by_tool[T + "start_run"][1] is True and RUN in by_tool[T + "start_run"][2]
+    assert not (ws / "selftest" / "workspace" / "notes.txt").exists()
+
+
+async def test_scenario_4_iteration_cap(tmp_path, ws):
+    loop = [
+        x("advance", run_id=RUN, phase="eval"),
+        x("run_eval", run_id=RUN),
+        x("advance", run_id=RUN, phase="journal"),
+        x("record_observation", run_id=RUN, observation={"title": "stub again"}),
+        x("advance", run_id=RUN, phase="decide"),
+        x("advance", run_id=RUN, phase="plan"),
+        x("advance", run_id=RUN, phase="work"),
+    ]
+    script = [
+        x("start", experiment_dir="selftest", max_iterations=2),
+        x("advance", run_id=RUN, phase="plan"),
+        x("advance", run_id=RUN, phase="work"),
+        tc("write_file", file_path="selftest/workspace/solution.py", content=STUB),
+        *loop,
+        *loop,
+        text_turn("done"),
+    ]
+    async with kernel_for(tmp_path, script) as kernel:
+        await kernel.loop.run_turn("go")
+        session_id = kernel.session.id
+    advances = [c for c in calls(tmp_path, session_id) if c[0] == T + "advance"]
+    assert any(c[1] and "Max iterations" in c[2] for c in advances)
+    st = state(tmp_path)
+    assert st["active"] is False and st["exit_reason"] == "max_iterations" and st["iteration"] == 2
+    assert json.loads((run_dir(tmp_path) / "run.json").read_text())["outcome"] == "max_iterations"
+    assert not list((tmp_path / "state").glob("*.json"))
+
+
+async def test_scenario_5_resume_end_prior_runs_and_stale_pointer(tmp_path, ws):
+    async with kernel_for(tmp_path, [x("start", experiment_dir="selftest"),
+                                     x("advance", run_id=RUN, phase="plan"), text_turn("a")]) as a:
+        await a.loop.run_turn("start")
+    async with kernel_for(tmp_path, [x("resume", run_id=RUN),
+                                     x("advance", run_id=RUN, phase="work"), text_turn("b")]) as b:
+        await b.loop.run_turn("resume")
+        b_calls = calls(tmp_path, b.session.id)
+    assert all(not c[1] for c in b_calls), b_calls
+    assert state(tmp_path)["phase"] == "work"
+    async with kernel_for(tmp_path, [
+        x("end", run_id=RUN, outcome="user_stopped", note="handoff"),
+        x("start", experiment_dir="selftest"),
+        text_turn("c"),
+    ]) as c:
+        await c.loop.run_turn("end and restart")
+        c_calls = calls(tmp_path, c.session.id)
+        c_session = c.session.id
+    assert state(tmp_path)["exit_reason"] == "user_stopped" and state(tmp_path)["exit_note"] == "handoff"
+    started = json.loads(c_calls[1][2])
+    assert started["run_id"] == "selftest/run-002" and started["prior_runs"]["runs"] == 1
+    assert "showing" in started["prior_runs"]["note"]
+    # stale pointer: the new run is ended out of band, the pointer stays, the next call cleans it
+    st = state(tmp_path, "selftest/run-002")
+    st["active"] = False
+    (run_dir(tmp_path, "selftest/run-002") / "state.json").write_text(json.dumps(st))
+    pointer = tmp_path / "state" / f"{c_session}.json"
+    assert pointer.exists()
+    async with kernel_for(tmp_path, [tc("write_file", file_path="selftest/workspace/free.txt", content="ok"),
+                                     text_turn("d")], resume_session_id=c_session) as d:
+        await d.loop.run_turn("write")
+    assert (ws / "selftest" / "workspace" / "free.txt").exists()
+
+
+async def test_scenario_6_subagent_cannot_write_or_advance(tmp_path, ws):
+    script = [
+        x("start", experiment_dir="selftest"),
+        tc("dispatch_agent", prompt="write selftest/workspace/x.txt then advance", agent="experiment-worker"),
+        tc("write_file", file_path="selftest/workspace/x.txt", content="hi"),          # child
+        x("advance", run_id=RUN, phase="plan"),                                         # child
+        text_turn("child done"),
+        text_turn("parent done"),
+    ]
+    async with kernel_for(tmp_path, script) as kernel:
+        await kernel.loop.run_turn("go")
+        parent = [e.event for e in read_session(tmp_path / "base", kernel.session.id)]
+        child_id = next(e for e in parent if isinstance(e, SubagentSpawned)).child_session_id
+        child = calls(tmp_path, child_id)
+    by_tool = {c[0]: c for c in child}
+    assert by_tool["write_file"][1] is True
+    assert by_tool[T + "advance"][1] is True  # not in the worker's tool list
+    assert state(tmp_path)["phase"] == "read"
+    assert not (ws / "selftest" / "workspace" / "x.txt").exists()
+
+
+async def test_scenario_7_timeout_kills_the_eval(tmp_path, ws):
+    script = [
+        x("start", experiment_dir="selftest"),
+        x("advance", run_id=RUN, phase="plan"),
+        x("advance", run_id=RUN, phase="work"),
+        tc("write_file", file_path="selftest/workspace/solution.py", content=REAL),
+        tc("write_file", file_path="selftest/workspace/SLOW", content=""),
+        x("advance", run_id=RUN, phase="eval"),
+        x("run_eval", run_id=RUN),
+        text_turn("done"),
+    ]
+    async with kernel_for(tmp_path, script) as kernel:
+        await kernel.loop.run_turn("go")
+    e1 = eval_record(tmp_path, 1)
+    assert e1["timed_out"] is True and e1["passed"] is False and e1["timeout_s"] == 20
+    left = subprocess.run(["pgrep", "-f", str(ws / "selftest" / "eval")], capture_output=True)
+    assert left.returncode != 0, "eval process still alive after timeout"
+
+
+async def test_scenario_8_command_form_eval(tmp_path, ws):
+    run = "selftest-cmd/run-001"
+    script = [
+        x("start", experiment_dir="selftest-cmd"),
+        x("advance", run_id=run, phase="plan"),
+        x("advance", run_id=run, phase="work"),
+        tc("write_file", file_path="selftest-cmd/workspace/solution.py", content=REAL),
+        x("advance", run_id=run, phase="eval"),
+        x("run_eval", run_id=run),
+        text_turn("done"),
+    ]
+    async with kernel_for(tmp_path, script) as kernel:
+        await kernel.loop.run_turn("go")
+    e1 = eval_record(tmp_path, 1, run)
+    assert e1["command"] == ["python3", "eval/run.py", "--replay"]
+    assert e1["passed"] is True and e1["metrics"]["token_seen"] == 1.0
+
+
+async def test_scenario_9_escalation(tmp_path, ws):
+    script = [
+        x("start", experiment_dir="selftest"),
+        x("advance", run_id=RUN, phase="plan"),
+        x("advance", run_id=RUN, phase="work"),
+        tc("write_file", file_path="selftest/workspace/solution.py", content=STUB),
+        tc("write_file", file_path="selftest/workspace/ESCALATE", content=""),
+        x("advance", run_id=RUN, phase="eval"),
+        x("run_eval", run_id=RUN),
+        x("end", run_id=RUN, outcome="escalation", note="eval reported escalate=1"),
+        text_turn("done"),
+    ]
+    async with kernel_for(tmp_path, script) as kernel:
+        await kernel.loop.run_turn("go")
+    assert eval_record(tmp_path, 1)["metrics"]["escalate"] == 1.0
+    st = state(tmp_path)
+    assert st["exit_reason"] == "escalation" and st["exit_note"] == "eval reported escalate=1"
+    assert json.loads((run_dir(tmp_path) / "run.json").read_text())["outcome"] == "escalation"
+```
+
+- [ ] **Step 3: Run the driver**
+
+Run: `uv run pytest tests/test_experiment_selftest.py -v`
+Expected: PASS, under about forty seconds. A failure points at the task that owns the feature (the scenario names say which); fix there, re-run that task's tests, then this file.
+
+- [ ] **Step 4: Add the dogfood section to the plugin README**
+
+Append to `plugins/experiment/README.md`:
+
+```markdown
+## Dogfood: run the self-test with a real model
+
+```
+cd plugins/experiment/examples
+uv run harness --plugin-dir ../.. --model local36
+/experiment selftest
+```
+
+Repeat with `--model claude`, then `uv run harness compare <session-a> <session-b>`.
+
+Pass criteria for one run (check the run directory under your store root):
+- `evals/001.json` has a non-zero `return_code` and empty metrics (the designed crash);
+- `evals/002.json` has `score` near 0.333 and `passed: false`; a journal observation exists;
+- the refused `done` appears in the session log as a tool error naming the recomputed criteria;
+- `evals/003.json` has `score: 1.0`; `run.json` says `outcome: success`; no pointer remains;
+- the model ended each reply at a phase transition (one `experiment_advance` per reply).
+
+Reset between runs: `rm -f examples/selftest/workspace/solution.py`.
+```
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add plugins/experiment/examples plugins/experiment/README.md tests/test_experiment_selftest.py
+git commit -m "test(experiment): self-test experiment and scripted acceptance driver"
+```

@@ -525,3 +525,72 @@ entity per section 11b):
 - **Block for every phase rule.** Rejected in favour of `Ask` for discipline
   rules: harness already has a human channel, and a run should not have to
   end so a human can approve one command.
+
+## 14. Acceptance: the self-test experiment
+
+Experiments normally live in their own directories outside harness (the
+logos-experiments convention). One experiment ships with the plugin because it
+tests the plugin: `plugins/experiment/examples/selftest/`, driven two ways.
+
+- **Scripted driver** (`tests/test_experiment_selftest.py`): a fixed tool
+  sequence through the real subprocess server, one scenario per feature group,
+  asserting on the run directory and the event log. This proves the machinery
+  and runs in the normal suite.
+- **Dogfood run** (README): a real model follows the skill through the same
+  directory, once on `local36` and once on `claude`, then `harness compare`
+  joins the two sessions. This proves the skill prose. A checklist of expected
+  artifacts makes it pass or fail.
+
+**The experiment.** A synthetic, self-grading task: write
+`workspace/solution.py` exposing `solve(fixture) -> dict` that reproduces
+`fixtures/expected.json` from `fixtures/input.json`. The eval is a pytest
+directory that imports the solution, scores it, and prints `[METRIC]` lines.
+The workspace state selects the outcome, so one experiment reaches every gate:
+
+1. **Attempt 1 crashes**: no solution file, `ImportError`, no metrics,
+   non-zero return code, `evals/001.out` captured. Exercises the eval-to-work
+   kickback and "crash with criteria is not a pass".
+2. **Attempt 2 fails the gate**: a stub scores one key of three, the pytest
+   test still passes (so `test_pass_rate` is derived as 1.0 while the primary
+   criterion fails). Exercises iteration counting, best-metrics, a journal
+   observation, and the done gate refusing with recomputed details.
+3. **Attempt 3 passes**: the real solution. Exercises done, `success`, pointer
+   removal, `run.json` metrics.
+
+`goal.yaml` uses every accepted criteria form (`comparator: ge` primary
+`score`, `gt` on `token_seen`, `comparison: "<="` on `mismatches` so
+lower-is-better best-metrics is exercised, a report-only `elapsed_ms` with a
+null threshold, a `description` on each), sets `environment:
+SELFTEST_TOKEN`, which the eval echoes as the `token_seen` metric to prove
+environment injection, and `eval_timeout_s: 20`. `constraints.yaml` carries
+`do_not_do`, `known_findings` and an `escalate_if` that a `workspace/ESCALATE`
+marker triggers through the `escalate` metric. `fixtures/input.json` is read by
+the eval, so the protected digest covers a file the task depends on. A sibling
+`examples/selftest-cmd/` uses the command eval form (`python3 eval/run.py
+--replay`).
+
+**Driver scenarios**, each with a fresh store and state dir:
+
+1. The three-attempt loop; `evals/001..003`, two observations, `outcome:
+   success`, no pointer, the refused `done` recorded as an error.
+2. Protected tree: `bash` appends to `eval/scoring.py` during work, then
+   `experiment_run_eval` refuses naming the path; `edit_file` on
+   `fixtures/input.json` is blocked by the hook.
+3. Phase discipline headless: `write_file` during read is asked and denied;
+   `experiment_start_run` while open is blocked; reasons name the run id.
+4. Iteration cap: `max_iterations: 2` with the stub left in place ends with
+   `max_iterations` and no pointer.
+5. Resume, end, prior runs, stale pointer: a second session resumes by id and
+   advances; a third ends it with a note, then starts a new run whose result
+   carries the bounded prior-runs summary; a stale pointer is cleaned on the
+   next call.
+6. Subagent: `experiment-worker` dispatched during read cannot write (asked,
+   denied) and has no `experiment_advance` tool.
+7. Timeout: a `workspace/SLOW` marker makes the eval sleep past
+   `eval_timeout_s`; the result reports `timed_out`, the process group is gone.
+8. Command-form eval on `selftest-cmd`; the recorded command is the argv.
+9. Escalation: `workspace/ESCALATE`, the eval reports `escalate=1`,
+   `experiment_end(escalation, note)` records the outcome and note.
+
+Budget: the scenarios share the plugin server start pattern of the existing
+subprocess test and stay under about forty seconds together.
