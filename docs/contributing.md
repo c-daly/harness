@@ -8,16 +8,34 @@ discipline the project holds to. Read [architecture.md](architecture.md) first.
 
 ## Development setup
 
+CI runs exactly this sequence, in this order, on Python 3.12 and 3.13 (see
+`.github/workflows/ci.yml`). Run the same thing locally before you push:
+
 ```bash
-uv sync                       # install deps + dev tools
-uv run pytest -q              # run the suite (≈70s)
-uv run ruff check             # lint
-uv run ruff format            # format
+uv python install <version>                       # <version> is 3.12 or 3.13; CI runs both
+uv sync --frozen --extra dev --python <version>   # install deps + dev tools from the lockfile
+uv run ruff check .                               # lint
+uv run pytest -q                                  # full suite
+uv build --out-dir dist                           # sdist + wheel
+scripts/smoke_wheel.sh dist/*.whl                 # wheel smoke; CI runs this on 3.13 only
 ```
+
+`--frozen` is the point of the `uv sync` line: it installs straight from the
+lockfile without re-resolving, so what you test is what the lock pins. It does
+*not* verify that the lock is up to date; that check is `--locked`, which fails
+on a stale lock. CI uses `--frozen` deliberately. If the default uv cache is not
+writable on your machine, prefix every command with `UV_CACHE_DIR=/tmp/uv-cache`.
+
+While iterating you will also want `uv run ruff format`.
+
+The full suite takes roughly four minutes on a 2026 laptop; the TUI tests
+dominate. Budget for that rather than for a fixed number. Narrowing to one file
+(`uv run pytest -q tests/test_loop.py`) is fine while iterating, but the green
+you report has to come from a complete run.
 
 Conventions:
 
-- **Python 3.12+**, `uv` for everything.
+- **Python 3.12+**, `uv` for everything. CI covers 3.12 and 3.13.
 - **Ruff**, line length 100. No unused imports, no `noqa`.
 - **pytest** with `asyncio_mode = "auto"` — async tests need no decorator.
 - Run tests from the repo root.
