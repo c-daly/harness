@@ -13,18 +13,19 @@ CI runs exactly this sequence, in this order, on Python 3.12 and 3.13 (see
 
 ```bash
 uv python install <version>                       # <version> is 3.12 or 3.13; CI runs both
-uv sync --frozen --extra dev --python <version>   # install deps + dev tools from the lockfile
+uv sync --locked --extra dev --python <version>   # install deps + dev tools from the lockfile
 uv run ruff check .                               # lint
 uv run pytest -q                                  # full suite
 uv build --out-dir dist                           # sdist + wheel
 scripts/smoke_wheel.sh dist/*.whl                 # wheel smoke; CI runs this on 3.13 only
 ```
 
-`--frozen` is the point of the `uv sync` line: it installs straight from the
-lockfile without re-resolving, so what you test is what the lock pins. It does
-*not* verify that the lock is up to date; that check is `--locked`, which fails
-on a stale lock. CI uses `--frozen` deliberately. If the default uv cache is not
-writable on your machine, prefix every command with `UV_CACHE_DIR=/tmp/uv-cache`.
+CI uses `--locked` on the `uv sync` line: it installs from the lockfile and
+fails the gate when the lock no longer matches `pyproject.toml`, so a stale
+dependency set is never tested silently. `--frozen` installs from the lock
+without that freshness check and is fine for local iteration. If the default uv
+cache is not writable on your machine, prefix every command with
+`UV_CACHE_DIR=/tmp/uv-cache`.
 
 While iterating you will also want `uv run ruff format`.
 
