@@ -30,7 +30,8 @@ uv run harness -p "summarize the README"    # one-shot, headless
 - **Native tools.** `read_file`, `write_file`, `edit_file`, `glob`, `grep`,
   `bash`, `todo` — workspace-confined, with teaching error messages.
 - **A TUI built for long sessions.** Streamed thinking (`/thoughts`), markdown
-  replies (`/markdown`), in-place `/clear` and `/compact`, `/resume` to
+  replies with transparent typeset LaTeX math (`/markdown`), in-place `/clear`
+  and `/compact`, `/resume` to
   reopen a prior session, a persistent status bar (model · context % · cost ·
   tools), `@file` mentions with Tab completion — a mention reads through the
   same dispatcher and permission gate a model-issued read does, but only the
