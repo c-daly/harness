@@ -7,3 +7,5 @@ dist/
 .env
 .env.*
 .serena/
+.claude/
+.context/

@@ -145,6 +145,7 @@ name: curator
 description: Reviews and organizes notes
 tools: [read_file, grep, invoke_skill]
 model: sonnet
+max_output_chars: 3000
 ---
 
 You are the curator. Survey existing notes before proposing changes.
@@ -153,11 +154,41 @@ You are the curator. Survey existing notes before proposing changes.
 The body becomes the child's system prompt. `tools` is an allow-list applied via
 a `FilteredRegistry` — the child sees *only* those tools. `model` is a catalog
 alias; if it doesn't resolve, the dispatch falls back to the default and the
-choice is reported. The `dispatch_agent` tool launches the named agent.
+choice is reported. `max_output_chars` caps what the child returns to its
+parent; omit it for no cap. It bounds the *returned* text, not what the child's
+model produced, and truncation is marked. The `dispatch_agent` tool launches the
+named agent.
 
 The agents primitive is a **filtered registry view, never a dispatch hook** —
 tool restriction happens at registry-construction time, because the shared hook
 bus has no per-session identity to scope against.
+
+### Coordination agents (mixture of models)
+
+An agent that sets `strategy` fans out to several `experts` instead of running
+one child loop. `experts` are catalog aliases, read **positionally** per
+strategy:
+
+```markdown
+---
+name: panel
+description: One proposer, then critics
+strategy: panel
+experts: [opus, sonnet, haiku]
+---
+```
+
+| `strategy` | positional meaning of `experts` |
+|---|---|
+| `ensemble` | all experts answer the same prompt |
+| `panel` | `[0]` proposes, the rest critique |
+| `draft_refine` | `[0]` drafts, `[1]` refines (falls back to `[0]`) |
+| `escalate` | `[0]` cheap, `[1]` premium, optional `[2]` verifies |
+
+`strategy` must be one of those four and requires a non-empty `experts` list —
+both are enforced at load time, so a bad definition fails when the plugin loads
+rather than at dispatch. A coordination agent ignores `max_output_chars`: it
+returns before the leaf path, and each expert applies its own.
 
 ---
 

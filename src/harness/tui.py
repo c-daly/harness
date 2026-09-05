@@ -10,19 +10,20 @@ import os
 import re
 import subprocess
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 from rich.console import RenderableType
-from rich.markdown import Markdown
 from rich.text import Text
 from textual import on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Vertical
+from textual.containers import Container, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Checkbox, Input, OptionList, RichLog, Static
 from textual.widgets.option_list import Option
 from textual.worker import WorkerCancelled, WorkerFailed
+from textual_image.widget.sixel import Image as SixelImage, SixelOptions
 
 from harness.blobs import INLINE_THRESHOLD
 from harness.cli import Kernel, build_kernel
@@ -38,6 +39,7 @@ from harness.fold import fold
 from harness.hooks import ProposedToolCall
 from harness.interaction import PermissionRequest
 from harness.log import read_session
+from harness.math_markdown import MathMarkdown, SIXEL_META_KEY, SixelPlacement
 from harness.mcp_host import McpHost
 from harness.messages import Message, Role
 from harness.provider import TextDelta, ThinkingDelta, collect
@@ -80,6 +82,159 @@ _MENTION_WALK_SKIP_DIRS = {
     ".git", "node_modules", "__pycache__", ".venv", "venv", ".mypy_cache", ".pytest_cache", ".tox",
 }
 _MENTION_WALK_CAP = 5000  # bounded os.walk: cap file count, not just depth
+
+
+@dataclass
+class _TranscriptSixel:
+    placement_id: str
+    widget: SixelImage
+    x: int
+    absolute_y: int
+    width: int
+    rows: int
+
+
+class MathTranscriptStack(Container):
+    """Transcript stack that preserves scrolling over equation widgets."""
+
+    def on_mouse_scroll_down(self, event) -> None:
+        self.app.query_one("#transcript", MathTranscript).scroll_down(animate=False)
+        event.stop()
+
+    def on_mouse_scroll_up(self, event) -> None:
+        self.app.query_one("#transcript", MathTranscript).scroll_up(animate=False)
+        event.stop()
+
+
+class MathTranscript(RichLog):
+    """RichLog whose display-math placeholders are backed by Sixel widgets.
+
+    textual-image's Rich renderable is not compatible with Textual: its cursor
+    controls become stored log segments.  The library's widget renderer instead
+    needs the final screen region and crop, so equation widgets live in the
+    transparent sibling overlay while this log retains blank placeholder cells.
+    """
+
+    def __init__(self, *args, **kwargs) -> None:
+        self._sixel_widgets: list[_TranscriptSixel] = []
+        self._mounted_placement_ids: set[str] = set()
+        super().__init__(*args, **kwargs)
+
+    def write(
+        self,
+        content,
+        width: int | None = None,
+        expand: bool = False,
+        shrink: bool = True,
+        scroll_end: bool | None = None,
+        animate: bool = False,
+    ):
+        result = super().write(content, width, expand, shrink, scroll_end, animate)
+        if isinstance(content, MathMarkdown) and content.sixel_placements:
+            self._mount_sixel_placements(content.sixel_placements)
+        return result
+
+    def _mount_sixel_placements(
+        self, placements: dict[str, SixelPlacement]
+    ) -> None:
+        wanted = {
+            placement_id: placement
+            for placement_id, placement in placements.items()
+            if placement_id not in self._mounted_placement_ids
+        }
+        if not wanted or not self.is_mounted:
+            return
+
+        located: dict[str, tuple[int, int]] = {}
+        for line_index, line in enumerate(self.lines):
+            cell_offset = 0
+            for segment in line:
+                style = segment.style
+                placement_id = (
+                    style.meta.get(SIXEL_META_KEY) if style is not None else None
+                )
+                if placement_id in wanted and placement_id not in located:
+                    located[placement_id] = (
+                        cell_offset,
+                        self._start_line + line_index,
+                    )
+                cell_offset += segment.cell_length
+
+        stack = self.app.query_one("#transcript-stack", Container)
+        widgets = []
+        for placement_id, (x, absolute_y) in located.items():
+            placement = wanted[placement_id]
+            widget = SixelImage(
+                placement.image,
+                classes="math-sixel",
+                sixel_options=SixelOptions(colors=16),
+            )
+            widget.styles.position = "absolute"
+            widget.styles.width = placement.width
+            widget.styles.height = placement.rows
+            tracked = _TranscriptSixel(
+                placement_id,
+                widget,
+                x,
+                absolute_y,
+                placement.width,
+                placement.rows,
+            )
+            self._sixel_widgets.append(tracked)
+            self._mounted_placement_ids.add(placement_id)
+            widgets.append(widget)
+        if widgets:
+            # Mount only the equation-sized widgets above the transcript.  A
+            # full-screen transparent sibling still contributes blank cells to
+            # Textual's compositor and therefore erases all prose beneath it.
+            stack.mount(*widgets)
+            self._position_sixel_widgets()
+            self.call_after_refresh(self._position_sixel_widgets)
+
+    def _position_sixel_widgets(self) -> None:
+        if not self.is_mounted:
+            return
+        scroll_x = round(self.scroll_x)
+        scroll_y = round(self.scroll_y)
+        viewport = self.scrollable_content_region
+        retained: list[_TranscriptSixel] = []
+        for tracked in self._sixel_widgets:
+            if tracked.absolute_y + tracked.rows <= self._start_line:
+                tracked.widget.remove()
+                self._mounted_placement_ids.discard(tracked.placement_id)
+                continue
+            x = tracked.x - scroll_x
+            y = tracked.absolute_y - self._start_line - scroll_y
+            tracked.widget.styles.offset = (x, y)
+            tracked.widget.display = (
+                x < viewport.width
+                and x + tracked.width > 0
+                and y < viewport.height
+                and y + tracked.rows > 0
+            )
+            retained.append(tracked)
+        self._sixel_widgets = retained
+
+    def watch_scroll_x(self, old_value: float, new_value: float) -> None:
+        super().watch_scroll_x(old_value, new_value)
+        if round(old_value) != round(new_value):
+            self.call_after_refresh(self._position_sixel_widgets)
+
+    def watch_scroll_y(self, old_value: float, new_value: float) -> None:
+        super().watch_scroll_y(old_value, new_value)
+        if round(old_value) != round(new_value):
+            self.call_after_refresh(self._position_sixel_widgets)
+
+    def on_resize(self, event) -> None:
+        super().on_resize(event)
+        self.call_after_refresh(self._position_sixel_widgets)
+
+    def clear(self):
+        for tracked in self._sixel_widgets:
+            tracked.widget.remove()
+        self._sixel_widgets.clear()
+        self._mounted_placement_ids.clear()
+        return super().clear()
 
 
 def _list_workspace_files(root: Path) -> list[str]:
@@ -409,6 +564,24 @@ class HistoryInput(Input):
 
 class HarnessApp(App[None]):
     CSS = """
+    #transcript-stack {
+        height: 1fr;
+        width: 100%;
+        layers: transcript images;
+    }
+    #transcript {
+        height: 100%;
+        width: 100%;
+        layer: transcript;
+    }
+    .math-sixel {
+        position: absolute;
+        layer: images;
+        /* textual-image emits terminal clearing cells beneath each Sixel.
+           Match RichLog's surface so those cells don't become dark boxes;
+           the equation PNG itself remains transparent RGBA. */
+        background: $surface;
+    }
     #live { height: auto; }
     #stats { dock: bottom; height: 1; }
     #statusbar { dock: bottom; height: 1; }
@@ -507,7 +680,10 @@ class HarnessApp(App[None]):
 
     def compose(self) -> ComposeResult:
         with Vertical():
-            yield RichLog(id="transcript", wrap=True, markup=False, max_lines=10_000)
+            with MathTranscriptStack(id="transcript-stack"):
+                yield MathTranscript(
+                    id="transcript", wrap=True, markup=False, max_lines=10_000
+                )
             yield Static(id="live")
         yield Static(id="stats")
         yield Static(id="statusbar")
@@ -531,7 +707,9 @@ class HarnessApp(App[None]):
         everywhere else. Thought summaries, errors, and system lines call
         say() (-> _plain) directly and never pass through here."""
         if self._markdown_mode:
-            return Markdown(text)
+            theme = self.current_theme
+            math_color = theme.foreground or ("#f4f4f4" if theme.dark else "#202020")
+            return MathMarkdown(text, color=math_color, sixel_widgets=True)
         return _plain(text)
 
     def _clear_live(self) -> None:
