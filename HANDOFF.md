@@ -1,23 +1,27 @@
 # Core agency implementation — restart handoff
 
-> **Continuation update, September 6:** [PR #13](https://github.com/c-daly/harness/pull/13)
-> is merged into `main` at `68936ae` after Python 3.12/3.13 CI and review passed.
-> Implementation continues on `feat/local-qualification`, created from that merge.
-> This slice adds optional local runtime `cwd` and a
-> [repeatable real 4B offline check](docs/local-model-qualification.md).
-> **The local model profile fails its complete smoke gate:** no-plugin file tasks
-> and terminal journeys passed 3/3 each; memory-assisted artifacts passed 0/3.
-> The final report records two wrong-artifact outcomes and one malformed JSON outcome.
-> Memory transport works; model task quality is not qualified. Source files,
-> private memory, and user services were preserved. Weights stay ignored under
-> `.local-runtime/`; no local server from the check remains running.
-> Full validation passed **1162 tests, 7 skipped**, Ruff, packaging, and a fresh
-> offline wheel install importing all 58 modules.
+> **Continuation update, September 6:** [PR #14](https://github.com/c-daly/harness/pull/14)
+> is merged into `main` at `e3ea2c0` after Python 3.12/3.13 CI and review passed.
+> Implementation continues on `feat/local-tool-planning`, created from that merge.
+> This slice adds an opt-in single-tool-response bound and a
+> [real context-policy improvement experiment](docs/local-tool-planning.md).
+> Dependent read/write batching was confirmed; prompt-only instructions also
+> failed. The response limit is enforced before dispatch and refuses external
+> agents it cannot constrain. Candidate evaluation uses the core improvement
+> journal and adoption gate. It does not activate the candidate or local fallback.
+> Final experiment: baseline **4/8**, candidate **2/8**; verdict `failed`, adoption
+> `refused`. Four candidate memory cases exceeded the response tool limit;
+> two no-plugin cases omitted or malformed the artifact. The exact report and
+> metadata-only core audit session are linked in the implementation record.
+> The original local model profile remains unqualified for memory-assisted tasks.
+> Private memory and user services were preserved; assets stay in `.local-runtime/`.
+> Final validation passed **1180 tests, 7 skipped**, Ruff, packaging and a fresh
+> wheel install importing all 58 modules. Task-owned runtime containers exited.
 > The user authorized commits, PR creation, and continued implementation. Read the
 > [implementation record](docs/superpowers/plans/2026-09-06-core-agency-progress.md)
 > for current validation. M0–M4 remain in progress; M5–M6 remain pending.
-> Next: inspect dependent tool batches and evaluate grounded task execution against
-> the unchanged artifact oracle before enabling automatic fallback. Broader model
+> Next: use the failed candidate evidence to test a suitable model/runtime profile
+> and grounded task execution against the unchanged artifact oracle. Broader model
 > quality, the complete offline M3 journey, context/progress semantic
 > functions, candidate generation, scheduling, fallback, and activation/rollback
 > remain outstanding. Memory and agent-swarm remain independent plugins.

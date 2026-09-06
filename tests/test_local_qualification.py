@@ -4,7 +4,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from scripts.qualify_local import FACTS, artifact_metadata, project_checks
+from harness.errors import MalformedStreamError, ToolCallLimitExceeded
+from scripts.qualify_local import FACTS, artifact_metadata, failure_reason, project_checks
 
 
 def checks(*, status="completed", outcomes=None, artifact=None):
@@ -37,3 +38,10 @@ def test_artifact_diagnostic_does_not_publish_memory_derived_values():
     assert "PRIVATE" not in str(metadata)
     assert metadata["object"] and not metadata["keys_exact"]
     assert not metadata["project_matches"] and not metadata["retry_limit_matches"]
+
+
+def test_failure_categories_do_not_publish_private_arguments():
+    failures = [ToolCallLimitExceeded("PRIVATE"), MalformedStreamError("unparseable arguments: PRIVATE"),
+                RuntimeError("PRIVATE")]
+    assert [failure_reason(e) for e in failures] == [
+        "multiple_tool_proposals", "invalid_tool_arguments", "other_failure"]

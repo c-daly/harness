@@ -44,6 +44,22 @@ permission engine still applies, and an included tool is not automatically
 granted permission. Provider-native built-ins remain governed by their external
 runtime; this profile does not extend Harness's containment to those built-ins.
 
+An optional `parallel_tool_calls = false` requests **at most one tool proposal
+per inference response**. The dispatcher preserves this bound across descendants
+and routing; a caller cannot widen it. Harness also checks the completed response
+locally and rejects an entire oversized batch before executing any call from it.
+Earlier completed calls remain completed. A model that ignores the option fails
+the task normally, preserving existing cancellation, logging and queue recovery.
+Provider-native agents are refused before execution under this profile because
+their internal tool batches cannot be bounded by Harness. Omit the option to keep
+provider defaults; `true` explicitly permits multiple proposals without overriding
+a stricter request. An older `complete()` adapter receives only local validation;
+the LiteLLM inference adapter additionally forwards the option when tools are sent.
+
+This is an opt-in protocol bound, not a planner or an artifact validator. A single
+tool call can still contain guessed values or malformed file content. The
+[local planning experiment](local-tool-planning.md) measures that distinction.
+
 ## Inspection and continuation
 
 TUI `/context` shows the profile and currently available allowed tools. `/tools`

@@ -23,8 +23,10 @@ from harness.catalog import Catalog
 from harness.cli import build_kernel
 from harness.context import ContextPolicy
 from harness.fold import fold
+from harness.errors import MalformedStreamError, ToolCallLimitExceeded
 from harness.log import read_session
 from harness.mcp_config import McpServerSpec
+from harness.messages import Message
 from harness.permissions import PermissionEngine, PermissionRule, RuleSet
 from harness.provider import TextDelta
 from harness.provider_litellm import CatalogProvider
@@ -74,7 +76,7 @@ def isolation():
             "swap_max_bytes": int(swap), "cpu_max": cpu}
 
 
-def project_checks(result, outcomes, artifact):
+def project_checks(result, outcomes, artifact, *, expected=FACTS):
     """Grade external evidence; neither a model's claim nor completion is acceptance."""
     return {"execution_completed": result.status == "completed",
             "acceptance_remains_unverified": result.acceptance == "unverified",
@@ -82,15 +84,15 @@ def project_checks(result, outcomes, artifact):
                                   and not e["is_error"] for e in outcomes),
             "write_succeeded": any(e["tool"] == "write_file" and e["path"] == "RESULT.json"
                                    and not e["is_error"] for e in outcomes),
-            "artifact_exact": artifact == FACTS}
+            "artifact_exact": artifact == expected}
 
 
-def artifact_metadata(artifact):
+def artifact_metadata(artifact, *, expected=FACTS):
     """Explain mismatches without publishing model output derived from private memory."""
     obj = artifact if isinstance(artifact, dict) else {}
-    return {"object": isinstance(artifact, dict), "keys_exact": set(obj) == set(FACTS),
-            "project_matches": obj.get("project") == FACTS["project"],
-            "retry_limit_matches": obj.get("retry_limit") == FACTS["retry_limit"],
+    return {"object": isinstance(artifact, dict), "keys_exact": set(obj) == set(expected),
+            "project_matches": obj.get("project") == expected["project"],
+            "retry_limit_matches": obj.get("retry_limit") == expected["retry_limit"],
             "retry_limit_type": type(obj.get("retry_limit")).__name__,
             "sha256": hashlib.sha256(json.dumps(artifact, sort_keys=True).encode()).hexdigest()}
 
@@ -114,6 +116,15 @@ def settled(kernel, base):
     return not (state.open_intents or state.open_model_intents or state.open_agent_runs)
 
 
+def failure_reason(error):
+    """Keep actionable error categories without copying private tool arguments."""
+    if isinstance(error, ToolCallLimitExceeded):
+        return "multiple_tool_proposals"
+    if isinstance(error, MalformedStreamError) and "unparseable arguments" in str(error):
+        return "invalid_tool_arguments"
+    return "other_failure"
+
+
 def start_latency(kernel, base):
     log = read_session(base, kernel.session.id)
     starts = [e.ts for e in log if e.event.type == "local_runtime_requested"
@@ -124,7 +135,7 @@ def start_latency(kernel, base):
     return ready[0] - starts[0] if ready and starts else None
 
 
-def make_kernel(base, workspace, models, memory_root=None, resume=None):
+def make_kernel(base, workspace, models, memory_root=None, resume=None, *, parallel_tool_calls=None):
     names = ("read_file", "write_file")
     specs = ()
     if memory_root:
@@ -143,7 +154,8 @@ def make_kernel(base, workspace, models, memory_root=None, resume=None):
         system_prompt="Use the available tools to inspect the project. Be brief and factual.",
         native_tools=True, workspace_root=workspace, permissions=permissions, mcp=specs,
         resume_session_id=resume,
-        context_policy=None if resume else ContextPolicy(history_turns=1, tools=names))
+        context_policy=None if resume else ContextPolicy(history_turns=1, tools=names,
+                                                         parallel_tool_calls=parallel_tool_calls))
 
 
 async def close(kernel):
@@ -161,11 +173,11 @@ async def close(kernel):
                 kernel.session.close()
 
 
-async def project_case(root, models, memory_root):
+async def project_case(root, models, memory_root, *, parallel_tool_calls=None, facts=FACTS):
     workspace, base = root / "project", root / "sessions"
     workspace.mkdir(parents=True)
-    (workspace / "FACTS.json").write_text(json.dumps(FACTS))
-    kernel = make_kernel(base, workspace, models, memory_root)
+    (workspace / "FACTS.json").write_text(json.dumps(facts))
+    kernel = make_kernel(base, workspace, models, memory_root, parallel_tool_calls=parallel_tool_calls)
     row = {"mode": "normal-memory" if memory_root else "no-plugins", "checks": {}, "stage": "start"}
     checks = row["checks"]
     try:
@@ -190,9 +202,17 @@ async def project_case(root, models, memory_root):
         outcomes = tool_outcomes(kernel, base)
         row["tool_sequence"] = [e["tool"] for e in outcomes]
         row["project_model_calls"] = sum(e.type == "model_call_completed" for e in events(kernel, base))
-        artifact = json.loads((workspace / "RESULT.json").read_text())
-        row["artifact"] = artifact_metadata(artifact)
-        checks.update(project_checks(result, outcomes, artifact))
+        row["tool_batches"] = [[str(c.tool) for c in Message.model_validate(e.message).tool_calls()]
+                               for e in events(kernel, base) if e.type == "model_call_completed"]
+        try:
+            artifact = json.loads((workspace / "RESULT.json").read_text())
+            checks["artifact_is_json"] = True
+        except (OSError, ValueError) as exc:
+            artifact = None
+            checks["artifact_is_json"] = False
+            row["artifact_error_type"] = type(exc).__name__
+        row["artifact"] = artifact_metadata(artifact, expected=facts)
+        checks.update(project_checks(result, outcomes, artifact, expected=facts))
         checks["project_deadline"] = row["project_seconds"] <= THRESHOLDS["project_seconds"]
         checks["owned_cold_start"] = any(e.type == "resource_observed"
             and e.observation.status == "ready" and e.observation.ownership == "harness"
@@ -222,6 +242,7 @@ async def project_case(root, models, memory_root):
         row["stage"] = "complete"
     except Exception as exc:
         row["error_type"] = type(exc).__name__  # never include retrieved memory in an error report
+        row["failure_reason"] = failure_reason(exc)
     finally:
         try:
             await close(kernel)
@@ -241,7 +262,7 @@ async def until(predicate, seconds=45):
             await asyncio.sleep(0.02)
 
 
-async def tui_case(root, models):
+async def tui_case(root, models, *, parallel_tool_calls=None):
     from textual.widgets import Input
     from harness.tui import HarnessApp
 
@@ -249,7 +270,7 @@ async def tui_case(root, models):
     workspace, base = root / "project", root / "sessions"
     workspace.mkdir(parents=True)
     (workspace / "FACTS.json").write_text(json.dumps(FACTS))
-    kernel = make_kernel(base, workspace, models)
+    kernel = make_kernel(base, workspace, models, parallel_tool_calls=parallel_tool_calls)
     app = HarnessApp(kernel, native_tools=True, workspace_root=workspace)
     row = {"mode": "tui-no-plugins", "checks": {}, "stage": "mount"}
     checks = row["checks"]
@@ -377,11 +398,13 @@ async def tui_case(root, models):
     return row
 
 
-async def run(root, models, memory_root):
-    rows = [await project_case(root / "no-plugins", models, None)]
+async def run(root, models, memory_root, *, parallel_tool_calls=None):
+    rows = [await project_case(root / "no-plugins", models, None,
+                               parallel_tool_calls=parallel_tool_calls)]
     if memory_root:
-        rows.append(await project_case(root / "memory", models, memory_root))
-    rows.append(await tui_case(root / "tui", models))
+        rows.append(await project_case(root / "memory", models, memory_root,
+                                       parallel_tool_calls=parallel_tool_calls))
+    rows.append(await tui_case(root / "tui", models, parallel_tool_calls=parallel_tool_calls))
     return rows
 
 
@@ -390,6 +413,8 @@ def main():
     parser.add_argument("--model-file", type=Path, default=Path("/models/local.gguf"))
     parser.add_argument("--memory-root", type=Path)
     parser.add_argument("--runs", type=int, choices=range(1, 11), default=3)
+    parser.add_argument("--single-tool", action="store_true",
+                        help="Opt in to one tool proposal per response through the context profile.")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     # Use installed SDK metadata; no import-time remote price-map request.
@@ -412,15 +437,17 @@ def main():
             text=True, timeout=10).strip(), "isolation": caps, "thresholds": THRESHOLDS,
         "catalog": models.entries, "provider": "real-local-model", "automatic_adoption": False,
         "held_out_semantic_qualification": False, "full_m3_qualified": False,
-            "memory_server_sha256": sha256(args.memory_root / "lib/server.py") if args.memory_root else None}
+        "memory_server_sha256": sha256(args.memory_root / "lib/server.py") if args.memory_root else None}
     report["gpu"] = subprocess.check_output([
         "nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader"],
         text=True, timeout=10).strip()
     report["runs"] = args.runs
+    report["parallel_tool_calls"] = False if args.single_tool else None
     report["cases"] = []
     for repeat in range(args.runs):
         with tempfile.TemporaryDirectory(prefix="harness-real-local-") as temp:
-            rows = asyncio.run(run(Path(temp), models, args.memory_root))
+            rows = asyncio.run(run(Path(temp), models, args.memory_root,
+                                   parallel_tool_calls=report["parallel_tool_calls"]))
         report["cases"].extend({"repeat": repeat, **row} for row in rows)
     report["memory_peak_bytes"] = int(Path("/sys/fs/cgroup/memory.peak").read_text())
     report["passed"] = all(row["passed"] for row in report["cases"])
