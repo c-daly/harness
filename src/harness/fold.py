@@ -22,6 +22,7 @@ from harness.events import (
     ModelCallCompleted,
     ModelCallFailed,
     ModelCallProposed,
+    ResourceObserved,
     TodoListUpdated,
     ToolCallAborted,
     ToolCallCancelled,
@@ -42,6 +43,8 @@ class FoldedState:
     open_model_intents: dict[CallId, int] = field(default_factory=dict)
     open_agent_runs: dict[str, AgentRunStarted] = field(default_factory=dict)
     agent_runs: dict[str, AgentResult] = field(default_factory=dict)
+    # Historical observations are evidence only; live readiness must recheck.
+    resources: dict = field(default_factory=dict)
     last_seq: int = 0
     # seq -> index range bookkeeping for compaction
     _msg_seqs: list[int] = field(default_factory=list)
@@ -73,6 +76,8 @@ def fold(envelopes: list[Envelope]) -> FoldedState:
             state.open_model_intents[ev.call_id] = env.seq
         elif isinstance(ev, AgentRunStarted):
             state.open_agent_runs[ev.run_id] = ev
+        elif isinstance(ev, ResourceObserved):
+            state.resources[ev.observation.alias] = ev.observation
         elif isinstance(ev, AgentRunFinished):
             state.open_agent_runs.pop(ev.result.run_id, None)
             state.agent_runs[ev.result.run_id] = ev.result

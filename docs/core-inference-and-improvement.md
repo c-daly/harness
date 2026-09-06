@@ -200,6 +200,10 @@ claiming its complete capability or live-provider gate.
 
 ## Improvement records and fixed evaluation gates
 
+The [local readiness service](local-runtime-readiness.md) now contributes core
+availability and owned-process evidence. These records can inform experiments;
+inventory readiness does not establish model quality or authorize adoption.
+
 `kernel.improvements` exposes `ImprovementJournal`. It stores typed
 `ImprovementRecorded` events and verified blob artifacts in the normal core
 session record. It does not require any plugin or create another memory system.

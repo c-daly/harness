@@ -3,6 +3,7 @@
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
+from harness.resources import LocalResources
 
 if TYPE_CHECKING:
     from harness.session import Session
@@ -71,6 +72,7 @@ class ExecutionScope:
     registry: "ToolRegistry | FilteredRegistry"
     budget: ExecutionBudget = field(default_factory=ExecutionBudget)
     depth: int = 0
+    resources: LocalResources = field(default_factory=LocalResources)
 
 
 current_scope: ContextVar[ExecutionScope | None] = ContextVar("harness_execution_scope", default=None)

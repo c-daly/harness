@@ -352,6 +352,7 @@ class Dispatcher:
             deadline = time.monotonic() + request.timeout_seconds
             attempt = 0
             token = current_dispatch_tool.set(self.dispatch_tool)
+            scope_token = current_scope.set(self.scope)
             try:
                 while True:
                     try:
@@ -395,6 +396,7 @@ class Dispatcher:
                         await asyncio.sleep(delay)
             finally:
                 current_dispatch_tool.reset(token)
+                current_scope.reset(scope_token)
             stamped_pricing = (
                 pricing_for(effective_model) if pricing_for is not None else (pricing or {})
             )

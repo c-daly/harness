@@ -80,7 +80,8 @@ class SubagentRunner:
                     scope.budget.reserve_child(scope.depth + 1)
                 except BudgetExceeded as exc:
                     return f"[subagent error] {exc}"
-                token = current_scope.set(ExecutionScope(parent, narrowed, scope.budget, scope.depth + 1))
+                token = current_scope.set(ExecutionScope(parent, narrowed, scope.budget, scope.depth + 1,
+                                                        scope.resources))
                 try:
                     return await run_strategy(definition.strategy, self, parent, prompt, experts)
                 finally:
@@ -136,7 +137,7 @@ class SubagentRunner:
                 pricing=self.pricing,
                 pricing_for=self.pricing_for,
                 pinned=pinned,
-                scope=ExecutionScope(child, registry, scope.budget, scope.depth + 1),
+                scope=ExecutionScope(child, registry, scope.budget, scope.depth + 1, scope.resources),
             )
             await loop.start()
             result = await loop.run_task(AgentTask(prompt=prompt, agent=AgentId(agent) if agent else None))

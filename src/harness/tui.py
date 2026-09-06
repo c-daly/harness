@@ -36,6 +36,7 @@ from harness.events import (
     ModelCallStarted,
     PermissionRequested,
     PermissionResolved,
+    ResourceObserved,
     RetryAttempted,
     ToolCallCompleted,
     ToolCallProposed,
@@ -636,6 +637,7 @@ class HarnessApp(App[None]):
         # a user turn, and a UserInterrupt envelope for it would be a false
         # fact in the event-sourced log.
         self._compact_worker = None
+        self._resource_worker = None
         self._interrupting = False
         # True for the full span of a kernel rebuild (/clear, /resume) --
         # set at entry to _rebuild_kernel, cleared in its finally. A turn
@@ -967,6 +969,7 @@ class HarnessApp(App[None]):
             self._rebuild_in_progress = False
 
     async def _rebuild_kernel_body(self, resume_session_id: "SessionId | None" = None) -> None:
+        await self._cancel_resource_check()
         old_kernel = self.kernel
         old_mcp = old_kernel.mcp
         # These pumps are tied to the OLD session's bus; cancel them now so
@@ -1017,6 +1020,7 @@ class HarnessApp(App[None]):
             routing_rules=self._routing_rules,
             model_pinned=old_kernel.loop.model_pinned,
             execution_limits=old_kernel.loop.dispatcher.scope.budget.limits,
+            resources=old_kernel.resources,
         )
         self.kernel = kernel
         self.controller = kernel.controller
@@ -1197,6 +1201,10 @@ class HarnessApp(App[None]):
                 self.controller.phase = "waiting for permission"
             elif isinstance(event, ModelCallStarted):
                 self.controller.phase = ("agent running" if event.execution_kind == "agent"
+                                         else "waiting for response")
+            elif isinstance(event, ResourceObserved):
+                status = event.observation.status
+                self.controller.phase = (f"local model {status}" if status in ("checking", "loading")
                                          else "waiting for response")
             elif isinstance(event, ToolCallProposed):
                 self.controller.phase = f"tool {event.tool}"
@@ -1560,7 +1568,7 @@ class HarnessApp(App[None]):
             self.say(
                 "",
                 "/help  /model [alias]  /thoughts [collapse|full|off]  /markdown [on|off]  "
-                "/clear  /compact  /resume  /panel  /tools  /improvements  /quit  — @path mentions a file "
+                "/clear  /compact  /resume  /panel  /tools  /resources  /improvements  /quit  — @path mentions a file "
                 "(Tab completes), read for the model only; F2 also toggles the activity panel",
             )
             self.say("", "/queue: inspect, edit, remove, pause, resume, clear; queued prompts are memory only")
@@ -1579,6 +1587,15 @@ class HarnessApp(App[None]):
             state = read_improvements(self.kernel.session.base, self.kernel.session.id)
             for line in render_improvements(state).splitlines():
                 self.say("", line)
+        elif command.name == "resources":
+            if self._rebuild_in_progress:
+                self.say("! ", "session rebuild in progress; try again in a moment")
+                return
+            if self._resource_worker is not None and not self._resource_worker.is_finished:
+                self.say("", "local resource check already running; Esc cancels it when no task is active")
+                return
+            self._resource_worker = self.run_worker(self._resource_command(command.arg),
+                                                    group="resources", exit_on_error=False)
         elif command.name == "quit":
             await self._finish()
             self.exit()
@@ -1628,6 +1645,49 @@ class HarnessApp(App[None]):
             self._enqueue_prompt(prompt, expand_mentions=False)
         else:
             self.say("! ", f"unknown command: /{command.name}")
+
+    async def _cancel_resource_check(self) -> None:
+        worker = self._resource_worker
+        if worker is not None and not worker.is_finished:
+            worker.cancel()
+            try:
+                await worker.wait()
+            except (WorkerCancelled, WorkerFailed):
+                pass
+        self._resource_worker = None
+
+    async def _resource_command(self, arg: str) -> None:
+        from harness.resources import render_resources
+        catalog = getattr(self.kernel.provider, "catalog", None)
+        if catalog is None:
+            self.say("", "No local runtime profiles configured.")
+            return
+        try:
+            parts = arg.split()
+            if not parts:
+                observations = [self.kernel.resources.snapshot(catalog.resolve(alias))
+                                for alias in catalog.aliases() if "local" in catalog.entries[alias]]
+            elif len(parts) == 2 and parts[0] in ("check", "stop"):
+                entry = catalog.resolve(parts[1])
+                if parts[0] == "stop":
+                    if self._refuse_if_busy():
+                        return
+                    stopped = await self.kernel.resources.stop(entry.alias, emit=self.kernel.session.append)
+                    self.say("", "Owned local runtime stopped." if stopped else
+                             "Runtime is externally managed; Harness did not stop it.")
+                    return
+                self.say("", f"Checking local runtime {entry.alias}…")
+                observations = [await self.kernel.resources.check(entry, emit=self.kernel.session.append)]
+            else:
+                self.say("", "Usage: /resources [check ALIAS | stop ALIAS]")
+                return
+            for line in render_resources(observations).splitlines():
+                self.say("", line)
+        except asyncio.CancelledError:
+            self.say("", "Local resource check cancelled.")
+            raise
+        except Exception as exc:
+            self.say("! ", f"Local resource operation failed ({type(exc).__name__}).")
 
     def _queue_command(self, arg: str) -> None:
         action, _, remainder = arg.strip().partition(" ")
@@ -1846,6 +1906,8 @@ class HarnessApp(App[None]):
             return
         worker = self._turn_worker
         if worker is None or worker.is_finished or self._interrupting:
+            if not self._interrupting and self._resource_worker is not None:
+                self._resource_worker.cancel()
             return
         # once per logical interrupt -- an invariant, not a timing bet: a second
         # Esc in the same tick still sees is_finished=False, so the flag guards it.
@@ -1888,6 +1950,7 @@ class HarnessApp(App[None]):
         if self._ended:
             return
         self._ended = True
+        await self._cancel_resource_check()
         if self._stats_timer is not None:
             self._stats_timer.stop()
         workers = [w for w in (self._turn_worker, self._compact_worker) if w is not None]
@@ -1897,6 +1960,7 @@ class HarnessApp(App[None]):
                 await worker.wait()
             except (WorkerCancelled, WorkerFailed):
                 pass
+        await self.kernel.resources.close(emit=self.kernel.session.append)
         try:
             await self.kernel.loop.end()
         except RuntimeError:

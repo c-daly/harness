@@ -1,7 +1,7 @@
 # Core agency implementation record
 
-Current implementation branch: `feat/agent-runtimes`, based on merged `main`
-at `63449eb`. Previous branch: `feat/core-agency`, originally based on `ce722b4`.
+Current implementation branch: `feat/local-readiness`, based on merged `main`
+at `8d732f2`. Previous branches: `feat/agent-runtimes` and `feat/core-agency`.
 
 Committed checkpoints: `0351b75` (roadmap, lifecycle, and storage/result integrity),
 `a2e565e` (controller/UI, delegated scope and limits, catalog, authenticated MCP),
@@ -11,7 +11,8 @@ Committed checkpoints: `0351b75` (roadmap, lifecycle, and storage/result integri
 CI/documentation conflicts with main at `88a9d42`), then `ca39617` (external
 response stream bounds and review resolution).
 [PR #9](https://github.com/c-daly/harness/pull/9) merged on September 6 at
-`63449eb`; continuation starts from that merge rather than the old PR branch.
+`63449eb`. `dbe9db5` introduced typed Codex tasks and MCP cleanup in
+[PR #10](https://github.com/c-daly/harness/pull/10), merged at `8d732f2`.
 
 **Resumed after machine restart.** All 26 files in the
 [restart handoff](../../../HANDOFF.md) matched their saved hashes before new
@@ -28,7 +29,7 @@ qualification. Milestone completion requires its roadmap gates, not just code.
 | M0 baseline and feasibility | In progress | Baseline: 885 passed, 7 skipped. CI, build and fresh wheel installation checked locally. Two restart inference probes remain too slow for synchronous UI use. Hardware/profile selection and cold startup remain. |
 | M1 correctness and interaction | In progress | 931 passed, 7 skipped after storage, delegation, controller/UI and MCP capability changes. Context budgets, broader enforcement/redaction and fault qualification remain. |
 | M2 inference / agent contracts | In progress | Bounded inference, native tasks, Codex task binding, explicit execution kinds, nullable usage, and core improvement records implemented. Remaining adapters and live capability qualification remain. |
-| M3 local core assistant | Pending | Readiness, runtime ownership, normal memory access, and offline task journey. |
+| M3 local core assistant | In progress | Explicit local profiles, bounded readiness observations, owned runtime lifetime, and responsive inspection implemented. Real model/profile selection, normal memory access, and full offline journey remain. |
 | M4 bounded semantic agency | Pending | Typed functions, evaluation, scheduling, capability-aware fallback, and operational self-improvement lifecycle. |
 | M5 heterogeneous work / plugins | Pending | Supervision, plugin reconciliation, portable continuation, isolated improvement patches and rollback. |
 | M6 daily-use qualification | Pending | Measured UI, live adapter boundaries, offline and human dogfood gates. |
@@ -309,7 +310,65 @@ controls must stay independent of inference completion.
   are the deprecated MCP client helper; skips retain missing conformance fixtures
   and the opt-in live Antigravity gate. Locked dependency sync, Ruff, whitespace,
   sdist/wheel build, and a fresh offline wheel installation importing all 53
-  modules passed. Hosted CI is pending the continuation PR.
+  modules passed. Hosted Python 3.12/3.13 CI also passed for `dbe9db5` before
+  PR #10 merged into main.
+
+## Local readiness and process ownership
+
+- `feat/local-readiness` begins from merged main at `8d732f2`. Explicit catalog
+  local profiles identify a loopback OpenAI-compatible endpoint and optionally
+  a preinstalled argument-vector command, required files, and on-demand startup.
+  Old aliases retain their existing behavior until a profile is added.
+  The explicit llama.cpp probe checks health before inventory, because upstream
+  permits inventory entries during loading. Generic OpenAI-compatible inventory
+  checks carry the narrower model-listing evidence, not a loading-complete claim.
+- The core execution scope owns `LocalResources` and shares it with descendants.
+  Readiness runs after effective routing, permissions, and call-budget checks,
+  inside the bounded inference/task deadline. Root capacity defaults to one
+  owned process. A reachable existing service is never adopted or terminated.
+  Cancelled startup, including an OS-spawn race, settles the owned child; shutdown
+  reaps it even if stop-event writes fail. Readiness performs no provisioning.
+- `ResourceObserved` records timestamped availability evidence and unknown
+  capability fields. `LocalRuntimeRequested` records start/stop intent without
+  logging argv, credential values, or server error bodies. Replay retains
+  historical observations without reusing them as fresh cache entries or
+  guessing process ownership. Changed configuration/credentials and expired
+  evidence require new probes. Interrupted requests invalidate readiness.
+  Request completion clears busy activity in replay without renewing probe
+  freshness. The real-process cleanup test also covers a worker that ignores TERM.
+- `harness resources` and TUI `/resources` inspect local profiles; explicit checks
+  run bounded inventory requests and never launch a process or inference. TUI
+  checks leave drafts editable and cancel independently of agent tasks. Failed
+  local turns retain ordinary queue pause and draft recovery. Session rebuilds
+  cancel their old diagnostic worker while retaining the core process owner.
+- The existing improvement journal accepts these core observations as evidence
+  without plugins. Availability is not acceptance or model-quality grading;
+  experiment execution, adoption policy, activation, and rollback remain required.
+- Focused tests passed **70 tests in 42.91s** before final fixture/error-state
+  refinements. They include a real local HTTP process serving streamed inference,
+  a native project-file task with a checked answer, existing-service preservation,
+  spawn cancellation, process capacity, journal failure, and terminal-compositor
+  checks. An initial full run passed **1084 tests, 7 skipped, 6 warnings in
+  293.29s**. Subsequent health-contract, activity-replay, and descendant cleanup
+  refinements passed **31 local-resource tests in 3.90s**; the earlier combined
+  local/UI run passed **33 tests in 13.54s**. The final full suite, including
+  headless shutdown and session-lock release after a stop-event write failure,
+  passed **1090 tests, 7 skipped, 6 warnings in 299.32s**. Skips retain missing
+  Anthropic/Ollama conformance recordings and the opt-in live Antigravity gate;
+  warnings concern the deprecated MCP client helper. Locked dependency sync,
+  Ruff, whitespace checks, sdist/wheel build, and a fresh offline wheel install
+  importing all **54 modules** passed on Python 3.13. Hosted CI remains pending
+  publication of this checkpoint.
+- A read-only live probe on September 6 returned `unreachable` /
+  `probe_transport_failed` for `http://127.0.0.1:8080/v1`. The new CLI returned
+  exit status 1 and a timestamped JSON observation. No inference was requested
+  and the external service was not started or stopped. The configured probe ID
+  was a placeholder; no installed model identity or quality was inferred.
+- This advances M3 but does not complete its gate. Physical RAM/GPU ceilings,
+  supported model/profile measurements, cold offline startup with actual cached
+  weights, normal memory-plugin/vault access, crash-time orphan reconciliation,
+  and automatic capability-aware fallback remain outstanding. See
+  [local contract and configuration](../../local-runtime-readiness.md).
 
 ## Validation policy
 

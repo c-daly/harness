@@ -13,6 +13,9 @@ The ongoing core-agency implementation adds
 That document identifies the implemented interfaces and remaining agent-runtime,
 activation, and local-readiness boundaries.
 
+[Local runtime readiness](local-runtime-readiness.md) adds explicit local profiles,
+timestamped availability evidence, and process ownership to the shared core scope.
+
 ---
 
 ## The one big idea: the event log is the unit of truth
@@ -54,6 +57,7 @@ The source is flat under `src/harness/`. Grouped by role:
 **Kernel**
 - `agent.py` — typed tasks, results, progress, and durable agent run boundaries.
 - `agent_runtime.py` — external task binding, initially Codex, retaining dispatcher authority.
+- `resources.py` — bounded local inventory checks, freshness, and owned process lifetime.
 - `loop.py` — `AgentLoop`: build context → model call → dispatch → repeat.
 - `dispatcher.py` — the single enforcement point for tool *and* model calls.
 - `tools.py` — `Tool` protocol, `ToolRegistry`, `FilteredRegistry`.

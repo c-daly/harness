@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Literal
 
 from harness.types import ModelId
+from harness.resources import LocalProfile, local_endpoint
 
 
 class UnknownAliasError(Exception):
@@ -42,6 +43,7 @@ class ResolvedModel:
     max_input_tokens: int | None
     verified: bool
     execution_kind: Literal["inference", "agent"] = "inference"
+    local: LocalProfile | None = None
 
     def pricing_dict(self) -> dict[str, float]:
         """Stamp-ready pricing for ModelCallCompleted; empty when unknown."""
@@ -81,13 +83,19 @@ class Catalog:
             raise ValueError(
                 f"model {alias!r}: execution_kind must be {inferred_kind!r} for this backend"
             )
+        local = LocalProfile.model_validate(entry["local"]) if "local" in entry else None
+        api_base = entry.get("api_base")
+        if local is not None:
+            if backend is not None or not route.startswith("openai/"):
+                raise ValueError("local profiles require an OpenAI-compatible inference route")
+            api_base = local_endpoint(api_base)
         return ResolvedModel(
             alias=alias,
             route=ModelId(route),
             backend=backend,
             tags=tuple(entry.get("tags", ())),
             api_key_env=entry.get("api_key_env"),
-            api_base=entry.get("api_base"),
+            api_base=api_base,
             input_cost_per_token=entry.get(
                 "input_cost_per_token", cost_info.get("input_cost_per_token")
             ),
@@ -97,6 +105,7 @@ class Catalog:
             max_input_tokens=entry.get("max_input_tokens", cost_info.get("max_input_tokens")),
             verified=entry.get("verified", False),
             execution_kind=execution_kind,
+            local=local,
         )
 
     def aliases(self) -> tuple[str, ...]:
