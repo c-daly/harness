@@ -6,7 +6,9 @@ from pathlib import Path
 from typing import Any, Callable
 
 from harness.callctx import current_call_id
+from harness.agent import AgentTask
 from harness.events import ErrorRaised, SubagentFinished, SubagentSpawned
+from harness.execution import BudgetExceeded, ExecutionScope, current_scope
 from harness.frontmatter import AgentDef
 from harness.hooks import HookBus
 from harness.interaction import Resolver
@@ -38,12 +40,24 @@ class SubagentRunner:
     pricing: dict[str, float] | None = None
     pricing_for: "Callable[[ModelId], dict[str, float]] | None" = None
     agents: dict[str, AgentDef] = field(default_factory=dict)
+    _root_scopes: dict[str, ExecutionScope] = field(default_factory=dict, init=False, repr=False)
 
     async def run(
         self, *, prompt: str, model: ModelId | None, parent: Session, agent: str | None = None
     ) -> str:
+        scope = current_scope.get()
+        if scope is None:
+            scope = self._root_scopes.setdefault(str(parent.id), ExecutionScope(parent, self.registry))
+        parent = scope.session  # Includes calls through root-bound coordination tools.
+        return await self._run_in_scope(prompt=prompt, model=model, parent=parent,
+                                        agent=agent, scope=scope)
+
+    async def _run_in_scope(
+        self, *, prompt: str, model: ModelId | None, parent: Session,
+        agent: str | None, scope: ExecutionScope,
+    ) -> str:
         system_prompt = "You are a focused subagent. Complete the task and report."
-        registry: ToolRegistry | FilteredRegistry = self.registry
+        registry: ToolRegistry | FilteredRegistry = scope.registry
         limit: int | None = None
         chosen = model or self.default_model
         # an explicit dispatch_agent model= or an AgentDef.model is a pin (routing-exempt);
@@ -60,18 +74,42 @@ class SubagentRunner:
                 from harness.mixture import Expert, run_strategy
 
                 experts = [Expert(model=m) for m in (definition.experts or ())]
-                return await run_strategy(definition.strategy, self, parent, prompt, experts)
+                narrowed = (FilteredRegistry(registry, allowed=definition.tools)
+                            if definition.tools is not None else registry)
+                try:
+                    scope.budget.reserve_child(scope.depth + 1)
+                except BudgetExceeded as exc:
+                    return f"[subagent error] {exc}"
+                token = current_scope.set(ExecutionScope(parent, narrowed, scope.budget, scope.depth + 1))
+                try:
+                    return await run_strategy(definition.strategy, self, parent, prompt, experts)
+                finally:
+                    current_scope.reset(token)
+                    scope.budget.release_child()
             system_prompt = definition.body or system_prompt
             limit = definition.max_output_chars
             if definition.model is not None:
                 chosen = ModelId(definition.model)
                 pinned = True
             if definition.tools is not None:
-                registry = FilteredRegistry(self.registry, allowed=definition.tools)
+                registry = FilteredRegistry(registry, allowed=definition.tools)
         # explicit model arg beats agent default
         if model is not None:
             chosen = model
             pinned = True
+        try:
+            scope.budget.reserve_child(scope.depth + 1)
+        except BudgetExceeded as exc:
+            return f"[subagent error] {exc}"
+        try:
+            return await self._run_child(prompt=prompt, parent=parent, agent=agent,
+                                         chosen=chosen, pinned=pinned, registry=registry,
+                                         system_prompt=system_prompt, limit=limit, scope=scope)
+        finally:
+            scope.budget.release_child()
+
+    async def _run_child(self, *, prompt, parent, agent, chosen, pinned, registry,
+                         system_prompt, limit, scope):
         child_id = new_session_id()
         spawn_env = parent.append(
             SubagentSpawned(
@@ -81,45 +119,55 @@ class SubagentRunner:
                 model=chosen,
             )
         )
-        child = Session(
-            self.base, child_id, parent=(parent.id, spawn_env.seq), default_model=chosen
-        )
-        loop = AgentLoop(
-            session=child,
-            provider=self.provider,
-            registry=registry,
-            hooks=self.hooks,
-            resolver=self.resolver,
-            model=chosen,
-            system_prompt=system_prompt,
-            pricing=self.pricing,
-            pricing_for=self.pricing_for,
-            pinned=pinned,
-        )
+        child = None
         try:
+            child = Session(
+                self.base, child_id, parent=(parent.id, spawn_env.seq), default_model=chosen,
+                redactors=parent._redactors,
+            )
+            loop = AgentLoop(
+                session=child,
+                provider=self.provider,
+                registry=registry,
+                hooks=self.hooks,
+                resolver=self.resolver,
+                model=chosen,
+                system_prompt=system_prompt,
+                pricing=self.pricing,
+                pricing_for=self.pricing_for,
+                pinned=pinned,
+                scope=ExecutionScope(child, registry, scope.budget, scope.depth + 1),
+            )
             await loop.start()
-            result = await loop.run_turn(prompt)
+            result = await loop.run_task(AgentTask(prompt=prompt, agent=AgentId(agent) if agent else None))
             try:
                 await loop.end()
             except Exception as exc:
-                # the WORK succeeded; teardown failure is logged, never converted
-                # into a false child error
+                # Preserve the task outcome; log teardown failure separately.
                 parent.append(
                     ErrorRaised(
                         where="subagent:teardown",
                         message=f"{type(exc).__name__}: {exc}",
                     )
                 )
-            parent.append(SubagentFinished(child_session_id=child_id, status="ok"))
-            return _bound(result, limit)
+            status = "ok" if result.status == "completed" else "incomplete"
+            text = _bound(result.read_text(child.blobs), limit)
+            if status == "incomplete":
+                text = f"[subagent error] incomplete ({result.reason}): {text}"
         except asyncio.CancelledError:
             parent.append(SubagentFinished(child_session_id=child_id, status="cancelled"))
             raise
         except Exception as exc:
             parent.append(SubagentFinished(child_session_id=child_id, status="error"))
             return f"[subagent error] {exc}"
+        else:
+            # Publish only after the result is readable. A failed terminal write
+            # must not generate a contradictory second terminal event.
+            parent.append(SubagentFinished(child_session_id=child_id, status=status))
+            return text
         finally:
-            child.close()
+            if child is not None:
+                child.close()
 
 
 @dataclass

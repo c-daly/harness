@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "model": "unsloth/Qwen3.6-35B-A3B-GGUF:UD-IQ4_XS",
+  "observed_at": 1788699626.2138622,
+  "request_profile": "nested_json_schema_reasoning_none_v1",
+  "mode": "existing_service_feasibility",
+  "samples": [
+    {
+      "case": "acknowledgement",
+      "sample": 0,
+      "finish_reason": "stop",
+      "content_chars": 32,
+      "reasoning_chars": 0,
+      "usage": {
+        "completion_tokens": 21,
+        "prompt_tokens": 46,
+        "total_tokens": 67,
+        "prompt_tokens_details": {
+          "cached_tokens": 32
+        }
+      },
+      "timings": {
+        "cache_n": 32,
+        "prompt_n": 14,
+        "prompt_ms": 5277.503,
+        "prompt_per_token_ms": 376.9645,
+        "prompt_per_second": 2.6527696905146243,
+        "predicted_n": 21,
+        "predicted_ms": 6283.22,
+        "predicted_per_token_ms": 299.2009523809524,
+        "predicted_per_second": 3.34223535066415
+      },
+      "result": {
+        "kind": "acknowledgement"
+      },
+      "passed": true,
+      "wall_ms": 12708.45
+    },
+    {
+      "case": "provided_context",
+      "sample": 0,
+      "passed": false,
+      "error_type": "TimeoutError",
+      "wall_ms": 15012.37
+    }
+  ],
+  "qualified": false
+}

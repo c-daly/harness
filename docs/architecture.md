@@ -8,6 +8,11 @@ For day-to-day contribution mechanics and the invariants you must preserve, see
 [contributing.md](contributing.md). For writing plugins against these
 internals, see [plugin-authoring.md](plugin-authoring.md).
 
+The ongoing core-agency implementation adds
+[bounded inference, native tasks, and core improvement records](core-inference-and-improvement.md).
+That document identifies the implemented interfaces and remaining agent-runtime,
+activation, and local-readiness boundaries.
+
 ---
 
 ## The one big idea: the event log is the unit of truth
@@ -137,7 +142,8 @@ Nothing precedes `SessionStarted` in a log.
 
 ## The kernel loop
 
-`AgentLoop.run_turn()` is a small state machine:
+`AgentLoop.run_task()` is a small state machine (`run_turn()` remains a
+text-returning compatibility method):
 
 ```
 build context (fold the log)  →  model call  →  dispatch each tool call  →  repeat
@@ -152,6 +158,14 @@ exactly one `UserInterrupt` is recorded — then `repair_turn()` reconstructs a
 coherent state to continue from. This pairing discipline (every
 `ToolCallProposed` ends with a completion or cancellation) is what keeps fold
 and resume correct.
+
+The native task boundary records `AgentRunStarted` before execution and
+`AgentRunFinished` after cleanup. A task result distinguishes completion from
+iteration exhaustion, token cutoff, failure, cancellation, and interrupted-run
+recovery. Task/run identities connect model calls and nested agent runs;
+verified output blobs retain full answers. Acceptance criteria remain unverified
+by execution itself. On resume, open task runs become `aborted` after their
+model/tool intents are repaired, without repeating uncertain side effects.
 
 Blocking I/O (file reads, glob/grep walks, bash) is offloaded to threads via
 `asyncio.to_thread` so a slow tool doesn't stall the loop or its siblings.
@@ -172,6 +186,25 @@ Native tools and MCP tools dispatch identically. For each tool call it:
 4. Executes the tool: `await registry.get(name)(args)`.
 5. Appends `ToolCallCompleted` with the result (or a typed error).
 
+Model proposals also require a terminal fact: `ModelCallCompleted`,
+`ModelCallFailed`, `ModelCallCancelled`, or a resume-time `ModelCallAborted`.
+The fold tracks open model and tool intents separately; resume repairs both
+in their original proposal order without replaying actions. An interrupted
+external-agent call may have performed work, so an aborted fact preserves
+uncertainty about those side effects.
+
+Internal inference uses the same dispatch path. Its `purpose` (for example,
+`compaction`) is recorded and its usage is indexed, but only `conversation`
+completions add assistant messages to the transcript. `/compact` consequently
+passes through policy and accounting without polluting its own input history.
+
+The telemetry database is a versioned, rebuildable projection. It records
+pending and terminal model-call states, including failures, and applies each
+session sequence once. An incompatible database is rejected with instructions
+to rebuild through `harness stats`; it is never queried using a mismatched schema.
+CLI adapter MCP startup and shutdown share a context manager so cancellation
+during startup still closes the partially started server.
+
 Key invariants:
 
 - **Errors are values, never crashes.** A tool that raises is caught; the
@@ -180,9 +213,55 @@ Key invariants:
   loop. This is what lets the model self-correct from a bad call.
 - **Blob spill.** A *successful* result larger than 16 KiB is written to the
   content-addressed blob store and the event carries a reference instead of the
-  inline text — keeping logs small and the model's context bounded.
+  inline text. Reads verify the digest, byte size, and regular-file identity;
+  corrupt existing objects are rejected. Dispatch materializes results for
+  inference and the external-agent transcript bridge; outward MCP resolves
+  them through `ToolOutcome.read_text()`. This bounds log lines, not model
+  context. Explicit context budgets and retrievable excerpts remain roadmap work.
 - **There is no per-tool timeout in the dispatcher.** A tool that can hang (e.g.
   `bash`) owns its own timeout.
+
+Session recovery holds a permanent POSIX advisory guard from read/repair through
+sequence selection and writer construction. A PID marker excludes legacy
+writers; dead markers are recovered only under the guard. Torn logs are scanned
+as bytes, with exact damaged bytes durably quarantined before atomic replacement
+of the valid prefix. A JSON value without its final newline is an uncommitted
+record. Identity or sequence inconsistencies fail loudly rather than being
+silently repaired. Clean readers can observe live logs without taking ownership.
+
+`ExecutionScope` carries the active session, cumulative registry view, and one
+shared `ExecutionBudget` through native delegation and coordination tools.
+Agent definitions narrow the inherited view. The live session tree defaults to
+1,024 model attempts (including retries), 4,096 tool dispatches, 128 child
+reservations, depth 4, and 16 active children. Exhaustion is an explicit error;
+waiting ancestors cannot deadlock a semaphore needed by descendants. These are
+live execution limits, not yet durable token or monetary budgets. Callers can
+provide `ExecutionLimits` to `build_kernel`.
+
+Final rewritten tool arguments are checked against their registered JSON schema
+before execution. External schema references are rejected. Tool cancellation is
+recorded by dispatch, with uncertain side effects stated explicitly; transcript
+repair reuses that result instead of adding a duplicate terminal event.
+
+Outward MCP URLs contain a random per-server bearer capability. Requests without
+it and requests carrying browser origins are rejected before MCP processing.
+The URL is a credential and must not be published in diagnostics. This protects
+the served tool surface; it does not certify an external CLI's native tools or
+filesystem containment.
+
+`InteractionController` owns accepted prompts for both TUI and headless clients.
+The first queue is bounded and in memory; it cannot survive a crash. Pending
+prompts are not conversation events until their turn starts. The TUI keeps drafts
+editable, shows queued work, supports `/queue` list/edit/remove/pause/resume/clear,
+and pauses pending work on incomplete results, failure, or cancellation. Mention reads are part of
+the active turn's preparation. Model switches apply between logical turns,
+including all tool iterations, and shutdown waits for cancelled workers.
+
+The status, queue, and composer share one bottom container so their final
+terminal regions do not overlap. Catalog pricing/context lookup reads the
+installed LiteLLM metadata snapshot without importing the inference runtime or
+fetching remote prices. Catalog overrides remain authoritative; that snapshot
+is not a claim of current vendor pricing.
 
 ---
 

@@ -3,8 +3,11 @@ call routes through the injected dispatch callable (the dispatcher seam)."""
 
 from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
+import httpx
+from urllib.parse import urlsplit
 
 from harness.dispatcher import ToolOutcome
+from harness.blobs import BlobStore
 from harness.mcp_serve import McpToolServer
 from harness.tools import ToolSpec
 from harness.types import ToolName
@@ -90,5 +93,42 @@ async def test_unknown_tool_is_error_without_dispatch():
                 result = await session.call_tool("not_a_tool", {})
         assert result.isError is True
         assert calls == []  # never reached the dispatcher
+    finally:
+        await server.stop()
+
+
+async def test_large_blob_result_reaches_mcp_client(tmp_path):
+    payload = "large result λ\n" * 2000
+    blobs = BlobStore(tmp_path)
+    ref = blobs.put(payload.encode())
+    dispatch, _ = _dispatch_recorder(
+        ToolOutcome(text=None, blob=ref, is_error=False, _blobs=blobs)
+    )
+    server = McpToolServer(specs=(ECHO,), dispatch=dispatch)
+    await server.start()
+    try:
+        async with streamablehttp_client(server.url) as (read, write, _):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+                result = await session.call_tool("echo", {"text": "hi"})
+        assert result.isError is False
+        assert result.content[0].text == payload
+    finally:
+        await server.stop()
+
+
+async def test_http_requests_require_the_per_server_capability():
+    dispatch, calls = _dispatch_recorder(ToolOutcome(text="secret", blob=None, is_error=False))
+    server = McpToolServer(specs=(ECHO,), dispatch=dispatch)
+    await server.start()
+    try:
+        address = urlsplit(server.url)
+        base = f"{address.scheme}://{address.netloc}"
+        async with httpx.AsyncClient() as client:
+            response = await client.post(base + "/mcp", json={"jsonrpc": "2.0", "method": "tools/list", "id": 1})
+            assert response.status_code == 401
+            response = await client.post(server.url, headers={"Origin": "https://untrusted.example"}, json={})
+            assert response.status_code == 403
+        assert calls == []
     finally:
         await server.stop()

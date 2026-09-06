@@ -423,7 +423,7 @@ async def test_happy_turn_maps_usage_and_stop(tmp_path):
     assert usage.output_tokens == 233
     # agy's thinking_tokens is deliberately not folded in (harness Usage has no field for it)
     assert usage.cache_read_tokens == 512  # passthrough, spec amendment 2026-08-28
-    assert usage.cache_write_tokens == 0
+    assert usage.cache_write_tokens is None  # this measurement is absent from the result
 
 
 async def test_no_thinking_delta_ever_emitted(tmp_path):

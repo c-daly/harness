@@ -5,7 +5,7 @@ from typing import Annotated, Any, Literal, Union
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from harness.blobs import BlobRef
+from harness.blobs import BlobRef, BlobStore
 from harness.types import CallId, ToolName
 
 
@@ -95,3 +95,30 @@ class Message(BaseModel):
 
     def text(self) -> str:
         return "".join(b.text for b in self.blocks if isinstance(b, TextBlock))
+
+
+def materialize_tool_results(
+    messages: list[Message], blobs: BlobStore, *, max_bytes: int | None = None,
+) -> list[Message]:
+    """Resolve sidecars at the execution boundary, leaving stored history unchanged."""
+    resolved = []
+    blob_bytes = 0
+    if max_bytes is not None:
+        from harness.errors import ContextOverflow
+        for message in messages:
+            for block in message.blocks:
+                if isinstance(block, ToolResultBlock) and block.blob is not None:
+                    blob_bytes += block.blob.size
+                    if blob_bytes > max_bytes:
+                        raise ContextOverflow("tool result blobs exceed the inference input limit")
+    for message in messages:
+        blocks = []
+        for block in message.blocks:
+            if isinstance(block, ToolResultBlock) and block.blob is not None:
+                text = blobs.get(block.blob).decode("utf-8")
+                if block.text is not None and block.text != text:
+                    raise ValueError("tool result text differs from its blob")
+                block = block.model_copy(update={"text": text})
+            blocks.append(block)
+        resolved.append(message.model_copy(update={"blocks": tuple(blocks)}))
+    return resolved

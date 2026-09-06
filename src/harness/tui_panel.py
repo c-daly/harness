@@ -88,14 +88,14 @@ _STRATEGY_TOOLS = frozenset({"ensemble", "consult_panel", "escalate"})
 class AgentRow:
     call_id: str
     label: str
-    status: str  # "running" | "done" | "error"
+    status: str  # running | done | error | incomplete | cancelled
     model: "str | None"
     strategy: "str | None"  # grouping key shared by one coordination call's experts
 
 
 def fold_agents(events: list[Envelope]) -> list[AgentRow]:
-    """One row per dispatch_agent call (status/model straight from its own
-    ToolCallProposed/Completed pair) plus one row per expert spawned by an
+    """One row per dispatch_agent call (child outcome takes precedence over a
+    successful tool return) plus one row per expert spawned by an
     open ensemble/consult_panel/escalate call (status from that expert's own
     SubagentSpawned/SubagentFinished, `strategy` set to the coordination
     call's call_id so experts of the same call share a grouping key).
@@ -104,6 +104,7 @@ def fold_agents(events: list[Envelope]) -> list[AgentRow]:
     order: list[str] = []
     open_dispatch: set[str] = set()
     strategy_calls: set[str] = set()  # ensemble/consult_panel/escalate call_ids seen
+    child_rows: dict[str, str] = {}
 
     def upsert(call_id: str, **changes) -> None:
         if call_id not in rows:
@@ -130,9 +131,12 @@ def fold_agents(events: list[Envelope]) -> list[AgentRow]:
             call_id = str(ev.call_id)
             if call_id in open_dispatch:
                 open_dispatch.discard(call_id)
-                upsert(call_id, status="error" if ev.is_error else "done")
+                if rows[call_id].status == "running" or ev.is_error:
+                    upsert(call_id, status="error" if ev.is_error else "done")
         elif isinstance(ev, SubagentSpawned):
             group = str(ev.call_id) if ev.call_id is not None else None
+            if group in open_dispatch:
+                child_rows[str(ev.child_session_id)] = group
             # a dispatch_agent spawn already has its own row keyed by the
             # dispatch call; only coordination experts get a child-keyed row
             if group is not None and group in strategy_calls:
@@ -142,8 +146,11 @@ def fold_agents(events: list[Envelope]) -> list[AgentRow]:
                 upsert(child, label=label, model=model, strategy=group)
         elif isinstance(ev, SubagentFinished):
             child = str(ev.child_session_id)
-            if child in rows and rows[child].strategy is not None:
-                upsert(child, status="done" if ev.status == "ok" else "error")
+            row = child_rows.get(child, child)
+            if row in rows:
+                status = {"ok": "done", "error": "error", "cancelled": "cancelled",
+                          "incomplete": "incomplete"}[ev.status]
+                upsert(row, status=status)
 
     return [rows[cid] for cid in reversed(order)]
 

@@ -1,0 +1,18 @@
+{
+  "provenance": "Transcribed from the completed one-call tool result; not a complete benchmark run.",
+  "request_profile": "nested_json_schema_reasoning_none_v1",
+  "fixture": "Classify Thanks! as acknowledgement/question/stop/uncertain",
+  "model_inventory": "unsloth/Qwen3.6-35B-A3B-GGUF:UD-IQ4_XS",
+  "wall_ms": 7906.88,
+  "content": "{\n  \"kind\": \"acknowledgement\"\n}\n",
+  "finish_reason": "stop",
+  "usage": {
+    "completion_tokens": 19,
+    "prompt_tokens": 31,
+    "total_tokens": 50,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    }
+  },
+  "qualified": false
+}

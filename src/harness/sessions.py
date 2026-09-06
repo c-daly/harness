@@ -65,7 +65,7 @@ def list_sessions(base: Path, limit: int | None = None) -> list[SessionSummary]:
             event = envelope.event
             if not first_prompt and isinstance(event, UserMessage):
                 first_prompt = event.text[:_FIRST_PROMPT_CAP]
-            if isinstance(event, ModelCallCompleted):
+            if isinstance(event, ModelCallCompleted) and event.purpose == "conversation":
                 last_model = str(event.model)
         summaries.append(
             SessionSummary(

@@ -10,6 +10,8 @@ process, which would not share this process's registry and dispatcher.
 
 import asyncio
 import contextlib
+import hmac
+import secrets
 from typing import Any, Awaitable, Callable, Sequence
 
 import mcp.types as mcp_types
@@ -18,6 +20,7 @@ from mcp.server.lowlevel import Server
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from starlette.applications import Starlette
 from starlette.routing import Mount
+from starlette.responses import PlainTextResponse
 
 from harness.dispatcher import ToolOutcome
 from harness.hooks import ProposedToolCall
@@ -25,6 +28,33 @@ from harness.tools import ToolSpec
 from harness.types import ToolName, new_call_id
 
 Dispatch = Callable[[ProposedToolCall], Awaitable[ToolOutcome]]
+
+
+class _CapabilityGate:
+    def __init__(self, app, *, capability: str):
+        self.app = app
+        self.capability = capability.encode()
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http":
+            token = scope["path"].split("/")[1].encode()
+            if not hmac.compare_digest(token, self.capability):
+                await PlainTextResponse("MCP capability required", status_code=401)(scope, receive, send)
+                return
+            if any(key.lower() == b"origin" for key, _ in scope.get("headers", ())):
+                await PlainTextResponse("Browser origins are not supported", status_code=403)(scope, receive, send)
+                return
+        await self.app(scope, receive, send)
+
+
+@contextlib.asynccontextmanager
+async def running_tool_server(server):
+    """Own startup as well as serving: partial startup always reaches cleanup."""
+    try:
+        await server.start()
+        yield server
+    finally:
+        await server.stop()
 
 
 class McpToolServer:
@@ -35,12 +65,13 @@ class McpToolServer:
         self._uvicorn: uvicorn.Server | None = None
         self._serve_task: asyncio.Task | None = None
         self._port: int | None = None
+        self._capability = secrets.token_urlsafe(32)
 
     @property
     def url(self) -> str:
         if self._port is None:
             raise RuntimeError("McpToolServer not started")
-        return f"http://127.0.0.1:{self._port}/mcp"
+        return f"http://127.0.0.1:{self._port}/{self._capability}/mcp"
 
     def _build_app(self) -> Starlette:
         server: Server = Server("harness")
@@ -64,8 +95,8 @@ class McpToolServer:
                 )
             )
             if outcome.is_error:
-                raise ValueError(outcome.text)
-            return [mcp_types.TextContent(type="text", text=outcome.text)]
+                raise ValueError(outcome.read_text())
+            return [mcp_types.TextContent(type="text", text=outcome.read_text())]
 
         manager = StreamableHTTPSessionManager(app=server, json_response=True, stateless=True)
 
@@ -74,7 +105,14 @@ class McpToolServer:
             async with manager.run():
                 yield
 
-        return Starlette(routes=[Mount("/mcp", app=manager.handle_request)], lifespan=lifespan)
+        app = Starlette(
+            routes=[Mount(f"/{self._capability}/mcp", app=manager.handle_request)],
+            lifespan=lifespan,
+        )
+
+        # The URL is a short-lived bearer capability handed only to this run's child.
+        app.add_middleware(_CapabilityGate, capability=self._capability)
+        return app
 
     async def start(self) -> None:
         config = uvicorn.Config(

@@ -152,6 +152,18 @@ def test_fold_agents_dispatch_error_completion_is_error():
     assert rows[0].status == "error"
 
 
+def test_fold_agents_incomplete_child_is_not_overwritten_by_successful_tool_return():
+    cid, child = new_call_id(), new_session_id()
+    events = [
+        env(1, ToolCallProposed(call_id=cid, tool=ToolName("dispatch_agent"), args={})),
+        env(2, SubagentSpawned(child_session_id=child, call_id=cid, model=ModelId("m"))),
+        env(3, SubagentFinished(child_session_id=child, status="incomplete")),
+        env(4, ToolCallCompleted(call_id=cid, result_text="incomplete work")),
+    ]
+    row, = fold_agents(events)
+    assert row.call_id == str(cid) and row.status == "incomplete"
+
+
 def test_fold_agents_ensemble_experts_share_strategy_grouping_key():
     outer = new_call_id()
     child_a, child_b = new_session_id(), new_session_id()

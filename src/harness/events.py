@@ -10,6 +10,8 @@ from typing import Annotated, Any, ClassVar, Literal, Union
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from harness.blobs import BlobRef
+from harness.agent import AgentResult
+from harness.improvement import ImprovementRecord
 from harness.types import SCHEMA_VERSION, AgentId, CallId, ModelId, SessionId, ToolName
 
 
@@ -76,6 +78,10 @@ class ModelCallProposed(_Event):
     is_intent: ClassVar[bool] = True
     call_id: CallId
     model: ModelId
+    purpose: str = "conversation"
+    execution_kind: Literal["legacy", "inference", "agent"] = "legacy"
+    task_id: str | None = None
+    agent_run_id: str | None = None
 
 
 class HookDecided(_Event):
@@ -110,6 +116,7 @@ class ToolCallCompleted(_Event):
 class ToolCallCancelled(_Event):
     type: Literal["tool_call_cancelled"] = "tool_call_cancelled"
     call_id: CallId
+    result_text: str = "(call did not complete)"
 
 
 class ToolCallAborted(_Event):
@@ -124,6 +131,7 @@ class ModelCallStarted(_Event):
     type: Literal["model_call_started"] = "model_call_started"
     call_id: CallId
     model: ModelId
+    execution_kind: Literal["legacy", "inference", "agent"] = "legacy"
 
 
 class ModelCallCompleted(_Event):
@@ -131,17 +139,41 @@ class ModelCallCompleted(_Event):
     call_id: CallId
     model: ModelId
     message: dict[str, Any]  # Message.model_dump(); assistant turn incl. tool-call blocks
-    usage: dict[str, int]  # input_tokens / output_tokens / cache_read_tokens / cache_write_tokens
+    usage: dict[str, int | None]  # absent/None is unknown; zero must be measured
     stop_reason: str = "unknown"  # end_turn | tool_use | max_tokens | unknown (additive, default keeps old logs valid)
     pricing: dict[str, float] = Field(
         default_factory=dict
     )  # cost-per-token at call time; {} when unknown
     duration_ms: int = 0
+    purpose: str = "conversation"
+    execution_kind: Literal["legacy", "inference", "agent"] = "legacy"
+    task_id: str | None = None
+    agent_run_id: str | None = None
 
 
 class ModelCallCancelled(_Event):
     type: Literal["model_call_cancelled"] = "model_call_cancelled"
     call_id: CallId
+    reason: str = "cancelled"
+    duration_ms: int = 0
+
+
+class ModelCallFailed(_Event):
+    type: Literal["model_call_failed"] = "model_call_failed"
+    call_id: CallId
+    model: ModelId | None = None
+    error_type: str = "provider_error"
+    message: str = ""
+    retryable: bool = False
+    duration_ms: int = 0
+
+
+class ModelCallAborted(_Event):
+    """Resume-time repair; an interrupted external agent may have performed work."""
+
+    type: Literal["model_call_aborted"] = "model_call_aborted"
+    call_id: CallId
+    reason: str
 
 
 # --- permissions ---
@@ -180,7 +212,25 @@ class SubagentSpawned(_Event):
 class SubagentFinished(_Event):
     type: Literal["subagent_finished"] = "subagent_finished"
     child_session_id: SessionId
-    status: Literal["ok", "error", "cancelled"]
+    status: Literal["ok", "error", "cancelled", "incomplete"]
+
+
+class AgentRunStarted(_Event):
+    type: Literal["agent_run_started"] = "agent_run_started"
+    is_intent: ClassVar[bool] = True
+    task_id: str
+    run_id: str
+    parent_run_id: str | None = None
+    runtime: str
+    agent: AgentId | None = None
+    model: ModelId | None = None
+    acceptance_criteria: tuple[str, ...] = ()
+    limits: dict[str, Any] = Field(default_factory=dict)
+
+
+class AgentRunFinished(_Event):
+    type: Literal["agent_run_finished"] = "agent_run_finished"
+    result: AgentResult
 
 
 # --- transcript transforms ---
@@ -248,6 +298,14 @@ class TodoListUpdated(_Event):
     items: list[dict[str, Any]]
 
 
+class ImprovementRecorded(_Event):
+    """Core evidence/candidate/experiment fact. It never authorizes activation."""
+
+    type: Literal["improvement_recorded"] = "improvement_recorded"
+    is_intent: ClassVar[bool] = True  # Plans must be durable before an experiment starts.
+    record: ImprovementRecord
+
+
 class UnknownEvent(_Event):
     """A type this binary doesn't know. Raw JSON retained; never dropped."""
 
@@ -272,10 +330,14 @@ Event = Annotated[
         ModelCallStarted,
         ModelCallCompleted,
         ModelCallCancelled,
+        ModelCallFailed,
+        ModelCallAborted,
         PermissionRequested,
         PermissionResolved,
         SubagentSpawned,
         SubagentFinished,
+        AgentRunStarted,
+        AgentRunFinished,
         CompactionApplied,
         TaskOutcome,
         SessionOutcome,
@@ -283,6 +345,7 @@ Event = Annotated[
         RetryAttempted,
         CustomEvent,
         TodoListUpdated,
+        ImprovementRecorded,
         UnknownEvent,
     ],
     Field(discriminator="type"),

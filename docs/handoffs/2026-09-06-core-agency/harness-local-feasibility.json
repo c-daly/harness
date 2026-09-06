@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "model": "unsloth/Qwen3.6-35B-A3B-GGUF:UD-IQ4_XS",
+  "observed_at": 1788697678.246,
+  "mode": "existing_service_feasibility",
+  "samples": [
+    {
+      "case": "acknowledgement",
+      "sample": 0,
+      "passed": false,
+      "error_type": "TimeoutError",
+      "wall_ms": 30014.83
+    },
+    {
+      "case": "acknowledgement",
+      "sample": 1,
+      "passed": false,
+      "error_type": "TimeoutError",
+      "wall_ms": 30016.85
+    },
+    {
+      "case": "acknowledgement",
+      "sample": 2,
+      "passed": false,
+      "error_type": "JSONDecodeError",
+      "wall_ms": 13078.51
+    },
+    {
+      "case": "provided_context",
+      "sample": 0,
+      "passed": false,
+      "error_type": "TimeoutError",
+      "wall_ms": 30051.88
+    },
+    {
+      "case": "provided_context",
+      "sample": 1,
+      "passed": false,
+      "error_type": "JSONDecodeError",
+      "wall_ms": 10131.61
+    },
+    {
+      "case": "provided_context",
+      "sample": 2,
+      "passed": false,
+      "error_type": "JSONDecodeError",
+      "wall_ms": 1596.36
+    }
+  ],
+  "qualified": false
+}

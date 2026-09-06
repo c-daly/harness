@@ -5,10 +5,14 @@ import asyncio
 import signal
 import sys
 from dataclasses import dataclass, field
+from functools import cached_property
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Sequence
 
 from harness.hooks import HookBus
+from harness.controller import InteractionController
+from harness.agent import AgentTask
+from harness.execution import ExecutionBudget, ExecutionLimits, ExecutionScope
 from harness.interaction import HeadlessResolver, Resolver
 from harness.loop import AgentLoop
 from harness.mcp_config import McpConfigError, McpServerSpec, load_mcp_config, load_mcp_file
@@ -39,6 +43,13 @@ class Kernel:
     plugins: "LoadedPlugins | None" = None
     plugin_warnings: list[str] = field(default_factory=list)
     _plugin_pumps: list = field(default_factory=list)
+    controller: InteractionController = field(default_factory=InteractionController)
+
+    @cached_property
+    def improvements(self):
+        """Core lifecycle records are available even when all plugins are disabled."""
+        from harness.improvement_journal import ImprovementJournal
+        return ImprovementJournal(self.session)
 
     def set_provider(self, provider: ModelProvider) -> None:
         """Single point for retargeting the model provider mid-session. The
@@ -85,6 +96,7 @@ def build_kernel(
     pricing_for: "Callable[[ModelId], dict[str, float]] | None" = None,
     routing_rules: "RoutingRuleSet | None" = None,
     model_pinned: bool = False,
+    execution_limits: ExecutionLimits | None = None,
 ) -> Kernel:
     from harness.resume import resume_session
 
@@ -187,6 +199,9 @@ def build_kernel(
     if transcript is not None:
         loop_kwargs["history"] = transcript
     loop = AgentLoop(**loop_kwargs)
+    scope = ExecutionScope(session, registry, ExecutionBudget(execution_limits or ExecutionLimits()))
+    loop.dispatcher.scope = scope
+    runner._root_scopes[str(session.id)] = scope
     if hasattr(provider, "bind_dispatcher"):
         provider.bind_dispatcher(loop.dispatcher)
     if routing_rules is not None:
@@ -225,7 +240,7 @@ def build_kernel(
 
 
 async def run_once(kernel: Kernel, prompt: str) -> str:
-    from harness.events import CustomEvent, UserInterrupt
+    from harness.events import CustomEvent
     from harness.plugins import start_subscriber_pumps
 
     pump_tasks: list = []
@@ -255,12 +270,22 @@ async def run_once(kernel: Kernel, prompt: str) -> str:
                 )
             kernel._plugin_pumps = start_subscriber_pumps(kernel)
             pump_tasks = kernel._plugin_pumps
-        result = await kernel.loop.run_turn(prompt)
+        result = ""
+
+        async def execute(pending):
+            nonlocal result
+            kernel.controller.phase = "working"
+            outcome = await kernel.loop.run_task(AgentTask(prompt=pending.text))
+            result = outcome.read_text(kernel.session.blobs)
+            return outcome
+
+        kernel.controller.submit(prompt, expand_mentions=False)
+        await kernel.controller.run_next(execute)
         await kernel.loop.end()
         return result
     except asyncio.CancelledError:
         try:
-            kernel.session.append(UserInterrupt())
+            kernel.loop.interrupt_turn()
         except Exception:
             pass
         raise
@@ -311,7 +336,12 @@ def _subcommand(argv: list[str]) -> None:
     parser.add_argument(
         "--base-dir", type=Path, default=Path.home() / ".local" / "share" / "harness"
     )
-    if command == "stats":
+    if command == "improvements":
+        from harness.improvement_journal import read_improvements, render_improvements
+        parser.add_argument("session_id")
+        args = parser.parse_args(rest)
+        print(render_improvements(read_improvements(args.base_dir, SessionId(args.session_id))))
+    elif command == "stats":
         parser.add_argument("--tag", default=None)
         args = parser.parse_args(rest)
         conn, warnings = rebuild_index(args.base_dir)
@@ -337,8 +367,6 @@ def _subcommand(argv: list[str]) -> None:
         args = parser.parse_args(rest)
         from harness.events import SessionOutcome
         from harness.log import SessionLockedError
-        from harness.types import SessionId
-
         try:
             append_events(
                 args.base_dir,
@@ -599,6 +627,9 @@ def _run_main() -> None:
 
     try:
         print(asyncio.run(_amain(kernel, args.prompt)))
+        outcome = kernel.controller.last_result
+        if outcome is not None and outcome.status != "completed":
+            raise SystemExit(f"task {outcome.status}: {outcome.reason}")
     except ProviderError as exc:
         raise SystemExit(f"provider error: {exc}") from exc
 
@@ -819,7 +850,7 @@ def _sanitize_for_out(name: str) -> str:
 
 def main() -> None:
     argv = sys.argv[1:]
-    if argv and argv[0] in ("stats", "compare", "outcome"):
+    if argv and argv[0] in ("stats", "compare", "outcome", "improvements"):
         _subcommand(argv)
         return
     if argv and argv[0] == "mcp":
