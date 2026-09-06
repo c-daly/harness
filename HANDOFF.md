@@ -1,16 +1,18 @@
 # Core agency implementation — restart handoff
 
-> **Resumption update, September 6:** the snapshot below was verified after reboot
-> and has since been implemented further. Current HEAD is `a2e565e`, following
-> `0351b75`, on `feat/core-agency`. The implementation tree is committed; only
-> the preserved user `.claude/` and `.context/` are untracked. Full integration
-> reached **931 passed, 7 skipped**. Read the current
+> **Resumption update, September 6:** implementation continues on `feat/core-agency`
+> in [draft PR #9](https://github.com/c-daly/harness/pull/9), with current `main`
+> merged at `7c5fa95`. The latest verified checkpoint reached **983 passed,
+> 7 skipped** and adds bounded inference, explicit execution kinds, unknown-usage
+> accounting, core improvement/evaluation records, and inspection in both frontends.
+> The user authorized commits, the PR, and continued implementation. Read the
 > [implementation record](docs/superpowers/plans/2026-09-06-core-agency-progress.md)
-> for subsequent storage, delegation, controller/UI, catalog, and MCP changes.
-> The original roadmap remains active: M1 is not yet complete; M2–M6, including
-> resident local fallback and operational self-improvement, remain to implement.
-> Treat the following unstaged-file inventory and hashes as the pre-reboot
-> historical snapshot, not instructions to restore those versions.
+> and [new contract notes](docs/core-inference-and-improvement.md) before resuming.
+> M0/M1/M2 remain in progress; M3–M6 remain pending. Dedicated agent task contracts,
+> resident local operation, experiment execution, activation, and rollback still
+> require implementation. User `.claude/` and `.context/` are preserved and now
+> ignored by main's `.gitignore`. The file/hash inventory below is the historical
+> pre-reboot snapshot, not instructions to restore those versions.
 
 **Saved:** 2026-09-06. Work paused at the user's request to restart the machine.
 **Workspace:** `/home/fearsidhe/projects/harness`

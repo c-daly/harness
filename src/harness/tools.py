@@ -13,8 +13,8 @@ class UnknownToolError(Exception):
     pass
 
 
-def validate_arguments(spec: "ToolSpec", args: dict[str, Any]) -> None:
-    """Validate the final rewritten arguments without fetching external schema references."""
+def validate_schema(schema: dict[str, Any]) -> None:
+    """Check a schema without allowing it to fetch external references."""
     def local_references(value):
         if isinstance(value, dict):
             for key, child in value.items():
@@ -27,12 +27,18 @@ def validate_arguments(spec: "ToolSpec", args: dict[str, Any]) -> None:
             for child in value:
                 local_references(child)
 
-    local_references(spec.parameters)
+    local_references(schema)
     try:
-        Draft202012Validator.check_schema(spec.parameters)
-        Draft202012Validator(spec.parameters).validate(args)
+        Draft202012Validator.check_schema(schema)
     except SchemaError:
         raise ValueError("tool validation: invalid registered schema") from None
+
+
+def validate_arguments(spec: "ToolSpec", args: dict[str, Any]) -> None:
+    """Validate the final rewritten arguments without fetching external schema references."""
+    validate_schema(spec.parameters)
+    try:
+        Draft202012Validator(spec.parameters).validate(args)
     except ValidationError as exc:
         # The exception's message includes submitted values; keep them out of errors.
         raise ValueError(f"tool validation: arguments violate {exc.validator}") from None

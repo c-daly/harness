@@ -8,6 +8,11 @@ For day-to-day contribution mechanics and the invariants you must preserve, see
 [contributing.md](contributing.md). For writing plugins against these
 internals, see [plugin-authoring.md](plugin-authoring.md).
 
+The ongoing core-agency implementation adds
+[bounded inference and core improvement records](core-inference-and-improvement.md).
+That document identifies the implemented interfaces and remaining agent-runtime,
+activation, and local-readiness boundaries.
+
 ---
 
 ## The one big idea: the event log is the unit of truth

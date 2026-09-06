@@ -15,6 +15,17 @@ def screen_text(app):
     return "\n".join(strip.text for strip in app.screen._compositor.render_strips())
 
 
+async def test_stats_tick_after_widgets_unmount_does_not_crash(tmp_path):
+    app = make_app(tmp_path)
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        # Textual can deliver a queued timer tick after removing the widgets
+        # and before HarnessApp.on_unmount runs (observed in Python 3.13 CI).
+        await app.query_one("#input-area").remove()
+        app.refresh_stats()
+        app._refresh_statusbar()
+
+
 async def test_queue_visible_draft_preserved_and_cancel_requires_resume(tmp_path):
     provider = GatedProvider()
     app = make_app(tmp_path, provider=provider, model=ModelId("gated"))

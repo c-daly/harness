@@ -3,7 +3,9 @@
 Implementation branch: `feat/core-agency`, based on `main` at `ce722b4`.
 
 Committed checkpoints: `0351b75` (roadmap, lifecycle, and storage/result integrity),
-`a2e565e` (controller/UI, delegated scope and limits, catalog, authenticated MCP).
+`a2e565e` (controller/UI, delegated scope and limits, catalog, authenticated MCP),
+and `7c5fa95` (merge current main, including terminal math and experiment-plugin docs).
+Draft PR: https://github.com/c-daly/harness/pull/9.
 
 **Resumed after machine restart.** All 26 files in the
 [restart handoff](../../../HANDOFF.md) matched their saved hashes before new
@@ -19,7 +21,7 @@ qualification. Milestone completion requires its roadmap gates, not just code.
 |---|---|---|
 | M0 baseline and feasibility | In progress | Baseline: 885 passed, 7 skipped. CI, build and fresh wheel installation checked locally. Two restart inference probes remain too slow for synchronous UI use. Hardware/profile selection and cold startup remain. |
 | M1 correctness and interaction | In progress | 931 passed, 7 skipped after storage, delegation, controller/UI and MCP capability changes. Context budgets, broader enforcement/redaction and fault qualification remain. |
-| M2 inference / agent contracts | Pending | Separate execution kinds and migrate actual call paths. |
+| M2 inference / agent contracts | In progress | Bounded inference, explicit execution kinds, nullable usage, and core improvement records implemented. Distinct agent task/progress/results and capability qualification remain. |
 | M3 local core assistant | Pending | Readiness, runtime ownership, normal memory access, and offline task journey. |
 | M4 bounded semantic agency | Pending | Typed functions, evaluation, scheduling, capability-aware fallback, and operational self-improvement lifecycle. |
 | M5 heterogeneous work / plugins | Pending | Supervision, plugin reconciliation, portable continuation, isolated improvement patches and rollback. |
@@ -141,6 +143,55 @@ controls must stay independent of inference completion.
 - This checkpoint does not implement resident local fallback, the inference/agent
   contract split, or self-improvement experiments/adoption. Those remain active
   roadmap work, including the user's first-class self-improvement requirement.
+
+## Bounded inference and core improvement foundation
+
+- `dispatch_inference` owns typed requests/results, explicit tool-proposal policy,
+  purpose, input/output/frame bounds, deadline, sampling, and optional validated
+  JSON schema. Normal native conversation calls use the inference adapter, while
+  invalid tool proposals retain ordinary dispatch error feedback and audit facts.
+  Oversized sidecars are refused before reading; this is an explicit bound, not
+  automatic context selection or a token-budget implementation.
+- Catalog aliases expose inference versus agent execution kinds. Internal calls
+  reject an external-agent route after routing hooks, and external-agent failures
+  are not retried automatically. Legacy agent completion is still a migration
+  path; dedicated task/progress/artifact/terminal contracts remain to implement.
+- LiteLLM receives output-token, timeout, temperature, and schema parameters;
+  SDK retries are disabled for bounded calls. Native retry attempts share a
+  deadline. Cancellation and rejected streams close their underlying sources.
+- Usage preserves missing measurements, including CLI adapter fields. Nullable
+  telemetry schema 2 preserves unknown totals/cost and requires rebuilding older
+  derived databases. Old session logs remain readable.
+- Core `ImprovementJournal` persists verified evidence references, candidate and
+  suite artifacts, fixed plans, and paired evaluator results. Plans bind exact
+  incumbent/candidate/evaluator digests. Critical failures, regressions, incomplete
+  results, or violated benefit/latency gates cannot qualify. Default adoption
+  policy requires review. `/improvements` and `harness improvements SESSION_ID`
+  inspect the same records without plugins or a replacement memory store.
+- The improvement contracts **do not yet run experiments or activate changes**.
+  Evaluator authority, background proposal generation, safe activation, isolated
+  source patches, and rollback remain mandatory M4/M5 work. An eligible record
+  is not permission to modify a running installation.
+- Integration with current main initially passed **958 tests, 7 skipped**.
+  First hosted runs at `7c5fa95` passed both 3.12 jobs and one 3.13 job; the other
+  3.13 job exposed a stats timer firing after DOM removal. A deterministic RED
+  reproduction now passes: timers stop at shutdown, late callbacks tolerate
+  removed widgets, and the derived SQLite store closes on unmount.
+- The first full inference integration run reported **5 failed, 977 passed,
+  7 skipped, 5 warnings in 264.90s**. Three failures identified inference validation
+  preempting the native tool-error/rewrite path; one asserted zero for an absent
+  Antigravity usage field; one reproduced the timer shutdown defect. All were
+  addressed, with focused regressions passing. A restricted MCP integration run
+  was interrupted because that sandbox cannot provide its local socket path;
+  it is not recorded as a passing run.
+- Final local integration: **983 passed, 7 skipped, 5 warnings in 264.65s**,
+  using `UV_CACHE_DIR=/tmp/uv-cache uv run --offline pytest -q -ra` with
+  localhost/process access. Ruff and whitespace checks passed. Sdist/wheel built.
+  Initial fresh offline installation lacked cached math dependencies from main;
+  after provisioning versions constrained by `uv.lock`, another fresh installation
+  succeeded offline with 83 packages. This verifies package provisioning, not
+  local-model/offline-readiness qualification. Hosted CI for the new checkpoint
+  is pending its push. See [contract details](../../core-inference-and-improvement.md).
 
 ## Validation policy
 

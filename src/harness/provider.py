@@ -5,21 +5,29 @@ LiteLLM adapter and per-provider conformance suites are Phase 2 (spec item 3).
 
 import json
 from dataclasses import dataclass, field
-from typing import Any, AsyncIterator, Protocol, Sequence, runtime_checkable
+from typing import TYPE_CHECKING, Any, AsyncIterator, Protocol, Sequence, runtime_checkable
 
 from harness.messages import Message, Role, TextBlock, ThinkingBlock, ToolCallBlock
 from harness.tools import ToolSpec
 from harness.types import CallId, ModelId, ToolName, new_call_id
 
+if TYPE_CHECKING:
+    from harness.inference import InferenceRequest
+
 
 @dataclass(frozen=True)
 class Usage:
-    input_tokens: int = 0
-    output_tokens: int = 0
-    cache_read_tokens: int = 0
-    cache_write_tokens: int = 0
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    cache_read_tokens: int | None = None
+    cache_write_tokens: int | None = None
 
-    def as_dict(self) -> dict[str, int]:
+    def __post_init__(self):
+        for value in self.as_dict().values():
+            if value is not None and (type(value) is not int or value < 0):
+                raise ValueError("usage must be a nonnegative integer or unknown")
+
+    def as_dict(self) -> dict[str, int | None]:
         return {
             "input_tokens": self.input_tokens,
             "output_tokens": self.output_tokens,
@@ -154,6 +162,9 @@ class FakeProvider:
     script: list[list[Chunk]]
     calls: list[Sequence[Message]] = field(default_factory=list)
 
+    def infer(self, request: "InferenceRequest") -> AsyncIterator[Chunk]:
+        return self.complete(model=request.model, messages=request.messages, tools=request.tools)
+
     async def complete(
         self,
         *,
@@ -171,6 +182,9 @@ class FakeProvider:
 class EchoProvider:
     """Infinite demo provider: echoes the last user text. Powers the TUI's
     no-model mode and multi-turn tests (FakeProvider scripts are finite)."""
+
+    def infer(self, request: "InferenceRequest") -> AsyncIterator[Chunk]:
+        return self.complete(model=request.model, messages=request.messages, tools=request.tools)
 
     async def complete(
         self,

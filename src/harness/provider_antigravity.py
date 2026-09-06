@@ -198,6 +198,8 @@ def _scratch_home() -> str:
 
 
 class AntigravityProvider:
+    execution_kind = "agent"
+
     def __init__(self, *, binary: str = "agy", timeout_s: float = 600.0) -> None:
         self.binary = binary
         self.timeout_s = timeout_s
@@ -390,9 +392,9 @@ class AntigravityProvider:
                                 u = result.get("usage") or {}
                                 yield UsageReport(
                                     usage=Usage(
-                                        input_tokens=u.get("input_tokens", 0),
-                                        output_tokens=u.get("output_tokens", 0),
-                                        cache_read_tokens=u.get("cache_read_tokens", 0),
+                                        input_tokens=u.get("input_tokens"),
+                                        output_tokens=u.get("output_tokens"),
+                                        cache_read_tokens=u.get("cache_read_tokens"),
                                     )
                                 )
                                 yield StreamStop(stop_reason="end_turn")

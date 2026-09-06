@@ -5,6 +5,7 @@ import asyncio
 import signal
 import sys
 from dataclasses import dataclass, field
+from functools import cached_property
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Sequence
 
@@ -42,6 +43,12 @@ class Kernel:
     plugin_warnings: list[str] = field(default_factory=list)
     _plugin_pumps: list = field(default_factory=list)
     controller: InteractionController = field(default_factory=InteractionController)
+
+    @cached_property
+    def improvements(self):
+        """Core lifecycle records are available even when all plugins are disabled."""
+        from harness.improvement_journal import ImprovementJournal
+        return ImprovementJournal(self.session)
 
     def set_provider(self, provider: ModelProvider) -> None:
         """Single point for retargeting the model provider mid-session. The
@@ -326,7 +333,12 @@ def _subcommand(argv: list[str]) -> None:
     parser.add_argument(
         "--base-dir", type=Path, default=Path.home() / ".local" / "share" / "harness"
     )
-    if command == "stats":
+    if command == "improvements":
+        from harness.improvement_journal import read_improvements, render_improvements
+        parser.add_argument("session_id")
+        args = parser.parse_args(rest)
+        print(render_improvements(read_improvements(args.base_dir, SessionId(args.session_id))))
+    elif command == "stats":
         parser.add_argument("--tag", default=None)
         args = parser.parse_args(rest)
         conn, warnings = rebuild_index(args.base_dir)
@@ -352,8 +364,6 @@ def _subcommand(argv: list[str]) -> None:
         args = parser.parse_args(rest)
         from harness.events import SessionOutcome
         from harness.log import SessionLockedError
-        from harness.types import SessionId
-
         try:
             append_events(
                 args.base_dir,
@@ -834,7 +844,7 @@ def _sanitize_for_out(name: str) -> str:
 
 def main() -> None:
     argv = sys.argv[1:]
-    if argv and argv[0] in ("stats", "compare", "outcome"):
+    if argv and argv[0] in ("stats", "compare", "outcome", "improvements"):
         _subcommand(argv)
         return
     if argv and argv[0] == "mcp":

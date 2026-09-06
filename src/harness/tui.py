@@ -19,6 +19,7 @@ from textual import on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Vertical
+from textual.css.query import NoMatches
 from textual.screen import ModalScreen
 from textual.widgets import Checkbox, Input, OptionList, RichLog, Static
 from textual.widgets.option_list import Option
@@ -41,6 +42,7 @@ from harness.events import (
 from harness.fold import fold
 from harness.hooks import ProposedToolCall
 from harness.interaction import PermissionRequest
+from harness.inference import InferenceRequest
 from harness.log import read_session
 from harness.math_markdown import MathMarkdown, SIXEL_META_KEY, SixelPlacement
 from harness.mcp_host import McpHost
@@ -659,6 +661,7 @@ class HarnessApp(App[None]):
         self._stats_conn = None
         self._stats_sub = None
         self._stats_queue = None
+        self._stats_timer = None
         # Last rollup dict seen by refresh_stats -- the status bar's tool-count
         # and cost segments reuse it instead of re-querying telemetry on every
         # /model switch or kernel rebuild. Reset to None on a kernel rebuild
@@ -826,7 +829,7 @@ class HarnessApp(App[None]):
         self._bus_pump_worker = self.run_worker(
             self._bus_pump(_bus_queue), group="driver", exit_on_error=False
         )
-        self.set_interval(1.0, self.refresh_stats)
+        self._stats_timer = self.set_interval(1.0, self.refresh_stats)
 
     def _start_plugin_subscribers(self, kernel: Kernel) -> None:
         """Emit each plugin's plugin_loaded event and start one pump worker
@@ -1086,8 +1089,12 @@ class HarnessApp(App[None]):
             self._render_event(envelope.event)
 
     def refresh_stats(self) -> None:
-        if self._stats_sub is None:
+        if self._stats_sub is None or self._ended:
             return
+        try:
+            stats_widget = self.query_one("#stats", Static)
+        except NoMatches:
+            return  # A queued timer may arrive during DOM teardown or a modal.
         self._stats_sub.drain(self._stats_queue)
         try:
             rollup = run_rollup(self._stats_conn, str(self.kernel.session.id))
@@ -1104,11 +1111,11 @@ class HarnessApp(App[None]):
             return
         cost = rollup["cost"]
         cost_text = f"${cost:.4f}" if cost is not None else "n/a"
-        inp = rollup["input_tokens"]
-        out = rollup["output_tokens"]
+        inp = rollup["input_tokens"] if rollup["input_tokens"] is not None else "n/a"
+        out = rollup["output_tokens"] if rollup["output_tokens"] is not None else "n/a"
         tc = rollup["tool_calls"]
         model = self.kernel.loop.model
-        self.query_one("#stats", Static).update(
+        stats_widget.update(
             _plain(f"{model} | in {inp} out {out} | cost {cost_text} | tools {tc}")
         )
         self._refresh_statusbar(rollup)
@@ -1156,7 +1163,7 @@ class HarnessApp(App[None]):
             ctx_segment = f"ctx {round(est / limit * 100)}%"
 
         cost = self._last_rollup["cost"] if self._last_rollup else None
-        cost_segment = f"${cost if cost is not None else 0.0:.4f}"
+        cost_segment = f"${cost:.4f}" if cost is not None else "cost n/a"
 
         return ctx_segment, cost_segment
 
@@ -1165,6 +1172,12 @@ class HarnessApp(App[None]):
         the rollup refresh_stats already computed -- no second telemetry
         query), from /model (no turn required), after a kernel rebuild
         (/clear, /resume), and after /compact (history shrinks, ctx% moves)."""
+        if self._ended:
+            return
+        try:
+            status_widget = self.query_one("#statusbar", Static)
+        except NoMatches:
+            return
         if rollup is not None:
             self._last_rollup = rollup
         tool_calls = self._last_rollup["tool_calls"] if self._last_rollup else 0
@@ -1175,7 +1188,7 @@ class HarnessApp(App[None]):
         if cost_segment is not None:
             segments.append(cost_segment)
         segments.append(f"tools {tool_calls}")
-        self.query_one("#statusbar", Static).update(_plain(" | ".join(segments)))
+        status_widget.update(_plain(" | ".join(segments)))
 
     def _render_event(self, event) -> None:
         if self.controller.active is not None:
@@ -1432,17 +1445,21 @@ class HarnessApp(App[None]):
             ]
             # Internal inference is enforced/accounted normally, with no extra
             # conversation message for CompactionApplied to collapse.
-            summary_message, _usage = await loop.dispatcher.dispatch_model(
-                provider=loop.provider, model=loop.model, messages=messages, tools=(),
-                purpose="compaction", pricing=loop.pricing, pricing_for=loop.pricing_for,
+            result = await loop.dispatcher.dispatch_inference(
+                provider=loop.provider,
+                request=InferenceRequest(model=loop.model, messages=tuple(messages),
+                                         purpose="compaction"),
+                pricing=loop.pricing, pricing_for=loop.pricing_for,
                 pinned=loop.model_pinned,
             )
+            if result.stop_reason != "end_turn":
+                raise ValueError("summary was incomplete; history retained")
         except Exception as exc:
             self.say("! ", f"compact failed: {exc}")
             self.controller.pause()
             self.controller.phase = "failed"
             return
-        summary = summary_message.text()
+        summary = result.message.text()
         kernel.session.append(
             CompactionApplied(from_seq=from_seq, to_seq=to_seq, summary=summary, model=loop.model)
         )
@@ -1535,7 +1552,7 @@ class HarnessApp(App[None]):
             self.say(
                 "",
                 "/help  /model [alias]  /thoughts [collapse|full|off]  /markdown [on|off]  "
-                "/clear  /compact  /resume  /panel  /tools  /quit  — @path mentions a file "
+                "/clear  /compact  /resume  /panel  /tools  /improvements  /quit  — @path mentions a file "
                 "(Tab completes), read for the model only; F2 also toggles the activity panel",
             )
             self.say("", "/queue: inspect, edit, remove, pause, resume, clear; queued prompts are memory only")
@@ -1549,6 +1566,11 @@ class HarnessApp(App[None]):
                 self.say("  ", str(spec.name))
         elif command.name == "queue":
             self._queue_command(command.arg)
+        elif command.name == "improvements":
+            from harness.improvement_journal import read_improvements, render_improvements
+            state = read_improvements(self.kernel.session.base, self.kernel.session.id)
+            for line in render_improvements(state).splitlines():
+                self.say("", line)
         elif command.name == "quit":
             await self._finish()
             self.exit()
@@ -1858,6 +1880,8 @@ class HarnessApp(App[None]):
         if self._ended:
             return
         self._ended = True
+        if self._stats_timer is not None:
+            self._stats_timer.stop()
         workers = [w for w in (self._turn_worker, self._compact_worker) if w is not None]
         self.workers.cancel_group(self, "agent")
         for worker in workers:
@@ -1873,7 +1897,13 @@ class HarnessApp(App[None]):
             self.say("! ", f"end failed: {exc}")
 
     async def on_unmount(self) -> None:
-        await self._finish()
+        try:
+            await self._finish()
+        finally:
+            self._stats_sub = None
+            if self._stats_conn is not None:
+                self._stats_conn.close()
+                self._stats_conn = None
 
 
 async def run_tui(

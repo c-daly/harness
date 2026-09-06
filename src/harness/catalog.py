@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from functools import cache
 from importlib.metadata import PackageNotFoundError, distribution
 from pathlib import Path
+from typing import Literal
 
 from harness.types import ModelId
 
@@ -40,6 +41,7 @@ class ResolvedModel:
     output_cost_per_token: float | None
     max_input_tokens: int | None
     verified: bool
+    execution_kind: Literal["inference", "agent"] = "inference"
 
     def pricing_dict(self) -> dict[str, float]:
         """Stamp-ready pricing for ModelCallCompleted; empty when unknown."""
@@ -73,6 +75,12 @@ class Catalog:
                 f"model {alias!r}: unknown backend {backend!r}; known: {sorted(KNOWN_BACKENDS)}"
             )
         cost_info = _cost_map_lookup(route)
+        inferred_kind = "agent" if backend else "inference"
+        execution_kind = entry.get("execution_kind", inferred_kind)
+        if execution_kind != inferred_kind:
+            raise ValueError(
+                f"model {alias!r}: execution_kind must be {inferred_kind!r} for this backend"
+            )
         return ResolvedModel(
             alias=alias,
             route=ModelId(route),
@@ -88,6 +96,7 @@ class Catalog:
             ),
             max_input_tokens=entry.get("max_input_tokens", cost_info.get("max_input_tokens")),
             verified=entry.get("verified", False),
+            execution_kind=execution_kind,
         )
 
     def aliases(self) -> tuple[str, ...]:

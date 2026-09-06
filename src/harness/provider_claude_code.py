@@ -95,6 +95,8 @@ def _kill_process_group(proc: "asyncio.subprocess.Process") -> None:
 
 
 class ClaudeCodeProvider:
+    execution_kind = "agent"
+
     def __init__(self, *, binary: str = "claude", timeout_s: float = 600.0) -> None:
         self.binary = binary
         self.timeout_s = timeout_s
@@ -218,10 +220,10 @@ class ClaudeCodeProvider:
                             u = event.get("usage") or {}
                             yield UsageReport(
                                 usage=Usage(
-                                    input_tokens=u.get("input_tokens", 0),
-                                    output_tokens=u.get("output_tokens", 0),
-                                    cache_read_tokens=u.get("cache_read_input_tokens", 0),
-                                    cache_write_tokens=u.get("cache_creation_input_tokens", 0),
+                                    input_tokens=u.get("input_tokens"),
+                                    output_tokens=u.get("output_tokens"),
+                                    cache_read_tokens=u.get("cache_read_input_tokens"),
+                                    cache_write_tokens=u.get("cache_creation_input_tokens"),
                                 )
                             )
                             yield StreamStop(stop_reason=event.get("stop_reason") or "end_turn")

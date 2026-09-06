@@ -41,7 +41,7 @@ from harness.events import (
     parse_envelope_line,
 )
 
-TELEMETRY_SCHEMA_VERSION = 1
+TELEMETRY_SCHEMA_VERSION = 2
 
 
 class TelemetrySchemaMismatch(RuntimeError):
@@ -67,10 +67,10 @@ CREATE TABLE IF NOT EXISTS model_calls (
     call_id TEXT NOT NULL,
     seq INTEGER NOT NULL,
     model TEXT NOT NULL,
-    input_tokens INTEGER NOT NULL DEFAULT 0,
-    output_tokens INTEGER NOT NULL DEFAULT 0,
-    cache_read_tokens INTEGER NOT NULL DEFAULT 0,
-    cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+    input_tokens INTEGER,
+    output_tokens INTEGER,
+    cache_read_tokens INTEGER,
+    cache_write_tokens INTEGER,
     stop_reason TEXT,
     duration_ms INTEGER,
     cost REAL,
@@ -79,6 +79,7 @@ CREATE TABLE IF NOT EXISTS model_calls (
     error_type TEXT,
     error_message TEXT,
     purpose TEXT NOT NULL DEFAULT 'conversation',
+    execution_kind TEXT NOT NULL DEFAULT 'legacy',
     PRIMARY KEY (session_id, call_id)
 );
 CREATE TABLE IF NOT EXISTS tool_calls (
@@ -196,39 +197,42 @@ def _index_envelopes(conn: sqlite3.Connection, envelopes: list[Envelope]) -> Non
         elif isinstance(ev, ModelCallProposed):
             conn.execute(
                 "INSERT OR IGNORE INTO model_calls"
-                " (session_id, call_id, seq, model, ts, purpose) VALUES (?,?,?,?,?,?)",
-                (sid, ev.call_id, env.seq, ev.model, env.ts, ev.purpose),
+                " (session_id, call_id, seq, model, ts, purpose, execution_kind) VALUES (?,?,?,?,?,?,?)",
+                (sid, ev.call_id, env.seq, ev.model, env.ts, ev.purpose, ev.execution_kind),
             )
         elif isinstance(ev, ModelCallStarted) or (
             isinstance(ev, DispatchResolved) and ev.kind == "model"
         ):
             conn.execute(
-                "UPDATE model_calls SET model = ? WHERE session_id = ? AND call_id = ?",
-                (ev.model, sid, ev.call_id),
+                "UPDATE model_calls SET model = ?, execution_kind = COALESCE(?, execution_kind)"
+                " WHERE session_id = ? AND call_id = ?",
+                (ev.model, getattr(ev, "execution_kind", None), sid, ev.call_id),
             )
         elif isinstance(ev, ModelCallCompleted):
             usage, pricing = ev.usage, ev.pricing
             cost = None
-            if pricing:
+            if all(usage.get(k) is not None for k in ("input_tokens", "output_tokens")) and all(
+                pricing.get(k) is not None for k in ("input_cost_per_token", "output_cost_per_token")
+            ):
                 cost = (
-                    usage.get("input_tokens", 0) * pricing.get("input_cost_per_token", 0.0)
-                    + usage.get("output_tokens", 0) * pricing.get("output_cost_per_token", 0.0)
+                    usage["input_tokens"] * pricing["input_cost_per_token"]
+                    + usage["output_tokens"] * pricing["output_cost_per_token"]
                 )
             conn.execute(
                 "INSERT INTO model_calls"
                 " (session_id, call_id, seq, model, input_tokens, output_tokens,"
                 " cache_read_tokens, cache_write_tokens, stop_reason, duration_ms, cost, ts,"
-                " status, purpose) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'completed',?)"
+                " status, purpose, execution_kind) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'completed',?,?)"
                 " ON CONFLICT(session_id, call_id) DO UPDATE SET"
                 " model=excluded.model, input_tokens=excluded.input_tokens,"
                 " output_tokens=excluded.output_tokens, cache_read_tokens=excluded.cache_read_tokens,"
                 " cache_write_tokens=excluded.cache_write_tokens, stop_reason=excluded.stop_reason,"
                 " duration_ms=excluded.duration_ms, cost=excluded.cost, status='completed',"
-                " purpose=excluded.purpose",
+                " purpose=excluded.purpose, execution_kind=excluded.execution_kind",
                 (sid, ev.call_id, env.seq, ev.model,
-                 usage.get("input_tokens", 0), usage.get("output_tokens", 0),
-                 usage.get("cache_read_tokens", 0), usage.get("cache_write_tokens", 0),
-                 ev.stop_reason, ev.duration_ms, cost, env.ts, ev.purpose),
+                 usage.get("input_tokens"), usage.get("output_tokens"),
+                 usage.get("cache_read_tokens"), usage.get("cache_write_tokens"),
+                 ev.stop_reason, ev.duration_ms, cost, env.ts, ev.purpose, ev.execution_kind),
             )
         elif isinstance(ev, (ModelCallFailed, ModelCallCancelled, ModelCallAborted)):
             status = ev.type.removeprefix("model_call_")
@@ -356,8 +360,8 @@ def run_rollup(conn: sqlite3.Connection, root: str) -> dict:
     sids = run_sessions(conn, root)
     marks = ",".join("?" * len(sids))
     mc = conn.execute(
-        f"SELECT COUNT(*), COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0),"
-        f" COALESCE(SUM(cache_read_tokens),0), SUM(cost), COALESCE(SUM(duration_ms),0)"
+        f"SELECT COUNT(*), {_total('input_tokens')}, {_total('output_tokens')},"
+        f" {_total('cache_read_tokens')}, {_total('cost')}, COALESCE(SUM(duration_ms),0)"
         f" FROM model_calls WHERE session_id IN ({marks})", sids
     ).fetchone()
     tc = conn.execute(
@@ -401,8 +405,8 @@ def stats_summary(conn: sqlite3.Connection, tag: str | None = None) -> dict:
         where = "WHERE session_id IN (SELECT session_id FROM tags WHERE tag = ?)"
         params = [tag]
     models = conn.execute(
-        f"SELECT model, COUNT(*), COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0),"
-        f" COALESCE(SUM(cache_read_tokens),0), SUM(cost)"
+        f"SELECT model, COUNT(*), {_total('input_tokens')}, {_total('output_tokens')},"
+        f" {_total('cache_read_tokens')}, {_total('cost')}"
         f" FROM model_calls {where} GROUP BY model ORDER BY model", params
     ).fetchall()
     tools = conn.execute(
@@ -427,6 +431,11 @@ def _money(cost) -> str:
     return f"${cost:.6f}" if cost is not None else "n/a"
 
 
+def _total(column: str) -> str:
+    """Unknown measurements make the total unknown, never a partial fake total."""
+    return f"CASE WHEN COUNT({column}) = COUNT(*) THEN COALESCE(SUM({column}),0) ELSE NULL END"
+
+
 _ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 
 
@@ -444,6 +453,7 @@ def render_stats(summary: dict) -> str:
         "models:",
     ]
     for model, calls, inp, out, cached, cost in summary["models"]:
+        inp, out, cached = ("n/a" if v is None else v for v in (inp, out, cached))
         lines.append(
             f"  {_safe(model)}: calls={calls} in={inp} out={out} cached={cached} cost={_money(cost)}"
         )

@@ -6,6 +6,7 @@ litellm except through catalog (cost map) and this module.
 
 import json
 import os
+from contextlib import aclosing
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, AsyncIterator, Sequence
 
@@ -40,6 +41,7 @@ from harness.tools import ToolSpec
 from harness.types import CallId, ModelId, ToolName
 
 if TYPE_CHECKING:
+    from harness.inference import InferenceRequest
     from harness.provider_antigravity import AntigravityProvider
     from harness.provider_claude_code import ClaudeCodeProvider
     from harness.provider_codex import CodexProvider
@@ -165,12 +167,13 @@ def _normalize_chunk(chunk: Any) -> list[Chunk]:
         # under prompt_tokens_details.cached_tokens (empirically verified via
         # recorded fixtures). Read both; top-level wins when present.
         details = getattr(usage, "prompt_tokens_details", None)
-        nested_cached = (getattr(details, "cached_tokens", 0) or 0) if details is not None else 0
+        nested_cached = getattr(details, "cached_tokens", None) if details is not None else None
+        cached = getattr(usage, "cache_read_input_tokens", None)
         out.append(UsageReport(usage=Usage(
-            input_tokens=getattr(usage, "prompt_tokens", 0) or 0,
-            output_tokens=getattr(usage, "completion_tokens", 0) or 0,
-            cache_read_tokens=(getattr(usage, "cache_read_input_tokens", 0) or 0) or nested_cached,
-            cache_write_tokens=getattr(usage, "cache_creation_input_tokens", 0) or 0,
+            input_tokens=getattr(usage, "prompt_tokens", None),
+            output_tokens=getattr(usage, "completion_tokens", None),
+            cache_read_tokens=cached if cached is not None else nested_cached,
+            cache_write_tokens=getattr(usage, "cache_creation_input_tokens", None),
         )))
     if not getattr(chunk, "choices", None):
         return out
@@ -214,6 +217,7 @@ async def _acomplete(
     tools: Sequence[ToolSpec] = (),
     api_base: str | None = None,
     api_key: str | None = None,
+    request: "InferenceRequest | None" = None,
 ) -> AsyncIterator[Chunk]:
     """The shared litellm streaming core. Endpoint + key are per-call locals so
     a single provider instance is safe under concurrent (asyncio.gather) calls."""
@@ -232,6 +236,22 @@ async def _acomplete(
         kwargs["api_base"] = api_base
     if api_key:
         kwargs["api_key"] = api_key
+    if request is not None:
+        if tools:
+            kwargs["tool_choice"] = request.tool_choice
+        kwargs["max_tokens"] = request.max_output_tokens
+        kwargs["timeout"] = request.timeout_seconds
+        # SDK retries must not evade the dispatcher's shared budget/deadline.
+        kwargs["num_retries"] = 0
+        if request.temperature is not None:
+            kwargs["temperature"] = request.temperature
+        if request.response_schema is not None:
+            kwargs["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {"name": "harness_response", "strict": True,
+                                "schema": request.response_schema},
+            }
+    stream = None
     try:
         stream = await litellm.acompletion(**kwargs)
         async for raw in stream:
@@ -241,12 +261,22 @@ async def _acomplete(
         raise
     except Exception as exc:
         raise map_exception(exc) from exc
+    finally:
+        close = getattr(stream, "aclose", None)
+        if close is not None:
+            await close()
 
 
 @dataclass
 class LiteLLMProvider:
     api_base: str | None = None
     api_key_env: str | None = None  # resolved by litellm from env; recorded for diagnostics
+
+    def infer(self, request: "InferenceRequest") -> AsyncIterator[Chunk]:
+        return _acomplete(model=request.model, messages=request.messages, tools=request.tools,
+                          api_base=self.api_base,
+                          api_key=os.environ.get(self.api_key_env) if self.api_key_env else None,
+                          request=request)
 
     async def complete(
         self,
@@ -273,6 +303,30 @@ class CatalogProvider:
     claude_code: "ClaudeCodeProvider | None" = None
     codex: "CodexProvider | None" = None
     antigravity: "AntigravityProvider | None" = None
+
+    def execution_kind(self, model: ModelId) -> str:
+        try:
+            return self.catalog.resolve(str(model)).execution_kind
+        except UnknownAliasError:
+            return "inference"
+
+    async def infer(self, request: "InferenceRequest") -> AsyncIterator[Chunk]:
+        try:
+            resolved = self.catalog.resolve(str(request.model))
+        except UnknownAliasError:
+            resolved = None
+        if resolved is not None and resolved.execution_kind != "inference":
+            raise ProviderError(f"{request.model!r} is an agent runtime, not a model inference route")
+        key = os.environ.get(resolved.api_key_env) if resolved and resolved.api_key_env else None
+        if resolved and resolved.api_base and key is None:
+            key = "local-no-key"
+        async with aclosing(_acomplete(
+            model=resolved.route if resolved else request.model,
+            messages=request.messages, tools=request.tools,
+            api_base=resolved.api_base if resolved else None, api_key=key, request=request,
+        )) as source:
+            async for chunk in source:
+                yield chunk
 
     def bind_dispatcher(self, dispatcher) -> None:
         if self.claude_code is not None:

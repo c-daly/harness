@@ -10,6 +10,7 @@ from typing import Annotated, Any, ClassVar, Literal, Union
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from harness.blobs import BlobRef
+from harness.improvement import ImprovementRecord
 from harness.types import SCHEMA_VERSION, AgentId, CallId, ModelId, SessionId, ToolName
 
 
@@ -77,6 +78,7 @@ class ModelCallProposed(_Event):
     call_id: CallId
     model: ModelId
     purpose: str = "conversation"
+    execution_kind: Literal["legacy", "inference", "agent"] = "legacy"
 
 
 class HookDecided(_Event):
@@ -126,6 +128,7 @@ class ModelCallStarted(_Event):
     type: Literal["model_call_started"] = "model_call_started"
     call_id: CallId
     model: ModelId
+    execution_kind: Literal["legacy", "inference", "agent"] = "legacy"
 
 
 class ModelCallCompleted(_Event):
@@ -133,13 +136,14 @@ class ModelCallCompleted(_Event):
     call_id: CallId
     model: ModelId
     message: dict[str, Any]  # Message.model_dump(); assistant turn incl. tool-call blocks
-    usage: dict[str, int]  # input_tokens / output_tokens / cache_read_tokens / cache_write_tokens
+    usage: dict[str, int | None]  # absent/None is unknown; zero must be measured
     stop_reason: str = "unknown"  # end_turn | tool_use | max_tokens | unknown (additive, default keeps old logs valid)
     pricing: dict[str, float] = Field(
         default_factory=dict
     )  # cost-per-token at call time; {} when unknown
     duration_ms: int = 0
     purpose: str = "conversation"
+    execution_kind: Literal["legacy", "inference", "agent"] = "legacy"
 
 
 class ModelCallCancelled(_Event):
@@ -271,6 +275,14 @@ class TodoListUpdated(_Event):
     items: list[dict[str, Any]]
 
 
+class ImprovementRecorded(_Event):
+    """Core evidence/candidate/experiment fact. It never authorizes activation."""
+
+    type: Literal["improvement_recorded"] = "improvement_recorded"
+    is_intent: ClassVar[bool] = True  # Plans must be durable before an experiment starts.
+    record: ImprovementRecord
+
+
 class UnknownEvent(_Event):
     """A type this binary doesn't know. Raw JSON retained; never dropped."""
 
@@ -308,6 +320,7 @@ Event = Annotated[
         RetryAttempted,
         CustomEvent,
         TodoListUpdated,
+        ImprovementRecorded,
         UnknownEvent,
     ],
     Field(discriminator="type"),

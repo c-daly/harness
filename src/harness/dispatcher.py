@@ -32,6 +32,9 @@ from harness.hooks import (
 )
 from harness.execution import BudgetExceeded, ExecutionScope, current_scope
 from harness.interaction import PermissionRequest, Resolver
+from harness.inference import (
+    InferenceRequest, InferenceResult, LegacyCompletionAdapter, check_input, infer,
+)
 from harness.messages import Message, materialize_tool_results
 from harness.provider import Chunk, ModelProvider, Usage, collect
 from harness.callctx import reset_current_call_id, set_current_call_id
@@ -235,16 +238,53 @@ class Dispatcher:
         on_chunk: Callable[[Chunk], None] | None = None,
         purpose: str = "conversation",
     ) -> tuple[Message, Usage]:
-        """Dispatch a model call through hooks, permissions, and the provider.
+        """Compatibility entry for chat/native loops and legacy external agents.
 
-        Retries on retryable ProviderError up to len(retry_delays) times.
-        Each retry restarts the whole provider call from scratch; any partial
-        stream already yielded by a previous attempt is discarded.
-
-        `pinned` marks the model as an explicit choice (routing-exempt). When
-        `pricing_for` is given, the ModelCallCompleted is stamped with pricing
-        for the EFFECTIVE (post-routing) model so per-model cost stays accurate.
+        New internal callers use dispatch_inference. Agent runs are never
+        retried here: a failed external process may have completed side effects.
         """
+        result = await self._dispatch_generation(
+            provider=provider,
+            request=InferenceRequest(model=model, messages=tuple(messages), tools=tools,
+                                     purpose=purpose,
+                                     tool_choice="auto" if purpose == "conversation" else "none"),
+            allow_agent=purpose == "conversation", pricing=pricing, pricing_for=pricing_for,
+            pinned=pinned, on_chunk=on_chunk,
+        )
+        return result.message, result.usage
+
+    async def dispatch_inference(
+        self, *, provider, request: InferenceRequest,
+        pricing: dict[str, float] | None = None,
+        pricing_for: Callable[[ModelId], dict[str, float]] | None = None,
+        pinned: bool = False, on_chunk: Callable[[Chunk], None] | None = None,
+    ) -> InferenceResult:
+        """Bounded, audited inference; routing cannot replace it with an agent."""
+        return await self._dispatch_generation(
+            provider=provider, request=request, allow_agent=False,
+            pricing=pricing, pricing_for=pricing_for, pinned=pinned, on_chunk=on_chunk,
+        )
+
+    async def _dispatch_generation(
+        self, *, provider, request: InferenceRequest, allow_agent: bool,
+        pricing, pricing_for, pinned, on_chunk,
+    ) -> InferenceResult:
+        request = InferenceRequest.model_validate(request.model_dump())
+        model, messages, tools, purpose = request.model, request.messages, request.tools, request.purpose
+
+        def kind_for(alias):
+            kind = getattr(provider, "execution_kind", None)
+            if kind is not None:
+                return kind(alias) if callable(kind) else kind
+            return "inference" if hasattr(provider, "infer") else "legacy"
+
+        def observed(chunk):
+            if on_chunk is not None:
+                try:
+                    on_chunk(chunk)
+                except Exception:
+                    pass  # frontend failure must not break dispatch
+
         call = ProposedModelCall(call_id=new_call_id(), model=model, pinned=pinned)
         self.session.append(
             ModelCallProposed(call_id=call.call_id, model=model, purpose=purpose)
@@ -262,31 +302,56 @@ class Dispatcher:
             if not isinstance(effective, ProposedModelCall):
                 raise ModelDispatchBlocked("rewrite changed action type — refused")
             effective_model = effective.model
+            execution_kind = kind_for(effective_model)
+            if execution_kind == "agent" and not allow_agent:
+                raise ProviderError(
+                    f"{effective_model!r} is an agent runtime; select an inference alias for {purpose}"
+                )
             self.session.append(
                 DispatchResolved(call_id=call.call_id, kind="model", model=effective_model)
             )
-            self.session.append(ModelCallStarted(call_id=call.call_id, model=effective_model))
+            self.session.append(ModelCallStarted(call_id=call.call_id, model=effective_model,
+                                                 execution_kind=execution_kind))
             started = time.monotonic_ns()
-            resolved_messages = materialize_tool_results(messages, self.session.blobs)
+            check_input(request)
+            resolved_messages = materialize_tool_results(
+                list(messages), self.session.blobs, max_bytes=request.max_input_bytes,
+            )
+            request = InferenceRequest.model_validate({
+                **request.model_dump(), "model": effective_model, "messages": resolved_messages,
+            })
+            check_input(request)
+            deadline = time.monotonic() + request.timeout_seconds
             attempt = 0
             token = current_dispatch_tool.set(self.dispatch_tool)
             try:
                 while True:
                     try:
                         self.scope.budget.reserve_call("model")
-                        source = provider.complete(
-                            model=effective_model, messages=resolved_messages, tools=tools
-                        )
-                        try:
-                            stream = _tee(source, on_chunk) if on_chunk is not None else source
-                            message, usage, stop_reason = await collect(stream)
-                        finally:
-                            close = getattr(source, "aclose", None)
-                            if close is not None:
-                                await close()
+                        if execution_kind == "agent":
+                            source = provider.complete(
+                                model=effective_model, messages=resolved_messages, tools=tools,
+                            )
+                            try:
+                                message, usage, stop_reason = await collect(_tee(source, observed))
+                                result = InferenceResult(message, usage, stop_reason)
+                            finally:
+                                close = getattr(source, "aclose", None)
+                                if close is not None:
+                                    await close()
+                        else:
+                            remaining = deadline - time.monotonic()
+                            if remaining <= 0:
+                                raise TimeoutError("inference deadline exceeded")
+                            bounded_provider = provider if hasattr(provider, "infer") else LegacyCompletionAdapter(provider)
+                            result = await infer(
+                                bounded_provider, request.model_copy(update={"timeout_seconds": remaining}),
+                                on_chunk=observed,
+                            )
+                            message, usage, stop_reason = result.message, result.usage, result.stop_reason
                         break
                     except ProviderError as exc:
-                        if not exc.retryable or attempt >= len(self.retry_delays):
+                        if execution_kind == "agent" or not exc.retryable or attempt >= len(self.retry_delays):
                             raise
                         delay = self.retry_delays[attempt]
                         attempt += 1
@@ -296,6 +361,9 @@ class Dispatcher:
                                 reason=type(exc).__name__,
                             )
                         )
+                        remaining = deadline - time.monotonic()
+                        if delay >= remaining:
+                            raise TimeoutError("inference deadline exceeded during retry") from exc
                         await asyncio.sleep(delay)
             finally:
                 current_dispatch_tool.reset(token)
@@ -328,6 +396,7 @@ class Dispatcher:
                 pricing=stamped_pricing,
                 duration_ms=elapsed(),
                 purpose=purpose,
+                execution_kind=execution_kind,
             )
         )
-        return message, usage
+        return result
