@@ -443,9 +443,9 @@ async def test_thoughts_full_mode_retains_thought_above_answer(tmp_path):
         provider.release_after_text.set()
         await pilot.pause(0.2)
         lines_list = [str(line) for line in app.query_one(RichLog).lines]
-        thought_idx = next(i for i, l in enumerate(lines_list) if "pondering" in l)
+        thought_idx = next(i for i, line in enumerate(lines_list) if "pondering" in line)
         answer_idx = next(
-            i for i, l in enumerate(lines_list) if "answer" in l and "pondering" not in l
+            i for i, line in enumerate(lines_list) if "answer" in line and "pondering" not in line
         )
         assert thought_idx < answer_idx  # thought retained above the answer
         assert "pondering" not in app.kernel.loop.history[-1].text()  # (d): history stays clean
