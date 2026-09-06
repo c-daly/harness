@@ -79,7 +79,17 @@ tool calls, and answer permission prompts inline. Key bindings:
   mode. Session-local, not persisted across restarts. Streaming stays plain
   by design while a reply is still in progress — the live tail can't reflow
   as markdown mid-stream without flicker, so only the completed reply in the
-  transcript renders formatted.
+  transcript renders formatted. With Markdown on, `$...$` / `\\(...\\)` inline
+  math and `$$...$$` / `\\[...\\]` display math are typeset using Matplotlib's
+  portable TeX-compatible MathText engine. Simple one-line expressions use
+  crisp terminal glyphs; fractions, roots, sums, integrals, scripts, and other
+  two-dimensional layouts use native transparent Sixel images when the
+  terminal advertises support. Other terminals receive a high-density Unicode
+  projection of the same transparent raster. All paths follow the active light
+  or dark theme. Set `HARNESS_MATH_SIXEL=off` to disable native images. Dollar
+  delimiters inside inline/fenced code, escaped dollars, and ordinary currency
+  are left alone. Unsupported or malformed LaTeX falls back to its original
+  source instead of breaking the reply.
 - `/clear` — end the current session cleanly and start a fresh one: new
   session id, empty history, but the same provider instance, permission
   engine, and resolver wiring the app started with (kernel rebuild-in-place,

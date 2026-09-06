@@ -11,11 +11,15 @@ from mcp.shared.memory import create_client_server_memory_streams
 from rich.markdown import Markdown
 from rich.text import Text
 from textual.css.query import NoMatches
+from textual.filter import Monochrome, NoColor
 from textual.widgets import Input, OptionList, RichLog, Static
+from textual_image.widget.sixel import Image as SixelImage
 
 from harness.cli import build_kernel
 from harness.fold import fold
 from harness.log import read_session
+import harness.math_markdown as math_markdown
+from harness.math_markdown import MathMarkdown
 from harness.mcp_config import McpServerSpec
 from harness.mcp_host import McpHost
 from harness.messages import Role
@@ -484,6 +488,125 @@ async def test_render_reply_markdown_by_default_and_plain_after_toggle_off(tmp_p
         await pilot.press(*"/markdown off", "enter")
         await pilot.pause(0.1)
         assert isinstance(app._render_reply("# hi"), Text)
+
+
+async def test_render_reply_uses_math_markdown_for_latex(tmp_path):
+    app = make_app(tmp_path)
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        rendered = app._render_reply(r"Euler: $e^{i\pi} + 1 = 0$")
+        assert isinstance(rendered, MathMarkdown)
+        assert [formula.source for formula in rendered.formulas.values()] == [
+            r"e^{i\pi} + 1 = 0"
+        ]
+
+
+async def test_native_sixel_display_uses_textual_widget_not_richlog_controls(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(math_markdown, "_SIXEL_AVAILABLE", True)
+    app = make_app(tmp_path)
+    # run_test intentionally enables a no-color filter. Remove only that
+    # artificial headless filter to exercise the same pipeline as a real TTY.
+    app.no_color = False
+    app.console.no_color = False
+    app._filters = [
+        line_filter
+        for line_filter in app._filters
+        if not isinstance(line_filter, (Monochrome, NoColor))
+    ]
+
+    async with app.run_test() as pilot:
+        transcript = app.query_one(RichLog)
+        transcript.write(app._render_reply(r"\[\frac{x+1}{y}\]"))
+        await pilot.pause(0.1)
+        controls = [
+            segment.text
+            for line in transcript.lines
+            for segment in line
+            if segment.control
+        ]
+        images = list(app.query(SixelImage))
+        assert controls == []
+        assert len(images) == 1
+        assert images[0].region.width > 0
+        assert images[0].region.height > 0
+        assert images[0].image.mode == "RGBA"
+        assert images[0].image.getpixel((0, 0))[3] == 0
+        assert images[0].children[0].background_colors[1] == transcript.background_colors[1]
+
+
+async def test_sixel_widget_tracks_transcript_scrolling(tmp_path, monkeypatch):
+    monkeypatch.setattr(math_markdown, "_SIXEL_AVAILABLE", True)
+    app = make_app(tmp_path)
+    app.no_color = False
+    app.console.no_color = False
+    app._filters = [
+        line_filter
+        for line_filter in app._filters
+        if not isinstance(line_filter, (Monochrome, NoColor))
+    ]
+
+    async with app.run_test() as pilot:
+        transcript = app.query_one(RichLog)
+        transcript.write(app._render_reply(r"\[\frac{x+1}{y}\]"))
+        transcript.write("\n".join(f"line {index}" for index in range(50)))
+        await pilot.pause(0.1)
+        image = app.query_one(SixelImage)
+        assert image.display is False
+
+        transcript.scroll_home(animate=False)
+        await pilot.pause(0.1)
+        assert image.display is True
+        assert image.region.y >= transcript.region.y
+
+
+async def test_complex_inline_math_uses_sixel_without_hiding_prose(tmp_path, monkeypatch):
+    monkeypatch.setattr(math_markdown, "_SIXEL_AVAILABLE", True)
+    source = (
+        r"For the quadratic equation \(ax^2+bx+c=0\), the solutions are "
+        r"\(x=\frac{-b\pm\sqrt{b^2-4ac}}{2a}\). In calculus, the Gaussian "
+        r"integral satisfies \(\int_{-\infty}^{\infty}e^{-x^2}\,dx=\sqrt{\pi}\)."
+    )
+    provider = FakeProvider([text_turn(source)])
+    app = make_app(tmp_path, provider=provider, model=ModelId("fake:inline-math"))
+    app.no_color = False
+    app.console.no_color = False
+    app._filters = [
+        line_filter
+        for line_filter in app._filters
+        if not isinstance(line_filter, (Monochrome, NoColor))
+    ]
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        await pilot.click("#prompt")
+        await pilot.press(*"show inline math", "enter")
+        await pilot.pause(0.5)
+        transcript = app.query_one(RichLog)
+        rendered = "\n".join(line.text for line in transcript.lines)
+        prose = " ".join(rendered.split())
+        images = list(app.query(SixelImage))
+        screen_text = "\n".join(
+            "".join(segment.text for segment in strip if not segment.control)
+            for strip in app.screen._compositor.render_strips()
+        )
+
+        assert len(images) == 2
+        assert all(image.region.width > 0 and image.region.height >= 2 for image in images)
+        assert "ax² + bx + c = 0" in screen_text
+        assert not any(segment.control for line in transcript.lines for segment in line)
+        assert prose.index("For the quadratic equation") < prose.index(
+            "the solutions are"
+        )
+        assert prose.index("the solutions are") < prose.index("In calculus")
+        assert "the Gaussian integral satisfies" in prose
+        # Assert against Textual's final layered screen, not just RichLog's
+        # backing lines.  A full-size transparent overlay can retain the prose
+        # in RichLog while erasing it from the actual terminal compositor.
+        assert "For the quadratic equation" in screen_text
+        assert "the solutions are" in screen_text
+        assert "the Gaussian integral satisfies" in screen_text
 
 
 async def test_completed_reply_with_code_block_and_table_uses_markdown_seam(tmp_path):
