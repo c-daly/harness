@@ -1,7 +1,8 @@
 # Core agency implementation record
 
-Current implementation branch: `feat/local-readiness`, based on merged `main`
-at `8d732f2`. Previous branches: `feat/agent-runtimes` and `feat/core-agency`.
+Current implementation branch: `feat/local-context`, based on merged `main`
+at `77a0108`. Previous branches: `feat/local-readiness`, `feat/agent-runtimes`,
+and `feat/core-agency`.
 
 Committed checkpoints: `0351b75` (roadmap, lifecycle, and storage/result integrity),
 `a2e565e` (controller/UI, delegated scope and limits, catalog, authenticated MCP),
@@ -13,6 +14,9 @@ response stream bounds and review resolution).
 [PR #9](https://github.com/c-daly/harness/pull/9) merged on September 6 at
 `63449eb`. `dbe9db5` introduced typed Codex tasks and MCP cleanup in
 [PR #10](https://github.com/c-daly/harness/pull/10), merged at `8d732f2`.
+`18c2e38` added local readiness and process ownership; `ca213a2` addressed its
+review findings. [PR #11](https://github.com/c-daly/harness/pull/11) merged at
+`77a0108` after Python 3.12/3.13 CI and automated review passed.
 
 **Resumed after machine restart.** All 26 files in the
 [restart handoff](../../../HANDOFF.md) matched their saved hashes before new
@@ -29,7 +33,7 @@ qualification. Milestone completion requires its roadmap gates, not just code.
 | M0 baseline and feasibility | In progress | Baseline: 885 passed, 7 skipped. CI, build and fresh wheel installation checked locally. Two restart inference probes remain too slow for synchronous UI use. Hardware/profile selection and cold startup remain. |
 | M1 correctness and interaction | In progress | 931 passed, 7 skipped after storage, delegation, controller/UI and MCP capability changes. Context budgets, broader enforcement/redaction and fault qualification remain. |
 | M2 inference / agent contracts | In progress | Bounded inference, native tasks, Codex task binding, explicit execution kinds, nullable usage, and core improvement records implemented. Remaining adapters and live capability qualification remain. |
-| M3 local core assistant | In progress | Explicit local profiles, bounded readiness observations, owned runtime lifetime, and responsive inspection implemented. Real model/profile selection, normal memory access, and full offline journey remain. |
+| M3 local core assistant | In progress | Local readiness/ownership and bounded context/tool profiles implemented. Actual normal-memory listing and project tools checked offline with scripted inference. Real model/profile selection and the full model-driven offline journey remain. |
 | M4 bounded semantic agency | Pending | Typed functions, evaluation, scheduling, capability-aware fallback, and operational self-improvement lifecycle. |
 | M5 heterogeneous work / plugins | Pending | Supervision, plugin reconciliation, portable continuation, isolated improvement patches and rollback. |
 | M6 daily-use qualification | Pending | Measured UI, live adapter boundaries, offline and human dogfood gates. |
@@ -387,6 +391,46 @@ controls must stay independent of inference completion.
   3.13. The skips and MCP deprecation warnings are unchanged. Locked dependency
   sync, Ruff, whitespace checks, sdist/wheel build, and a fresh offline wheel
   install importing all **54 modules** also passed.
+
+## Bounded context profiles and normal-memory integration
+
+- `feat/local-context` starts from merged main at `77a0108`. An explicit core
+  profile selects recent complete user/tool turns and enforces an input byte
+  budget. System/task/project context, acceptance criteria, and leading summaries
+  remain pinned. Oversized current work fails explicitly. Selected tool blobs
+  are bounded before loading, and canonical history remains available for replay.
+- Exact tool names restrict both advertisement and execution. The effective
+  registry remains a live filtered view of the plugin/MCP registration surface,
+  and delegated work inherits the profile and existing authority/budget limits.
+  Rewrites and broader child definitions cannot restore excluded tools.
+- `--context-profile`, `--no-context-profile`, and TUI `/context` expose the
+  controls. Profiles persist in core events and restore on resume; `/clear`
+  retains the current profile while `/resume` uses the selected session's own
+  profile. The TUI reports omissions and the byte cap, and `/tools` shows the
+  actual restricted inventory. Internal compaction retains its own bounds.
+- `ContextPolicyConfigured` and `ContextPrepared` add replayable configuration
+  and preparation evidence. Their counts and policy digest can inform the
+  improvement journal, without adding memory storage or an adoption mechanism.
+- Focused integration passed **49 tests in 8.13s**. The final full suite passed
+  **1117 tests, 7 skipped, 6 warnings in 306.50s** on Python 3.13. Existing skips
+  and MCP deprecation warnings are unchanged. Locked sync, Ruff, whitespace,
+  sdist/wheel build, and a fresh offline wheel install importing all **55 modules**
+  passed.
+- A live read-only integration check used the installed memory plugin's actual
+  Python/server and normal vault in an isolated Linux network namespace. Both
+  no-plugin project inspection and scoped `memory_list` plus project inspection
+  passed, then resumed with the saved profile and complete history. The memory
+  listing was **13,802 bytes**, and maximum prepared input was **16,153 bytes**
+  under the **32,768-byte** cap. The [metadata-only report](../../handoffs/2026-09-06-core-agency/context-memory-offline.json)
+  contains no memory text. The provider was scripted: this checks file/MCP and
+  continuity plumbing, not actual model reasoning, memory body retrieval, or
+  the full M3 offline product gate.
+- Current runtime survey found cached Qwen3-Coder 30B and Qwen3.6 35B weights,
+  an RTX 5070 with 8,321 MiB free VRAM, and roughly 7 GiB available host RAM.
+  Prior 35B latency remains unsuitable for synchronous basic decisions. A useful
+  measured local model/profile, physical ceilings, real cold startup and
+  cancellation, automatic fallback, and semantic/evaluation/activation services
+  remain outstanding. See [profile configuration](../../context-profiles.md).
 
 ## Validation policy
 

@@ -1,9 +1,13 @@
 # Core inference and improvement contracts
 
-This is the implemented M2 foundation on `feat/core-agency`. The complete
+This describes the implemented M2 foundation and subsequent core additions. The complete
 [core agency roadmap](superpowers/plans/2026-09-06-core-agency-roadmap.md) remains
 active. Native agent tasks now have distinct results; external runtime migration,
-local readiness, experiment runners, activation, and rollback remain subsequent work.
+live local-model qualification, experiment runners, activation, and rollback remain subsequent work.
+
+[Context profiles](context-profiles.md) add persisted request and tool restrictions.
+Their preparation events provide input-size and omission evidence for later
+evaluation; no candidate adoption or activation follows automatically.
 
 ## Bounded inference
 

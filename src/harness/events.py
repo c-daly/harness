@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from harness.blobs import BlobRef
 from harness.agent import AgentResult
 from harness.resources import ResourceObservation
+from harness.context import ContextPolicy
 from harness.improvement import ImprovementRecord
 from harness.types import SCHEMA_VERSION, AgentId, CallId, ModelId, SessionId, ToolName
 
@@ -74,6 +75,23 @@ class LocalRuntimeRequested(_Event):
     alias: str
     config_digest: str
     action: Literal["start", "stop"]
+
+
+class ContextPolicyConfigured(_Event):
+    type: Literal["context_policy_configured"] = "context_policy_configured"
+    policy: ContextPolicy | None = None
+
+
+class ContextPrepared(_Event):
+    type: Literal["context_prepared"] = "context_prepared"
+    task_id: str = ""
+    policy_digest: str = ""
+    retained_turns: int = 0
+    omitted_turns: int = 0
+    omitted_messages: int = 0
+    input_bytes: int = 0
+    max_input_bytes: int = 0
+    tools: tuple[str, ...] = ()
 
 
 # --- dispatch: intents ---
@@ -359,6 +377,8 @@ Event = Annotated[
         AgentRunFinished,
         ResourceObserved,
         LocalRuntimeRequested,
+        ContextPolicyConfigured,
+        ContextPrepared,
         CompactionApplied,
         TaskOutcome,
         SessionOutcome,

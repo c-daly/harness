@@ -1,18 +1,18 @@
 # Core agency implementation — restart handoff
 
-> **Continuation update, September 6:** [PR #10](https://github.com/c-daly/harness/pull/10)
-> is merged into `main` at `8d732f2`. Its checkpoint `dbe9db5` passed **1055 tests,
-> 7 skipped**, packaging, and hosted Python 3.12/3.13 CI. Implementation now
-> continues on `feat/local-readiness`, created from that merge. This checkpoint
-> adds explicit local profiles, bounded readiness checks, event-backed observations,
-> scoped process ownership, and responsive `/resources` controls. See
-> [local runtime readiness](docs/local-runtime-readiness.md) for configuration,
-> behavior, and qualification limits. PR #11 review fixes recheck negative
-> diagnostic results at dispatch and preserve TUI session termination after
-> resource-journal errors. Final local validation passed **1098 tests,
-> 7 skipped**, Ruff, packaging, and a fresh offline wheel install (54 modules).
-> The previous local endpoint on port 8080
-> was unreachable during this continuation; it was not started or stopped.
+> **Continuation update, September 6:** [PR #11](https://github.com/c-daly/harness/pull/11)
+> is merged into `main` at `77a0108`. Its final checkpoint `ca213a2` passed
+> **1098 tests, 7 skipped**, packaging, hosted Python 3.12/3.13 CI, and review.
+> Implementation continues on `feat/local-context`, created from that merge.
+> This checkpoint adds [bounded context profiles](docs/context-profiles.md),
+> exact tool restrictions across delegation, persisted profile recovery, and
+> `/context` inspection. The full suite passed **1117 tests, 7 skipped**.
+> Ruff, packaging, and a fresh offline wheel install (55 modules) also passed.
+> A read-only check in an isolated network namespace exercised native project
+> inspection and the installed memory plugin's normal vault with scripted
+> inference. It does not qualify real-model quality or the complete offline M3
+> journey. Cached models are still the large 30B/35B profiles; selecting and
+> measuring a useful local setup remains outstanding.
 > The user authorized commits, the PR, and continued implementation. Read the
 > [implementation record](docs/superpowers/plans/2026-09-06-core-agency-progress.md)
 > and [new contract notes](docs/core-inference-and-improvement.md) before resuming.

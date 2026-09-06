@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 from harness.resources import LocalResources
 
 if TYPE_CHECKING:
+    from harness.context import ContextPolicy
     from harness.session import Session
     from harness.tools import FilteredRegistry, ToolRegistry
 
@@ -73,6 +74,7 @@ class ExecutionScope:
     budget: ExecutionBudget = field(default_factory=ExecutionBudget)
     depth: int = 0
     resources: LocalResources = field(default_factory=LocalResources)
+    context_policy: "ContextPolicy | None" = None
 
 
 current_scope: ContextVar[ExecutionScope | None] = ContextVar("harness_execution_scope", default=None)

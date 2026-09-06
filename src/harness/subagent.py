@@ -33,7 +33,7 @@ def _bound(text: str, limit: int | None) -> str:
 class SubagentRunner:
     base: Path
     provider: ModelProvider
-    registry: ToolRegistry
+    registry: ToolRegistry | FilteredRegistry
     hooks: HookBus
     resolver: Resolver
     default_model: ModelId
@@ -81,7 +81,7 @@ class SubagentRunner:
                 except BudgetExceeded as exc:
                     return f"[subagent error] {exc}"
                 token = current_scope.set(ExecutionScope(parent, narrowed, scope.budget, scope.depth + 1,
-                                                        scope.resources))
+                                                        scope.resources, scope.context_policy))
                 try:
                     return await run_strategy(definition.strategy, self, parent, prompt, experts)
                 finally:
@@ -137,7 +137,8 @@ class SubagentRunner:
                 pricing=self.pricing,
                 pricing_for=self.pricing_for,
                 pinned=pinned,
-                scope=ExecutionScope(child, registry, scope.budget, scope.depth + 1, scope.resources),
+                scope=ExecutionScope(child, registry, scope.budget, scope.depth + 1,
+                                     scope.resources, scope.context_policy),
             )
             await loop.start()
             result = await loop.run_task(AgentTask(prompt=prompt, agent=AgentId(agent) if agent else None))
