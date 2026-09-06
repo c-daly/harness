@@ -18,8 +18,8 @@ from typing import AsyncIterator, Sequence
 
 from harness.dispatcher import current_dispatch_tool
 from harness.errors import MalformedStreamError, ProviderError
-from harness.mcp_serve import McpToolServer
-from harness.messages import Message
+from harness.mcp_serve import McpToolServer, running_tool_server
+from harness.messages import ImageBlock, Message, TextBlock, ToolCallBlock, ToolResultBlock
 from harness.provider import Chunk, StreamStop, TextDelta, ThinkingDelta, Usage, UsageReport
 from harness.tools import ToolSpec
 from harness.types import ModelId
@@ -60,13 +60,24 @@ def _sanitized_env() -> dict[str, str]:
 
 
 def _render_prompt(messages: Sequence[Message]) -> str:
-    """Stateless transcript render. Only text blocks carry over (a CC-backed
-    turn does its tool work inside CC; other models' tool records are elided)."""
+    """Stateless transcript bridge, including tool evidence from other runtimes."""
     lines = []
     for m in messages:
-        text = m.text()
-        if text:
-            lines.append(f"[{m.role.value}]: {text}")
+        for block in m.blocks:
+            if isinstance(block, TextBlock) and block.text:
+                lines.append(f"[{m.role.value}]: {block.text}")
+            elif isinstance(block, ToolCallBlock):
+                lines.append(
+                    f"[tool call {block.call_id} {block.tool}]: {json.dumps(block.args)}"
+                )
+            elif isinstance(block, ToolResultBlock):
+                if block.blob is not None and block.text is None:
+                    raise ProviderError("tool result blob must be resolved before agent execution")
+                status = "error" if block.is_error else "ok"
+                text = block.text if block.text is not None else ""
+                lines.append(f"[tool result {block.call_id} {status}]: {text}")
+            elif isinstance(block, ImageBlock):
+                raise ProviderError("image blocks are not supported by the text transcript bridge")
     lines.append("[assistant]:")
     return "\n".join(lines)
 
@@ -111,25 +122,24 @@ class ClaudeCodeProvider:
                 "build_kernel wires this via bind_dispatcher"
             )
         server = McpToolServer(specs=tools, dispatch=dispatch)
-        await server.start()
         gen = None
-        try:
-            with tempfile.TemporaryDirectory(prefix="harness-cc-") as tmp:
-                cfg = Path(tmp) / "mcp.json"
-                cfg.write_text(
-                    json.dumps({"mcpServers": {"harness": {"type": "http", "url": server.url}}})
-                )
-                gen = self._run_turn(model=model, messages=messages, cfg=cfg)
-                async for chunk in gen:
-                    yield chunk
-        finally:
-            # Kill-then-stop, deterministically: closing gen here (rather than
-            # letting an abandoned async generator fall to GC finalization)
-            # guarantees the subprocess is gone before the MCP server it was
-            # talking to disappears out from under it.
-            if gen is not None:
-                await gen.aclose()
-            await server.stop()
+        async with running_tool_server(server):
+            try:
+                with tempfile.TemporaryDirectory(prefix="harness-cc-") as tmp:
+                    cfg = Path(tmp) / "mcp.json"
+                    cfg.write_text(
+                        json.dumps({"mcpServers": {"harness": {"type": "http", "url": server.url}}})
+                    )
+                    gen = self._run_turn(model=model, messages=messages, cfg=cfg)
+                    async for chunk in gen:
+                        yield chunk
+            finally:
+                # Kill-then-stop, deterministically: closing gen here (rather than
+                # letting an abandoned async generator fall to GC finalization)
+                # guarantees the subprocess is gone before the MCP server it was
+                # talking to disappears out from under it.
+                if gen is not None:
+                    await gen.aclose()
 
     def _argv(self, *, model: ModelId, cfg: Path) -> list[str]:
         argv = [

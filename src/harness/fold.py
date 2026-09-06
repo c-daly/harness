@@ -14,7 +14,12 @@ from harness.events import (
     CompactionApplied,
     DispatchResolved,
     Envelope,
+    Event,
+    ModelCallAborted,
+    ModelCallCancelled,
     ModelCallCompleted,
+    ModelCallFailed,
+    ModelCallProposed,
     TodoListUpdated,
     ToolCallAborted,
     ToolCallCancelled,
@@ -31,6 +36,7 @@ class FoldedState:
     messages: list[Message] = field(default_factory=list)
     # call_id -> seq of the proposing event; an intent with no terminal fact
     open_intents: dict[CallId, int] = field(default_factory=dict)
+    open_model_intents: dict[CallId, int] = field(default_factory=dict)
     last_seq: int = 0
     # seq -> index range bookkeeping for compaction
     _msg_seqs: list[int] = field(default_factory=list)
@@ -56,8 +62,14 @@ def fold(envelopes: list[Envelope]) -> FoldedState:
         state.last_seq = max(state.last_seq, env.seq)
         if isinstance(ev, UserMessage):
             state._append(env.seq, Message.user_text(ev.text))
+        elif isinstance(ev, ModelCallProposed):
+            state.open_model_intents[ev.call_id] = env.seq
         elif isinstance(ev, ModelCallCompleted):
-            state._append(env.seq, Message.model_validate(ev.message))
+            state.open_model_intents.pop(ev.call_id, None)
+            if ev.purpose == "conversation":
+                state._append(env.seq, Message.model_validate(ev.message))
+        elif isinstance(ev, (ModelCallFailed, ModelCallCancelled, ModelCallAborted)):
+            state.open_model_intents.pop(ev.call_id, None)
         elif isinstance(ev, ToolCallProposed):
             state.open_intents[ev.call_id] = env.seq
             if str(ev.tool) in ("read_file", "write_file"):
@@ -100,17 +112,17 @@ def fold(envelopes: list[Envelope]) -> FoldedState:
     return state
 
 
-def resume_repairs(state: FoldedState) -> list[ToolCallAborted]:
-    """One ToolCallAborted per dangling intent. The fold cannot know whether the
-    side effect ran, so it surfaces the uncertainty instead of guessing.
+def resume_repairs(state: FoldedState) -> list[Event]:
+    """Close dangling tool and model intents in proposal order, without replaying work.
 
-    Caller contract: append these to the session log (EventLogWriter.append)
-    before the next fold — that closes the intents and renders the aborted
-    calls as error tool-results in the rebuilt transcript.
-
-    Only TOOL intents are repaired: an incomplete model call terminates by
-    exception and its turn never enters the transcript."""
-    return [
-        ToolCallAborted(call_id=call_id, reason="dangling intent at resume (crash?)")
-        for call_id in sorted(state.open_intents)
+    Append these facts before continuing live. Only tool repairs add transcript
+    results. A model repair also represents uncertain external-agent side effects.
+    """
+    repairs = [
+        (seq, ToolCallAborted(call_id=call_id, reason="dangling intent at resume (crash?)"))
+        for call_id, seq in state.open_intents.items()
+    ] + [
+        (seq, ModelCallAborted(call_id=call_id, reason="dangling intent at resume (crash?)"))
+        for call_id, seq in state.open_model_intents.items()
     ]
+    return [event for _, event in sorted(repairs, key=lambda pair: pair[0])]

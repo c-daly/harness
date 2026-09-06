@@ -45,13 +45,18 @@ class Session:
         default_model: ModelId | None = None,
         start_seq: int = 0,
         redactors: "list[EventRedactor] | None" = None,
+        _writer: EventLogWriter | None = None,
     ) -> None:
         self.id = session_id
         self.base = base
         self._parent = parent
         self._default_model = default_model
-        self._writer = EventLogWriter(base, session_id)
-        self.blobs = BlobStore(base / "sessions" / str(session_id) / "blobs")
+        self._writer = _writer or EventLogWriter(base, session_id)
+        try:
+            self.blobs = BlobStore(base / "sessions" / str(session_id) / "blobs")
+        except BaseException:
+            self._writer.close()
+            raise
         self.bus = SubscriberBus()
         self._seq = start_seq
         self._closed = False

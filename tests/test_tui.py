@@ -439,9 +439,9 @@ async def test_thoughts_full_mode_retains_thought_above_answer(tmp_path):
         provider.release_after_text.set()
         await pilot.pause(0.2)
         lines_list = [str(line) for line in app.query_one(RichLog).lines]
-        thought_idx = next(i for i, l in enumerate(lines_list) if "pondering" in l)
+        thought_idx = next(i for i, line in enumerate(lines_list) if "pondering" in line)
         answer_idx = next(
-            i for i, l in enumerate(lines_list) if "answer" in l and "pondering" not in l
+            i for i, line in enumerate(lines_list) if "answer" in line and "pondering" not in line
         )
         assert thought_idx < answer_idx  # thought retained above the answer
         assert "pondering" not in app.kernel.loop.history[-1].text()  # (d): history stays clean
@@ -1757,8 +1757,13 @@ async def test_compact_summarizes_history_and_round_trips(tmp_path):
         for e in envelopes
         if e.seq < compaction_envs[0].seq
         and e.event.type in ("user_message", "model_call_completed")
+        and getattr(e.event, "purpose", "conversation") == "conversation"
     ]
     assert len(msg_bearing) == 4  # 2 user turns + 2 assistant replies
+    internal_calls = [e.event for e in envelopes
+                      if e.event.type == "model_call_completed" and e.event.purpose == "compaction"]
+    assert len(internal_calls) == 1
+    assert internal_calls[0].message["blocks"][0]["text"] == "SUMMARY-TEXT"
     assert compaction.from_seq == msg_bearing[0].seq
     assert compaction.to_seq == msg_bearing[-1].seq
 

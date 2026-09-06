@@ -76,6 +76,7 @@ class ModelCallProposed(_Event):
     is_intent: ClassVar[bool] = True
     call_id: CallId
     model: ModelId
+    purpose: str = "conversation"
 
 
 class HookDecided(_Event):
@@ -137,11 +138,32 @@ class ModelCallCompleted(_Event):
         default_factory=dict
     )  # cost-per-token at call time; {} when unknown
     duration_ms: int = 0
+    purpose: str = "conversation"
 
 
 class ModelCallCancelled(_Event):
     type: Literal["model_call_cancelled"] = "model_call_cancelled"
     call_id: CallId
+    reason: str = "cancelled"
+    duration_ms: int = 0
+
+
+class ModelCallFailed(_Event):
+    type: Literal["model_call_failed"] = "model_call_failed"
+    call_id: CallId
+    model: ModelId | None = None
+    error_type: str = "provider_error"
+    message: str = ""
+    retryable: bool = False
+    duration_ms: int = 0
+
+
+class ModelCallAborted(_Event):
+    """Resume-time repair; an interrupted external agent may have performed work."""
+
+    type: Literal["model_call_aborted"] = "model_call_aborted"
+    call_id: CallId
+    reason: str
 
 
 # --- permissions ---
@@ -272,6 +294,8 @@ Event = Annotated[
         ModelCallStarted,
         ModelCallCompleted,
         ModelCallCancelled,
+        ModelCallFailed,
+        ModelCallAborted,
         PermissionRequested,
         PermissionResolved,
         SubagentSpawned,

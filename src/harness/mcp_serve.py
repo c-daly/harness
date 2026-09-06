@@ -27,6 +27,16 @@ from harness.types import ToolName, new_call_id
 Dispatch = Callable[[ProposedToolCall], Awaitable[ToolOutcome]]
 
 
+@contextlib.asynccontextmanager
+async def running_tool_server(server):
+    """Own startup as well as serving: partial startup always reaches cleanup."""
+    try:
+        await server.start()
+        yield server
+    finally:
+        await server.stop()
+
+
 class McpToolServer:
     def __init__(self, *, specs: Sequence[ToolSpec], dispatch: Dispatch) -> None:
         self._specs = tuple(specs)
@@ -64,8 +74,8 @@ class McpToolServer:
                 )
             )
             if outcome.is_error:
-                raise ValueError(outcome.text)
-            return [mcp_types.TextContent(type="text", text=outcome.text)]
+                raise ValueError(outcome.read_text())
+            return [mcp_types.TextContent(type="text", text=outcome.read_text())]
 
         manager = StreamableHTTPSessionManager(app=server, json_response=True, stateless=True)
 

@@ -4,15 +4,17 @@
 import asyncio
 import time
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import AsyncGenerator, Callable
 
-from harness.blobs import INLINE_THRESHOLD, BlobRef
+from harness.blobs import INLINE_THRESHOLD, BlobRef, BlobStore
 from harness.errors import ProviderError
 from harness.events import (
     DispatchResolved,
     HookDecided,
+    ModelCallCancelled,
     ModelCallCompleted,
+    ModelCallFailed,
     ModelCallProposed,
     ModelCallStarted,
     PermissionRequested,
@@ -28,7 +30,7 @@ from harness.hooks import (
     decision_to_payload,
 )
 from harness.interaction import PermissionRequest, Resolver
-from harness.messages import Message
+from harness.messages import Message, materialize_tool_results
 from harness.provider import Chunk, ModelProvider, Usage, collect
 from harness.callctx import reset_current_call_id, set_current_call_id
 from harness.redaction import StringRedactor, identity_redact
@@ -53,6 +55,14 @@ class ToolOutcome:
     text: str | None
     blob: BlobRef | None
     is_error: bool
+    _blobs: BlobStore | None = field(default=None, repr=False, compare=False)
+
+    def read_text(self) -> str:
+        if self.blob is not None:
+            if self._blobs is None:
+                raise RuntimeError("tool result requires its session blob store")
+            return self._blobs.get(self.blob).decode("utf-8")
+        return self.text if self.text is not None else ""
 
 
 async def _tee(
@@ -105,6 +115,13 @@ class Dispatcher:
                         call_id=action.call_id, action=outcome.effective, reason=outcome.ask.reason
                     )
                 )
+            except asyncio.CancelledError:
+                self.session.append(
+                    PermissionResolved(
+                        call_id=action.call_id, allowed=False, resolver=self.resolver.name
+                    )
+                )
+                raise
             except Exception as exc:
                 self.session.append(
                     PermissionResolved(
@@ -171,7 +188,7 @@ class Dispatcher:
                 duration_ms=duration_ms,
             )
         )
-        return ToolOutcome(text=text, blob=blob, is_error=is_error)
+        return ToolOutcome(text=text, blob=blob, is_error=is_error, _blobs=self.session.blobs)
 
     async def dispatch_model(
         self,
@@ -184,6 +201,7 @@ class Dispatcher:
         pricing_for: Callable[[ModelId], dict[str, float]] | None = None,
         pinned: bool = False,
         on_chunk: Callable[[Chunk], None] | None = None,
+        purpose: str = "conversation",
     ) -> tuple[Message, Usage]:
         """Dispatch a model call through hooks, permissions, and the provider.
 
@@ -196,54 +214,87 @@ class Dispatcher:
         for the EFFECTIVE (post-routing) model so per-model cost stays accurate.
         """
         call = ProposedModelCall(call_id=new_call_id(), model=model, pinned=pinned)
-        self.session.append(ModelCallProposed(call_id=call.call_id, model=model))
-        effective, denial = await self._run_chain(call)
-        if denial is not None:
-            raise ModelDispatchBlocked(denial)
-        if not isinstance(effective, ProposedModelCall):
-            # a hook rewrote model -> tool; fail closed rather than crash
-            raise ModelDispatchBlocked("rewrite changed action type \u2014 refused")
         self.session.append(
-            DispatchResolved(call_id=call.call_id, kind="model", model=effective.model)
+            ModelCallProposed(call_id=call.call_id, model=model, purpose=purpose)
         )
-        self.session.append(ModelCallStarted(call_id=call.call_id, model=effective.model))
-        started = time.monotonic()
-        attempt = 0
-        token = current_dispatch_tool.set(self.dispatch_tool)
+        effective_model = model
+        started: int | None = None
+
+        def elapsed() -> int:
+            return (time.monotonic_ns() - started) // 1_000_000 if started is not None else 0
+
         try:
-            while True:
-                try:
-                    stream = provider.complete(model=effective.model, messages=messages, tools=tools)
-                    if on_chunk is not None:
-                        stream = _tee(stream, on_chunk)
-                    message, usage, stop_reason = await collect(stream)
-                    break
-                except ProviderError as exc:
-                    if not exc.retryable or attempt >= len(self.retry_delays):
-                        raise
-                    delay = self.retry_delays[attempt]
-                    attempt += 1
-                    self.session.append(
-                        RetryAttempted(
-                            call_id=call.call_id,
-                            attempt=attempt,
-                            reason=f"{type(exc).__name__}: {exc}",
+            effective, denial = await self._run_chain(call)
+            if denial is not None:
+                raise ModelDispatchBlocked(denial)
+            if not isinstance(effective, ProposedModelCall):
+                raise ModelDispatchBlocked("rewrite changed action type — refused")
+            effective_model = effective.model
+            self.session.append(
+                DispatchResolved(call_id=call.call_id, kind="model", model=effective_model)
+            )
+            self.session.append(ModelCallStarted(call_id=call.call_id, model=effective_model))
+            started = time.monotonic_ns()
+            resolved_messages = materialize_tool_results(messages, self.session.blobs)
+            attempt = 0
+            token = current_dispatch_tool.set(self.dispatch_tool)
+            try:
+                while True:
+                    try:
+                        source = provider.complete(
+                            model=effective_model, messages=resolved_messages, tools=tools
                         )
-                    )
-                    await asyncio.sleep(delay)  # yields the loop: the bus pump renders
-                    # RetryAttempted (and the TUI resets its tail) before the next attempt streams
-        finally:
-            current_dispatch_tool.reset(token)
-        stamped_pricing = pricing_for(effective.model) if pricing_for is not None else (pricing or {})
+                        try:
+                            stream = _tee(source, on_chunk) if on_chunk is not None else source
+                            message, usage, stop_reason = await collect(stream)
+                        finally:
+                            close = getattr(source, "aclose", None)
+                            if close is not None:
+                                await close()
+                        break
+                    except ProviderError as exc:
+                        if not exc.retryable or attempt >= len(self.retry_delays):
+                            raise
+                        delay = self.retry_delays[attempt]
+                        attempt += 1
+                        self.session.append(
+                            RetryAttempted(
+                                call_id=call.call_id, attempt=attempt,
+                                reason=type(exc).__name__,
+                            )
+                        )
+                        await asyncio.sleep(delay)
+            finally:
+                current_dispatch_tool.reset(token)
+            stamped_pricing = (
+                pricing_for(effective_model) if pricing_for is not None else (pricing or {})
+            )
+        except asyncio.CancelledError:
+            self.session.append(ModelCallCancelled(call_id=call.call_id, duration_ms=elapsed()))
+            raise
+        except Exception as exc:
+            error_type = "policy_denied" if isinstance(exc, ModelDispatchBlocked) else type(exc).__name__
+            self.session.append(
+                ModelCallFailed(
+                    call_id=call.call_id, model=effective_model, error_type=error_type,
+                    # Provider exception strings may contain credentials or response bodies.
+                    message=f"Model call failed ({error_type}).",
+                    retryable=isinstance(exc, ProviderError) and exc.retryable,
+                    duration_ms=elapsed(),
+                )
+            )
+            raise
+        # Outside the exception scope: a failing log write cannot emit a second terminal fact.
         self.session.append(
             ModelCallCompleted(
                 call_id=call.call_id,
-                model=effective.model,
+                model=effective_model,
                 message=message.model_dump(),
                 usage=usage.as_dict(),
                 stop_reason=stop_reason,
                 pricing=stamped_pricing,
-                duration_ms=int((time.monotonic() - started) * 1000),
+                duration_ms=elapsed(),
+                purpose=purpose,
             )
         )
         return message, usage

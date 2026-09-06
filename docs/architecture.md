@@ -172,6 +172,25 @@ Native tools and MCP tools dispatch identically. For each tool call it:
 4. Executes the tool: `await registry.get(name)(args)`.
 5. Appends `ToolCallCompleted` with the result (or a typed error).
 
+Model proposals also require a terminal fact: `ModelCallCompleted`,
+`ModelCallFailed`, `ModelCallCancelled`, or a resume-time `ModelCallAborted`.
+The fold tracks open model and tool intents separately; resume repairs both
+in their original proposal order without replaying actions. An interrupted
+external-agent call may have performed work, so an aborted fact preserves
+uncertainty about those side effects.
+
+Internal inference uses the same dispatch path. Its `purpose` (for example,
+`compaction`) is recorded and its usage is indexed, but only `conversation`
+completions add assistant messages to the transcript. `/compact` consequently
+passes through policy and accounting without polluting its own input history.
+
+The telemetry database is a versioned, rebuildable projection. It records
+pending and terminal model-call states, including failures, and applies each
+session sequence once. An incompatible database is rejected with instructions
+to rebuild through `harness stats`; it is never queried using a mismatched schema.
+CLI adapter MCP startup and shutdown share a context manager so cancellation
+during startup still closes the partially started server.
+
 Key invariants:
 
 - **Errors are values, never crashes.** A tool that raises is caught; the
@@ -180,9 +199,21 @@ Key invariants:
   loop. This is what lets the model self-correct from a bad call.
 - **Blob spill.** A *successful* result larger than 16 KiB is written to the
   content-addressed blob store and the event carries a reference instead of the
-  inline text — keeping logs small and the model's context bounded.
+  inline text. Reads verify the digest, byte size, and regular-file identity;
+  corrupt existing objects are rejected. Dispatch materializes results for
+  inference and the external-agent transcript bridge; outward MCP resolves
+  them through `ToolOutcome.read_text()`. This bounds log lines, not model
+  context. Explicit context budgets and retrievable excerpts remain roadmap work.
 - **There is no per-tool timeout in the dispatcher.** A tool that can hang (e.g.
   `bash`) owns its own timeout.
+
+Session recovery holds a permanent POSIX advisory guard from read/repair through
+sequence selection and writer construction. A PID marker excludes legacy
+writers; dead markers are recovered only under the guard. Torn logs are scanned
+as bytes, with exact damaged bytes durably quarantined before atomic replacement
+of the valid prefix. A JSON value without its final newline is an uncommitted
+record. Identity or sequence inconsistencies fail loudly rather than being
+silently repaired. Clean readers can observe live logs without taking ownership.
 
 ---
 

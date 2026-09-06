@@ -77,7 +77,7 @@ from typing import AsyncIterator, Sequence
 
 from harness.dispatcher import current_dispatch_tool
 from harness.errors import MalformedStreamError, ProviderError
-from harness.mcp_serve import McpToolServer
+from harness.mcp_serve import McpToolServer, running_tool_server
 from harness.messages import Message
 from harness.provider import Chunk, StreamStop, TextDelta, Usage, UsageReport
 from harness.provider_claude_code import _kill_process_group, _render_prompt
@@ -228,42 +228,37 @@ class AntigravityProvider:
         scratch_home = None
         scratch_cwd = None
         gen = None
-        try:
-            # Startup belongs inside the cleanup scope: start() creates the
-            # Uvicorn task before polling for readiness, so cancellation or a
-            # startup failure during that poll must still stop the partial
-            # server and release its listening port.
-            await server.start()
-            # Created inside this try so a failure here (e.g. ENOSPC) still
-            # reaches the finally below and stops the McpToolServer.
-            scratch_home = _scratch_home()
-            scratch_cwd = tempfile.mkdtemp(prefix="harness-antigravity-cwd-")
+        async with running_tool_server(server):
             try:
-                gen = self._run_turn(
-                    model=model,
-                    messages=messages,
-                    url=server.url,
-                    cwd=scratch_cwd,
-                    home=scratch_home,
-                )
-                async for chunk in gen:
-                    yield chunk
+                # Created inside this try so a failure here (e.g. ENOSPC) still
+                # reaches the finally below and stops the McpToolServer.
+                scratch_home = _scratch_home()
+                scratch_cwd = tempfile.mkdtemp(prefix="harness-antigravity-cwd-")
+                try:
+                    gen = self._run_turn(
+                        model=model,
+                        messages=messages,
+                        url=server.url,
+                        cwd=scratch_cwd,
+                        home=scratch_home,
+                    )
+                    async for chunk in gen:
+                        yield chunk
+                finally:
+                    # Kill-then-clean, deterministically: closing gen here (rather
+                    # than letting an abandoned async generator fall to GC
+                    # finalization) guarantees the subprocess is gone before the
+                    # scratch dirs it is living in, and the MCP server it was
+                    # talking to, disappear out from under it. Nested so that if
+                    # gen.aclose() itself raises, the outer finally below still
+                    # tears down the scratch dirs and the server.
+                    if gen is not None:
+                        await gen.aclose()
             finally:
-                # Kill-then-clean, deterministically: closing gen here (rather
-                # than letting an abandoned async generator fall to GC
-                # finalization) guarantees the subprocess is gone before the
-                # scratch dirs it is living in, and the MCP server it was
-                # talking to, disappear out from under it. Nested so that if
-                # gen.aclose() itself raises, the outer finally below still
-                # tears down the scratch dirs and the server.
-                if gen is not None:
-                    await gen.aclose()
-        finally:
-            if scratch_cwd is not None:
-                shutil.rmtree(scratch_cwd, ignore_errors=True)
-            if scratch_home is not None:
-                shutil.rmtree(scratch_home, ignore_errors=True)
-            await server.stop()
+                if scratch_cwd is not None:
+                    shutil.rmtree(scratch_cwd, ignore_errors=True)
+                if scratch_home is not None:
+                    shutil.rmtree(scratch_home, ignore_errors=True)
 
     def _argv(self, *, model: ModelId) -> list[str]:
         # agy's own --print-timeout should elapse BEFORE our outer

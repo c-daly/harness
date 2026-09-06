@@ -40,7 +40,7 @@ from harness.interaction import PermissionRequest
 from harness.log import read_session
 from harness.mcp_host import McpHost
 from harness.messages import Message, Role
-from harness.provider import TextDelta, ThinkingDelta, collect
+from harness.provider import TextDelta, ThinkingDelta
 from harness.sessions import SessionSummary, list_sessions
 from harness.telemetry import TelemetrySubscriber, open_store_memory, run_rollup
 from harness.tui_panel import ActivityPanel
@@ -1157,11 +1157,12 @@ class HarnessApp(App[None]):
                 *loop.history,
                 Message.user_text(_COMPACT_INSTRUCTION),
             ]
-            # Issued directly against the provider (bypassing the dispatcher)
-            # so this admin call does not itself become a message-bearing log
-            # event that CompactionApplied's fold would need to also collapse.
-            summary_message, _usage, _stop = await collect(
-                loop.provider.complete(model=loop.model, messages=messages, tools=())
+            # Internal inference is enforced/accounted normally, with no extra
+            # conversation message for CompactionApplied to collapse.
+            summary_message, _usage = await loop.dispatcher.dispatch_model(
+                provider=loop.provider, model=loop.model, messages=messages, tools=(),
+                purpose="compaction", pricing=loop.pricing, pricing_for=loop.pricing_for,
+                pinned=loop.model_pinned,
             )
         except Exception as exc:
             self.say("! ", f"compact failed: {exc}")

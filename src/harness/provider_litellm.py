@@ -132,11 +132,12 @@ def _messages_to_openai(messages: Sequence[Message]) -> list[dict[str, Any]]:
         elif message.role is Role.TOOL:
             for block in message.blocks:
                 if isinstance(block, ToolResultBlock):
+                    if block.blob is not None and block.text is None:
+                        raise ProviderError("tool result blob must be resolved before inference")
                     out.append({
                         "role": "tool",
                         "tool_call_id": str(block.call_id),
-                        # TODO Phase 5: dereference the blob (BlobStore access decision) instead of this placeholder
-                        "content": block.text or "(result in blob sidecar)",
+                        "content": block.text if block.text is not None else "",
                     })
     return out
 

@@ -42,7 +42,7 @@ from typing import AsyncIterator, Sequence
 
 from harness.dispatcher import current_dispatch_tool
 from harness.errors import MalformedStreamError, ProviderError
-from harness.mcp_serve import McpToolServer
+from harness.mcp_serve import McpToolServer, running_tool_server
 from harness.messages import Message
 from harness.provider import Chunk, StreamStop, TextDelta, ThinkingDelta, Usage, UsageReport
 from harness.provider_claude_code import _kill_process_group, _render_prompt, _sanitized_env
@@ -133,45 +133,44 @@ class CodexProvider:
                 "build_kernel wires this via bind_dispatcher"
             )
         server = McpToolServer(specs=tools, dispatch=dispatch)
-        await server.start()
         scratch = None
         codex_home = None
         gen = None
-        try:
-            # A fresh, empty scratch dir for the lifetime of the turn: the codex
-            # built-in shell is not disabled (see module docstring), so its cwd
-            # must not be the real workspace -- the harness MCP tools are meant to
-            # be the only path back to real files. Created inside this try so a
-            # failure here (e.g. ENOSPC) still reaches the finally below and
-            # stops the McpToolServer already started above.
-            scratch = tempfile.mkdtemp(prefix="harness-codex-")
-            codex_home = _scratch_codex_home()
+        async with running_tool_server(server):
             try:
-                gen = self._run_turn(
-                    model=model,
-                    messages=messages,
-                    url=server.url,
-                    cwd=scratch,
-                    codex_home=codex_home,
-                )
-                async for chunk in gen:
-                    yield chunk
+                # A fresh, empty scratch dir for the lifetime of the turn: the codex
+                # built-in shell is not disabled (see module docstring), so its cwd
+                # must not be the real workspace -- the harness MCP tools are meant to
+                # be the only path back to real files. Created inside this try so a
+                # failure here (e.g. ENOSPC) still reaches the finally below and
+                # stops the McpToolServer already started above.
+                scratch = tempfile.mkdtemp(prefix="harness-codex-")
+                codex_home = _scratch_codex_home()
+                try:
+                    gen = self._run_turn(
+                        model=model,
+                        messages=messages,
+                        url=server.url,
+                        cwd=scratch,
+                        codex_home=codex_home,
+                    )
+                    async for chunk in gen:
+                        yield chunk
+                finally:
+                    # Kill-then-clean, deterministically: closing gen here (rather
+                    # than letting an abandoned async generator fall to GC
+                    # finalization) guarantees the subprocess is gone before the
+                    # scratch dirs it is living in, and the MCP server it was
+                    # talking to, disappear out from under it. Nested so that if
+                    # gen.aclose() itself raises, the outer finally below still
+                    # tears down the scratch dirs and the server.
+                    if gen is not None:
+                        await gen.aclose()
             finally:
-                # Kill-then-clean, deterministically: closing gen here (rather
-                # than letting an abandoned async generator fall to GC
-                # finalization) guarantees the subprocess is gone before the
-                # scratch dirs it is living in, and the MCP server it was
-                # talking to, disappear out from under it. Nested so that if
-                # gen.aclose() itself raises, the outer finally below still
-                # tears down the scratch dirs and the server.
-                if gen is not None:
-                    await gen.aclose()
-        finally:
-            if scratch is not None:
-                shutil.rmtree(scratch, ignore_errors=True)
-            if codex_home is not None:
-                shutil.rmtree(codex_home, ignore_errors=True)
-            await server.stop()
+                if scratch is not None:
+                    shutil.rmtree(scratch, ignore_errors=True)
+                if codex_home is not None:
+                    shutil.rmtree(codex_home, ignore_errors=True)
 
     def _argv(self, *, model: ModelId, url: str) -> list[str]:
         argv = [

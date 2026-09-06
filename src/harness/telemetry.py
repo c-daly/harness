@@ -20,8 +20,14 @@ from pathlib import Path
 from harness.events import (
     CustomEvent,
     Envelope,
+    DispatchResolved,
     HookDecided,
+    ModelCallAborted,
+    ModelCallCancelled,
     ModelCallCompleted,
+    ModelCallFailed,
+    ModelCallProposed,
+    ModelCallStarted,
     RetryAttempted,
     SessionEnded,
     SessionOutcome,
@@ -35,7 +41,19 @@ from harness.events import (
     parse_envelope_line,
 )
 
+TELEMETRY_SCHEMA_VERSION = 1
+
+
+class TelemetrySchemaMismatch(RuntimeError):
+    """The derived store must be rebuilt from the authoritative session logs."""
+
+
 _SCHEMA = """
+CREATE TABLE IF NOT EXISTS indexed_events (
+    session_id TEXT NOT NULL,
+    seq INTEGER NOT NULL,
+    PRIMARY KEY (session_id, seq)
+);
 CREATE TABLE IF NOT EXISTS sessions (
     session_id TEXT PRIMARY KEY,
     parent_session_id TEXT,
@@ -57,7 +75,11 @@ CREATE TABLE IF NOT EXISTS model_calls (
     duration_ms INTEGER,
     cost REAL,
     ts REAL,
-    PRIMARY KEY (session_id, seq)
+    status TEXT NOT NULL DEFAULT 'pending',
+    error_type TEXT,
+    error_message TEXT,
+    purpose TEXT NOT NULL DEFAULT 'conversation',
+    PRIMARY KEY (session_id, call_id)
 );
 CREATE TABLE IF NOT EXISTS tool_calls (
     session_id TEXT NOT NULL,
@@ -104,18 +126,25 @@ CREATE TABLE IF NOT EXISTS retries (
 """
 
 
-def open_store(path: Path) -> sqlite3.Connection:
+def open_store(path: Path | str) -> sqlite3.Connection:
     conn = sqlite3.connect(path)
+    version = conn.execute("PRAGMA user_version").fetchone()[0]
+    tables = conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()
+    if (tables or version) and version != TELEMETRY_SCHEMA_VERSION:
+        conn.close()
+        raise TelemetrySchemaMismatch(
+            f"{path}: telemetry schema {version} is unsupported; run harness stats "
+            "with the appropriate --base-dir to rebuild from session logs"
+        )
     conn.executescript(_SCHEMA)
+    conn.execute(f"PRAGMA user_version = {TELEMETRY_SCHEMA_VERSION}")
     return conn
 
 
 def open_store_memory() -> sqlite3.Connection:
     """In-memory store for live consumers (the TUI stats line). Same schema;
     rebuild_index over the logs remains the authoritative path."""
-    conn = sqlite3.connect(":memory:")
-    conn.executescript(_SCHEMA)
-    return conn
+    return open_store(":memory:")
 
 
 def _origin(tool: str) -> str | None:
@@ -129,11 +158,20 @@ def _origin(tool: str) -> str | None:
 
 
 def index_envelopes(conn: sqlite3.Connection, envelopes: list[Envelope]) -> None:
-    """Fold envelopes into rows. INSERT OR REPLACE / OR IGNORE keys make
-    re-indexing the same log idempotent (rebuild semantics)."""
+    """Apply an idempotent batch atomically; a failed projection remains replayable."""
+    with conn:
+        _index_envelopes(conn, envelopes)
+
+
+def _index_envelopes(conn: sqlite3.Connection, envelopes: list[Envelope]) -> None:
     for env in envelopes:
         ev = env.event
         sid = str(env.session_id)
+        inserted = conn.execute(
+            "INSERT OR IGNORE INTO indexed_events VALUES (?,?)", (sid, env.seq)
+        )
+        if not inserted.rowcount:
+            continue
         if isinstance(ev, SessionStarted):
             conn.execute(
                 "INSERT OR REPLACE INTO sessions"
@@ -155,6 +193,19 @@ def index_envelopes(conn: sqlite3.Connection, envelopes: list[Envelope]) -> None
             )
         elif isinstance(ev, SessionEnded):
             conn.execute("UPDATE sessions SET ended_ts = ? WHERE session_id = ?", (env.ts, sid))
+        elif isinstance(ev, ModelCallProposed):
+            conn.execute(
+                "INSERT OR IGNORE INTO model_calls"
+                " (session_id, call_id, seq, model, ts, purpose) VALUES (?,?,?,?,?,?)",
+                (sid, ev.call_id, env.seq, ev.model, env.ts, ev.purpose),
+            )
+        elif isinstance(ev, ModelCallStarted) or (
+            isinstance(ev, DispatchResolved) and ev.kind == "model"
+        ):
+            conn.execute(
+                "UPDATE model_calls SET model = ? WHERE session_id = ? AND call_id = ?",
+                (ev.model, sid, ev.call_id),
+            )
         elif isinstance(ev, ModelCallCompleted):
             usage, pricing = ev.usage, ev.pricing
             cost = None
@@ -164,11 +215,33 @@ def index_envelopes(conn: sqlite3.Connection, envelopes: list[Envelope]) -> None
                     + usage.get("output_tokens", 0) * pricing.get("output_cost_per_token", 0.0)
                 )
             conn.execute(
-                "INSERT OR REPLACE INTO model_calls VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO model_calls"
+                " (session_id, call_id, seq, model, input_tokens, output_tokens,"
+                " cache_read_tokens, cache_write_tokens, stop_reason, duration_ms, cost, ts,"
+                " status, purpose) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'completed',?)"
+                " ON CONFLICT(session_id, call_id) DO UPDATE SET"
+                " model=excluded.model, input_tokens=excluded.input_tokens,"
+                " output_tokens=excluded.output_tokens, cache_read_tokens=excluded.cache_read_tokens,"
+                " cache_write_tokens=excluded.cache_write_tokens, stop_reason=excluded.stop_reason,"
+                " duration_ms=excluded.duration_ms, cost=excluded.cost, status='completed',"
+                " purpose=excluded.purpose",
                 (sid, ev.call_id, env.seq, ev.model,
                  usage.get("input_tokens", 0), usage.get("output_tokens", 0),
                  usage.get("cache_read_tokens", 0), usage.get("cache_write_tokens", 0),
-                 ev.stop_reason, ev.duration_ms, cost, env.ts),
+                 ev.stop_reason, ev.duration_ms, cost, env.ts, ev.purpose),
+            )
+        elif isinstance(ev, (ModelCallFailed, ModelCallCancelled, ModelCallAborted)):
+            status = ev.type.removeprefix("model_call_")
+            conn.execute(
+                "INSERT INTO model_calls"
+                " (session_id, call_id, seq, model, ts, status, error_type, error_message, duration_ms)"
+                " VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(session_id, call_id) DO UPDATE SET"
+                " status=excluded.status, error_type=excluded.error_type,"
+                " error_message=excluded.error_message, duration_ms=excluded.duration_ms,"
+                " model=CASE WHEN excluded.model != '' THEN excluded.model ELSE model_calls.model END",
+                (sid, ev.call_id, env.seq, getattr(ev, "model", None) or "", env.ts,
+                 status, getattr(ev, "error_type", status),
+                 getattr(ev, "message", getattr(ev, "reason", "")), getattr(ev, "duration_ms", 0)),
             )
         elif isinstance(ev, ToolCallProposed):
             # tool/origin reflect the PROPOSED name; a hook rewrite to a different tool
@@ -219,15 +292,17 @@ def index_envelopes(conn: sqlite3.Connection, envelopes: list[Envelope]) -> None
                 "INSERT OR REPLACE INTO outcomes VALUES (?,?,?,?,?,?)",
                 (sid, env.seq, scope, ev.status, ev.score, ev.note),
             )
-    conn.commit()
 
 
 def _read_lenient(path: Path) -> list[Envelope]:
     '''Complete lines only; a torn tail means a live writer, not corruption.
     Envelope-level corruption still raises -- rebuild_index handles per-session.'''
     envelopes: list[Envelope] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        stripped = line.strip()
+    for line in path.read_bytes().splitlines():
+        try:
+            stripped = line.decode("utf-8").strip()
+        except UnicodeDecodeError:
+            continue
         if not stripped:
             continue
         try:
@@ -298,6 +373,10 @@ def run_rollup(conn: sqlite3.Connection, root: str) -> dict:
     retries = conn.execute(
         f"SELECT COUNT(*) FROM retries WHERE session_id IN ({marks})", sids
     ).fetchone()[0]
+    statuses = dict(conn.execute(
+        f"SELECT status, COUNT(*) FROM model_calls WHERE session_id IN ({marks}) GROUP BY status",
+        sids,
+    ).fetchall())
     return {
         "root": root, "sessions": len(sids),
         "model_calls": mc[0], "input_tokens": mc[1], "output_tokens": mc[2],
@@ -306,6 +385,8 @@ def run_rollup(conn: sqlite3.Connection, root: str) -> dict:
         "retries": retries,
         "outcome": outcome[0] if outcome else None,
         "score": outcome[1] if outcome else None,
+        **{f"model_{status}": statuses.get(status, 0)
+           for status in ("pending", "completed", "failed", "cancelled", "aborted")},
     }
 
 
@@ -335,8 +416,11 @@ def stats_summary(conn: sqlite3.Connection, tag: str | None = None) -> dict:
         f"SELECT origin, COUNT(*), COALESCE(SUM(is_error),0), COALESCE(SUM(blocked),0)"
         f" FROM tool_calls WHERE origin IS NOT NULL{mcp_and} GROUP BY origin ORDER BY origin", params
     ).fetchall()
+    statuses = conn.execute(
+        f"SELECT status, COUNT(*) FROM model_calls {where} GROUP BY status ORDER BY status", params
+    ).fetchall()
     return {"sessions": sessions, "retries": retries, "models": models, "tools": tools,
-            "mcp_servers": mcp_servers}
+            "mcp_servers": mcp_servers, "model_statuses": statuses}
 
 
 def _money(cost) -> str:
@@ -363,6 +447,10 @@ def render_stats(summary: dict) -> str:
         lines.append(
             f"  {_safe(model)}: calls={calls} in={inp} out={out} cached={cached} cost={_money(cost)}"
         )
+    if summary.get("model_statuses"):
+        lines.append("  outcomes: " + ", ".join(
+            f"{_safe(status)}={count}" for status, count in summary["model_statuses"]
+        ))
     lines.append("")
     lines.append("tools:")
     for tool, calls, errors, blocked, asked in summary["tools"]:

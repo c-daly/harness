@@ -9,8 +9,8 @@ discipline the project holds to. Read [architecture.md](architecture.md) first.
 ## Development setup
 
 ```bash
-uv sync                       # install deps + dev tools
-uv run pytest -q              # run the suite (≈70s)
+uv sync --extra dev           # install deps + development tools
+uv run pytest -q              # run the complete suite
 uv run ruff check             # lint
 uv run ruff format            # format
 ```
