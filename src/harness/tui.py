@@ -30,6 +30,9 @@ from harness.frontmatter import CommandDef
 from harness.events import (
     CompactionApplied,
     CustomEvent,
+    ModelCallStarted,
+    PermissionRequested,
+    PermissionResolved,
     RetryAttempted,
     ToolCallCompleted,
     ToolCallProposed,
@@ -45,6 +48,7 @@ from harness.sessions import SessionSummary, list_sessions
 from harness.telemetry import TelemetrySubscriber, open_store_memory, run_rollup
 from harness.tui_panel import ActivityPanel
 from harness.tui_support import HistoryRing, SlashCommand, parse_slash_command
+from harness.controller import PendingPrompt
 from harness.types import ModelId, SessionId, ToolName, new_call_id
 
 _SNIPPET_CAP = 200
@@ -410,9 +414,10 @@ class HistoryInput(Input):
 class HarnessApp(App[None]):
     CSS = """
     #live { height: auto; }
-    #stats { dock: bottom; height: 1; }
-    #statusbar { dock: bottom; height: 1; }
-    #prompt { dock: bottom; }
+    #input-area { dock: bottom; height: auto; }
+    #stats { height: 1; }
+    #statusbar { height: 1; }
+    #queue { height: auto; max-height: 4; }
     """
     BINDINGS = [
         Binding("escape", "interrupt", "Interrupt", priority=True),
@@ -446,6 +451,8 @@ class HarnessApp(App[None]):
         self._workspace_root = workspace_root
         self._routing_rules = routing_rules
         self._turn_worker = None
+        self.controller = kernel.controller
+        self._pending_model: str | None = None
         # /compact's own worker (item 8): tracked SEPARATELY from
         # _turn_worker so Esc during /compact takes its own cancellation
         # path (_after_compact_interrupt) rather than _after_interrupt's
@@ -509,13 +516,15 @@ class HarnessApp(App[None]):
         with Vertical():
             yield RichLog(id="transcript", wrap=True, markup=False, max_lines=10_000)
             yield Static(id="live")
-        yield Static(id="stats")
-        yield Static(id="statusbar")
-        yield HistoryInput(
-            id="prompt",
-            placeholder="prompt (/help for commands)",
-            workspace_root=self._workspace_root,
-        )
+        with Vertical(id="input-area"):
+            yield Static(id="queue")
+            yield Static(id="stats")
+            yield Static(id="statusbar")
+            yield HistoryInput(
+                id="prompt",
+                placeholder="prompt (/help for commands)",
+                workspace_root=self._workspace_root,
+            )
 
     def say(self, prefix: str, text: str, *, style: str | None = None) -> None:
         line = Text(prefix)
@@ -718,7 +727,7 @@ class HarnessApp(App[None]):
         )
         if outcome.is_error:
             raise RuntimeError(outcome.text or "agent-swarm state fetch failed")
-        return outcome.text or ""
+        return outcome.read_text()
 
     def _toggle_panel(self) -> None:
         panel = self._panel
@@ -825,8 +834,10 @@ class HarnessApp(App[None]):
             native_tools=self._native_tools,
             routing_rules=self._routing_rules,
             model_pinned=old_kernel.loop.model_pinned,
+            execution_limits=old_kernel.loop.dispatcher.scope.budget.limits,
         )
         self.kernel = kernel
+        self.controller = kernel.controller
         kernel.loop.on_chunk = self._on_chunk
         # A fresh/reopened session has its own telemetry root -- the OLD
         # rollup's tool count must not linger in the status bar until the
@@ -989,6 +1000,16 @@ class HarnessApp(App[None]):
         self.query_one("#statusbar", Static).update(_plain(" | ".join(segments)))
 
     def _render_event(self, event) -> None:
+        if self.controller.active is not None:
+            if isinstance(event, PermissionRequested):
+                self.controller.phase = "waiting for permission"
+            elif isinstance(event, ModelCallStarted):
+                self.controller.phase = "waiting for response"
+            elif isinstance(event, ToolCallProposed):
+                self.controller.phase = f"tool {event.tool}"
+            elif isinstance(event, PermissionResolved):
+                self.controller.phase = "working"
+            self._refresh_queue()
         match event:
             case ToolCallProposed(tool=tool):
                 self.say("\u2699 ", str(tool))
@@ -1019,47 +1040,108 @@ class HarnessApp(App[None]):
         if self._compact_worker is not None and self._compact_worker.is_running:
             self.say("! ", "a /compact is already running -- Esc to cancel it first")
             return True
+        if self.controller.pending:
+            self.say("! ", "prompts are queued -- /queue resume or /queue clear first")
+            return True
         return False
 
     @on(Input.Submitted, "#prompt")
     async def _submitted(self, event: Input.Submitted) -> None:
         text = event.value.strip()
         prompt_input = self.query_one("#prompt", HistoryInput)
-        event.input.clear()
-        prompt_input.reset_mention_cache()  # next prompt re-lists workspace files
         if not text:
             return
-        prompt_input.history.remember(text)
         command = parse_slash_command(text)
         if command is not None:
-            # Commands are deliberately NOT blocked mid-turn: /quit during a
-            # stuck turn must remain possible (it cancels the agent group in
-            # _finish); /help and /tools are read-only; /model mutates the
-            # loop only between dispatches.
+            if command.name in self._plugin_commands:
+                expanded = self._plugin_commands[command.name].body.replace("$ARGUMENTS", command.arg)
+                if not self._enqueue_prompt(expanded, expand_mentions=False):
+                    return
+                event.input.clear()
+                prompt_input.history.remember(text)
+                return
+            event.input.clear()
+            prompt_input.history.remember(text)
             await self._run_command(command)
             return
-        if self._refuse_if_busy():
+        if not self._enqueue_prompt(text):
             return
-        self.say("> ", text)
-        # @-mentions expand for the MODEL, never for the log: the literal text
-        # (with its @tokens) is what run_turn persists as the user message;
-        # any file content a mention resolves to rides in per-turn context
-        # (loop.set_turn_context) that dispatch_model sees but history never
-        # does. Awaited here, before the worker starts, so a permission
-        # prompt for a mentioned read (same dispatcher path a model-issued
-        # read_file takes) can be answered before the turn itself begins.
-        context = await self._inject_mentions(text)
-        # M-1: re-check busy-ness AFTER the await above -- another submit
-        # (or a /clear) can slip in and start running while THIS submit was
-        # parked in a slow injection (a permission ask, a slow dispatch);
-        # without this, resuming here would silently overwrite _turn_worker
-        # and turn_context and start a SECOND concurrent run_turn worker.
-        if self._refuse_if_busy():
+        event.input.clear()
+        prompt_input.reset_mention_cache()
+        prompt_input.history.remember(text)
+
+    def _enqueue_prompt(self, text: str, *, expand_mentions: bool = True) -> bool:
+        if self._rebuild_in_progress or self._ended:
+            self.say("! ", "session rebuild or shutdown in progress; draft preserved")
+            return False
+        try:
+            was_empty = not self.controller.pending and self.controller.active is None
+            prompt = self.controller.submit(text, expand_mentions=expand_mentions)
+        except ValueError as exc:
+            self.say("! ", str(exc))
+            return False
+        # A new explicit request can restart an empty queue after an error.
+        # Existing follow-ups remain paused until /queue resume.
+        if was_empty and self.controller.paused and not self._interrupting:
+            self.controller.resume()
+        self.say("", f"queued #{prompt.id}: {prompt.text}")
+        self._refresh_queue()
+        self._start_queue()
+        return True
+
+    def _refresh_queue(self) -> None:
+        controller = self.controller
+        lines = []
+        if controller.active:
+            lines.append(f"{controller.phase} #{controller.active.id}: {controller.active.text[:120]}")
+        if controller.pending:
+            state = "paused" if controller.paused else "waiting"
+            lines.append(f"Queue {state} ({len(controller.pending)}, memory only): " +
+                         "; ".join(f"#{p.id} {p.text[:60]}" for p in controller.pending[:3]))
+            lines.append("/queue lists all; /queue edit ID, remove ID, resume, clear")
+        elif controller.paused:
+            lines.append(f"{controller.phase}; /queue shows the interrupted prompt")
+        if self._pending_model:
+            lines.append(f"Model {self._pending_model} will apply after this turn")
+        widget = self.query_one("#queue", Static)
+        widget.display = bool(lines)
+        widget.update(_plain("\n".join(lines)))
+
+    def _start_queue(self) -> None:
+        if (self._ended or self._interrupting or self._rebuild_in_progress or
+                self.controller.paused or not self.controller.pending):
             return
-        self.kernel.loop.set_turn_context(context)
+        if self._turn_worker is not None and not self._turn_worker.is_finished:
+            return
+        if self._compact_worker is not None and not self._compact_worker.is_finished:
+            return
         self._turn_worker = self.run_worker(
-            self._run_turn(text), group="agent", exit_on_error=False
+            self._drain_queue(), group="agent", exit_on_error=False
         )
+
+    async def _execute_prompt(self, prompt: PendingPrompt) -> None:
+        self._refresh_queue()
+        self.say("> ", prompt.text)
+        context = await self._inject_mentions(prompt.text) if prompt.expand_mentions else []
+        self.kernel.loop.set_turn_context(context)
+        self.controller.phase = "working"
+        self._refresh_queue()
+        await self._run_turn(prompt.text)
+
+    async def _drain_queue(self) -> None:
+        try:
+            await self._apply_pending_model()
+            while await self.controller.run_next(self._execute_prompt):
+                await self._apply_pending_model()
+                self._refresh_queue()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            self.controller.pause()
+            self.say("! ", f"queue paused ({type(exc).__name__}); /queue to inspect or resume")
+        finally:
+            self._turn_worker = None
+            self._refresh_queue()
 
     async def _inject_mentions(self, text: str) -> list[Message]:
         """Dispatch a read_file call for each @-mention in text through
@@ -1123,7 +1205,7 @@ class HarnessApp(App[None]):
             self._clear_live()
             self.kernel.loop.repair_turn()  # orphaned user msg is benign;
             self.say("! ", f"turn failed: {exc}")  # unpaired tool calls are not
-            return
+            raise
         # full mode: the thought stays visible in the transcript, dimmed, above
         # the answer -- read _thought_buffer BEFORE _clear_live() wipes it.
         if self._thought_mode == "full" and self._thought_buffer:
@@ -1134,6 +1216,19 @@ class HarnessApp(App[None]):
             self._panel.refresh_files_and_agents()
 
     async def _run_compact(self) -> None:
+        try:
+            await self._run_compact_body()
+        except asyncio.CancelledError:
+            self.controller.pause()
+            self.controller.phase = "interrupted"
+            raise
+        finally:
+            self._compact_worker = None
+            await self._apply_pending_model()
+            self._refresh_queue()
+            self._start_queue()
+
+    async def _run_compact_body(self) -> None:
         """One summarize completion through the CURRENT model/provider over
         the whole transcript; on success, replace loop.history with the
         summary as a system message -- exactly what CompactionApplied's fold
@@ -1166,6 +1261,8 @@ class HarnessApp(App[None]):
             )
         except Exception as exc:
             self.say("! ", f"compact failed: {exc}")
+            self.controller.pause()
+            self.controller.phase = "failed"
             return
         summary = summary_message.text()
         kernel.session.append(
@@ -1263,6 +1360,7 @@ class HarnessApp(App[None]):
                 "/clear  /compact  /resume  /panel  /tools  /quit  — @path mentions a file "
                 "(Tab completes), read for the model only; F2 also toggles the activity panel",
             )
+            self.say("", "/queue: inspect, edit, remove, pause, resume, clear; queued prompts are memory only")
             if self._plugin_commands:
                 self.say(
                     "",
@@ -1271,20 +1369,16 @@ class HarnessApp(App[None]):
         elif command.name == "tools":
             for spec in self.kernel.registry.specs():
                 self.say("  ", str(spec.name))
+        elif command.name == "queue":
+            self._queue_command(command.arg)
         elif command.name == "quit":
             await self._finish()
             self.exit()
         elif command.name == "model":
-            # parked-5: gated on _rebuild_in_progress ONLY -- the old kernel may
-            # be mid-teardown or the new one mid-startup, same reasoning as the
-            # other rebuild guards. Deliberately NOT the full _refuse_if_busy():
-            # /model stays allowed mid-TURN (unchanged; a turn finishes its
-            # current dispatch with the old alias and picks the new one up next).
             if self._rebuild_in_progress:
                 self.say("! ", "a session rebuild is in progress -- try again in a moment")
                 return
-            # catalog.resolve lazily imports litellm (seconds) -- never block the
-            # message handler; the switch applies on the next dispatch anyway
+            # Resolve off the input path; apply at the next logical turn boundary.
             self.run_worker(self._switch_model(command.arg), group="driver", exit_on_error=False)
         elif command.name == "thoughts":
             self._set_thought_mode(command.arg.strip())
@@ -1323,17 +1417,51 @@ class HarnessApp(App[None]):
             if not prompt.strip():
                 self.say("! ", f"command /{command.name} is empty after expansion")
                 return
-            # A plugin command IS a turn: route through the same guard as plain input.
-            # (@file mentions deliberately do NOT expand inside command bodies v1 --
-            # the body is the plugin author's text.)
-            if self._refuse_if_busy():
-                return
-            self.say("> ", prompt)
-            self._turn_worker = self.run_worker(
-                self._run_turn(prompt), group="agent", exit_on_error=False
-            )
+            self._enqueue_prompt(prompt, expand_mentions=False)
         else:
             self.say("! ", f"unknown command: /{command.name}")
+
+    def _queue_command(self, arg: str) -> None:
+        action, _, remainder = arg.strip().partition(" ")
+        try:
+            if action in ("", "list"):
+                self.say("", "Prompt queue is memory only; it will not survive a crash.")
+                if self.controller.last_failed:
+                    prompt = self.controller.last_failed
+                    self.say("! ", f"last interrupted/failed #{prompt.id}: {prompt.text}")
+                for prompt in self.controller.pending:
+                    self.say("", f"#{prompt.id}: {prompt.text}")
+                if not self.controller.pending:
+                    self.say("", "no pending prompts")
+            elif action == "pause":
+                self.controller.pause()
+            elif action == "resume":
+                self.controller.resume()
+                self._start_queue()
+            elif action == "clear":
+                self.controller.clear()
+                self.say("", "pending queue cleared")
+            elif action == "remove":
+                prompt = self.controller.remove(int(remainder))
+                self.say("", f"removed #{prompt.id}")
+            elif action == "edit":
+                identity, _, text = remainder.partition(" ")
+                if text:
+                    self.controller.edit(int(identity), text)
+                else:
+                    composer = self.query_one("#prompt", HistoryInput)
+                    if composer.value.strip():
+                        raise ValueError("composer has a draft; use /queue edit ID replacement text")
+                    prompt = self.controller.remove(int(identity))
+                    composer.value = prompt.text
+                    composer.cursor_position = len(prompt.text)
+                    composer.focus()
+                    self.say("", f"#{prompt.id} moved to draft; submit to requeue")
+            else:
+                raise ValueError("use /queue [list|pause|resume|clear|edit ID [text]|remove ID]")
+        except (ValueError, KeyError) as exc:
+            self.say("! ", f"queue command failed: {exc}")
+        self._refresh_queue()
 
     def _set_thought_mode(self, arg: str) -> None:
         if not arg:
@@ -1399,7 +1527,7 @@ class HarnessApp(App[None]):
             return
         self._maybe_warn_context(resolved)
 
-    async def _switch_model(self, alias: str) -> None:
+    async def _switch_model(self, alias: str, *, _at_boundary: bool = False) -> None:
         if self.catalog_path is None or not Path(self.catalog_path).exists():
             self.say("! ", "no catalog configured (--catalog)")
             return
@@ -1407,23 +1535,30 @@ class HarnessApp(App[None]):
         # is acceptable here; /model is off the hot path.
         from harness.catalog import Catalog, UnknownAliasError
 
-        catalog = Catalog.load(Path(self.catalog_path))
+        catalog = await asyncio.to_thread(Catalog.load, Path(self.catalog_path))
         if not alias:
             for name in catalog.aliases():
                 self.say("  ", name)
             return
         try:
-            resolved = catalog.resolve(alias)
+            resolved = await asyncio.to_thread(catalog.resolve, alias)
         except UnknownAliasError:
             self.say("! ", f"unknown alias: {alias}")
             return
-        # An in-flight turn finishes its current dispatch with the old alias and
-        # picks the new one up next iteration. The CatalogProvider resolves the
-        # endpoint per call from the ALIAS against its catalog snapshot, so
-        # switching retargets loop.model AND refreshes that snapshot from the
-        # just-loaded catalog — otherwise a models.toml edit made mid-session
-        # validates here but dispatches against the startup catalog. A
-        # CatalogProvider is concurrency-safe.
+        if self._rebuild_in_progress:
+            self.say("! ", "session rebuild in progress; model switch deferred")
+            self._pending_model = alias
+            self._refresh_queue()
+            return
+        if not _at_boundary and (
+            self.controller.active is not None or
+            (self._turn_worker is not None and not self._turn_worker.is_finished) or
+            (self._compact_worker is not None and not self._compact_worker.is_finished)
+        ):
+            self._pending_model = alias
+            self.say("", f"model {alias} selected for after this turn")
+            self._refresh_queue()
+            return
         from harness.cli import _make_pricing_for
         from harness.provider_litellm import CatalogProvider
 
@@ -1463,6 +1598,16 @@ class HarnessApp(App[None]):
         self.say("", f"model → {alias} ({resolved.route})")
         self._maybe_warn_context(resolved)
         self._refresh_statusbar()
+        self._refresh_queue()
+
+    async def _apply_pending_model(self) -> None:
+        if self._pending_model:
+            alias, self._pending_model = self._pending_model, None
+            try:
+                await self._switch_model(alias, _at_boundary=True)
+            except Exception as exc:
+                self.controller.pause()
+                self.say("! ", f"model switch failed ({type(exc).__name__}); current selection retained")
 
     def action_interrupt(self) -> None:
         # The priority Esc binding preempts modal bindings: with a permission
@@ -1513,6 +1658,7 @@ class HarnessApp(App[None]):
                 pass
             self.say("! ", "compact cancelled")
         finally:
+            await self._apply_pending_model()
             self._interrupting = False
 
     async def _after_interrupt(self, worker) -> None:
@@ -1527,14 +1673,20 @@ class HarnessApp(App[None]):
             self._clear_live()
             self.say("! ", "interrupted")
         finally:
+            await self._apply_pending_model()
             self._interrupting = False
 
     async def _finish(self) -> None:
         if self._ended:
             return
         self._ended = True
+        workers = [w for w in (self._turn_worker, self._compact_worker) if w is not None]
         self.workers.cancel_group(self, "agent")
-        await asyncio.sleep(0)  # let the cancelled turn unwind before SessionEnded lands
+        for worker in workers:
+            try:
+                await worker.wait()
+            except (WorkerCancelled, WorkerFailed):
+                pass
         try:
             await self.kernel.loop.end()
         except RuntimeError:

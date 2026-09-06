@@ -5,6 +5,7 @@ import asyncio
 from typing import Callable
 
 from harness.dispatcher import Dispatcher, ToolOutcome
+from harness.execution import ExecutionScope
 from harness.events import (
     CustomEvent,
     ErrorRaised,
@@ -40,6 +41,7 @@ class AgentLoop:
         pricing_for: Callable[[ModelId], dict[str, float]] | None = None,
         pinned: bool = False,
         redact: StringRedactor = identity_redact,
+        scope: ExecutionScope | None = None,
     ) -> None:
         self.session = session
         self.provider = provider
@@ -59,7 +61,8 @@ class AgentLoop:
         self.pricing_for = pricing_for
         self.model_pinned = pinned
         self.dispatcher = Dispatcher(
-            session=session, registry=registry, hooks=hooks, resolver=resolver, redact=redact
+            session=session, registry=registry, hooks=hooks, resolver=resolver, redact=redact,
+            scope=scope,
         )
         self.on_chunk: Callable[[Chunk], None] | None = None
         self._ended = False
@@ -133,8 +136,15 @@ class AgentLoop:
                     self._turn_outcomes[call.call_id] = outcome
                     return outcome
 
+                tasks = [asyncio.create_task(_run_one(c)) for c in calls]
                 try:
-                    outcomes = await asyncio.gather(*[_run_one(c) for c in calls])
+                    try:
+                        outcomes = await asyncio.gather(*tasks)
+                    except BaseException:
+                        for task in tasks:
+                            task.cancel()
+                        await asyncio.gather(*tasks, return_exceptions=True)
+                        raise
                 except Exception as exc:
                     try:
                         self.session.append(
@@ -165,7 +175,7 @@ class AgentLoop:
     def repair_turn(self) -> int:
         repaired = 0
         for call in self._dangling_tool_calls():
-            outcome = self._turn_outcomes.get(call.call_id)
+            outcome = self._turn_outcomes.get(call.call_id) or self.dispatcher.terminal_tools.get(call.call_id)
             if outcome is not None:
                 self.history.append(
                     Message.tool_result(

@@ -9,6 +9,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Sequence
 
 from harness.hooks import HookBus
+from harness.controller import InteractionController
+from harness.execution import ExecutionBudget, ExecutionLimits, ExecutionScope
 from harness.interaction import HeadlessResolver, Resolver
 from harness.loop import AgentLoop
 from harness.mcp_config import McpConfigError, McpServerSpec, load_mcp_config, load_mcp_file
@@ -39,6 +41,7 @@ class Kernel:
     plugins: "LoadedPlugins | None" = None
     plugin_warnings: list[str] = field(default_factory=list)
     _plugin_pumps: list = field(default_factory=list)
+    controller: InteractionController = field(default_factory=InteractionController)
 
     def set_provider(self, provider: ModelProvider) -> None:
         """Single point for retargeting the model provider mid-session. The
@@ -85,6 +88,7 @@ def build_kernel(
     pricing_for: "Callable[[ModelId], dict[str, float]] | None" = None,
     routing_rules: "RoutingRuleSet | None" = None,
     model_pinned: bool = False,
+    execution_limits: ExecutionLimits | None = None,
 ) -> Kernel:
     from harness.resume import resume_session
 
@@ -187,6 +191,9 @@ def build_kernel(
     if transcript is not None:
         loop_kwargs["history"] = transcript
     loop = AgentLoop(**loop_kwargs)
+    scope = ExecutionScope(session, registry, ExecutionBudget(execution_limits or ExecutionLimits()))
+    loop.dispatcher.scope = scope
+    runner._root_scopes[str(session.id)] = scope
     if hasattr(provider, "bind_dispatcher"):
         provider.bind_dispatcher(loop.dispatcher)
     if routing_rules is not None:
@@ -225,7 +232,7 @@ def build_kernel(
 
 
 async def run_once(kernel: Kernel, prompt: str) -> str:
-    from harness.events import CustomEvent, UserInterrupt
+    from harness.events import CustomEvent
     from harness.plugins import start_subscriber_pumps
 
     pump_tasks: list = []
@@ -255,12 +262,20 @@ async def run_once(kernel: Kernel, prompt: str) -> str:
                 )
             kernel._plugin_pumps = start_subscriber_pumps(kernel)
             pump_tasks = kernel._plugin_pumps
-        result = await kernel.loop.run_turn(prompt)
+        result = ""
+
+        async def execute(pending):
+            nonlocal result
+            kernel.controller.phase = "working"
+            result = await kernel.loop.run_turn(pending.text)
+
+        kernel.controller.submit(prompt, expand_mentions=False)
+        await kernel.controller.run_next(execute)
         await kernel.loop.end()
         return result
     except asyncio.CancelledError:
         try:
-            kernel.session.append(UserInterrupt())
+            kernel.loop.interrupt_turn()
         except Exception:
             pass
         raise

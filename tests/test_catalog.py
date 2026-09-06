@@ -1,5 +1,7 @@
 # tests/test_catalog.py
 import pytest
+import subprocess
+import sys
 
 from harness.catalog import Catalog, ResolvedModel, UnknownAliasError
 
@@ -64,3 +66,15 @@ def test_pricing_dict_for_events(tmp_path):
     assert set(d) == {"input_cost_per_token", "output_cost_per_token"}
     resolved_none = _catalog(tmp_path).resolve("mystery")
     assert resolved_none.pricing_dict() == {}
+
+
+def test_catalog_resolution_never_imports_inference_runtime():
+    code = """
+import sys
+from harness.catalog import Catalog
+resolved = Catalog({'local': {'route': 'openai/local', 'max_input_tokens': 8192}}).resolve('local')
+assert resolved.max_input_tokens == 8192
+assert 'litellm' not in sys.modules
+"""
+    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0, result.stderr

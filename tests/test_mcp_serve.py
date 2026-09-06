@@ -3,6 +3,8 @@ call routes through the injected dispatch callable (the dispatcher seam)."""
 
 from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
+import httpx
+from urllib.parse import urlsplit
 
 from harness.dispatcher import ToolOutcome
 from harness.blobs import BlobStore
@@ -111,5 +113,22 @@ async def test_large_blob_result_reaches_mcp_client(tmp_path):
                 result = await session.call_tool("echo", {"text": "hi"})
         assert result.isError is False
         assert result.content[0].text == payload
+    finally:
+        await server.stop()
+
+
+async def test_http_requests_require_the_per_server_capability():
+    dispatch, calls = _dispatch_recorder(ToolOutcome(text="secret", blob=None, is_error=False))
+    server = McpToolServer(specs=(ECHO,), dispatch=dispatch)
+    await server.start()
+    try:
+        address = urlsplit(server.url)
+        base = f"{address.scheme}://{address.netloc}"
+        async with httpx.AsyncClient() as client:
+            response = await client.post(base + "/mcp", json={"jsonrpc": "2.0", "method": "tools/list", "id": 1})
+            assert response.status_code == 401
+            response = await client.post(server.url, headers={"Origin": "https://untrusted.example"}, json={})
+            assert response.status_code == 403
+        assert calls == []
     finally:
         await server.stop()

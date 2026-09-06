@@ -21,6 +21,7 @@ from harness.events import (
     PermissionResolved,
     RetryAttempted,
     ToolCallCompleted,
+    ToolCallCancelled,
     ToolCallProposed,
 )
 from harness.hooks import (
@@ -29,13 +30,14 @@ from harness.hooks import (
     ProposedToolCall,
     decision_to_payload,
 )
+from harness.execution import BudgetExceeded, ExecutionScope, current_scope
 from harness.interaction import PermissionRequest, Resolver
 from harness.messages import Message, materialize_tool_results
 from harness.provider import Chunk, ModelProvider, Usage, collect
 from harness.callctx import reset_current_call_id, set_current_call_id
 from harness.redaction import StringRedactor, identity_redact
 from harness.session import Session
-from harness.tools import FilteredRegistry, ToolRegistry, ToolSpec
+from harness.tools import FilteredRegistry, ToolRegistry, ToolSpec, validate_arguments
 from harness.types import ModelId, new_call_id
 
 # errors inline (never blob-spilled) so they stay readable; cap keeps log lines bounded
@@ -86,6 +88,7 @@ class Dispatcher:
         resolver: Resolver,
         retry_delays: tuple[float, ...] = (0.5, 2.0, 8.0),
         redact: StringRedactor = identity_redact,
+        scope: ExecutionScope | None = None,
     ) -> None:
         self.session = session
         self.registry = registry
@@ -93,6 +96,8 @@ class Dispatcher:
         self.resolver = resolver
         self.retry_delays = retry_delays
         self._redact = redact
+        self.scope = scope or ExecutionScope(session, registry)
+        self.terminal_tools: dict = {}
 
     async def _run_chain(self, action) -> tuple[object | None, str | None]:
         """Run hooks + Ask resolution. Returns (effective_action, denial_reason)."""
@@ -142,6 +147,31 @@ class Dispatcher:
         self.session.append(
             ToolCallProposed(call_id=call.call_id, tool=call.tool, args=dict(call.args))
         )
+        scope_token = current_scope.set(self.scope)
+        try:
+            try:
+                self.scope.budget.reserve_call("tool")
+            except BudgetExceeded as exc:
+                result = ToolOutcome(text=str(exc), blob=None, is_error=True)
+                self.session.append(ToolCallCompleted(
+                    call_id=call.call_id, result_text=result.text, is_error=True,
+                ))
+            else:
+                result = await self._dispatch_tool_body(call)
+        except asyncio.CancelledError:
+            text = "(call cancelled; side effects may have occurred)"
+            self.session.append(ToolCallCancelled(call_id=call.call_id, result_text=text))
+            self.terminal_tools[call.call_id] = ToolOutcome(
+                text=text, blob=None, is_error=True,
+            )
+            raise
+        else:
+            self.terminal_tools[call.call_id] = result
+            return result
+        finally:
+            current_scope.reset(scope_token)
+
+    async def _dispatch_tool_body(self, call: ProposedToolCall) -> ToolOutcome:
         effective, denial = await self._run_chain(call)
         if denial is not None:
             self.session.append(
@@ -164,12 +194,14 @@ class Dispatcher:
         try:
             token = set_current_call_id(call.call_id)
             try:
-                raw = await self.registry.get(effective.tool)(dict(effective.args))
+                tool = self.registry.get(effective.tool)
+                validate_arguments(tool.spec, dict(effective.args))
+                raw = await tool(dict(effective.args))
             finally:
                 reset_current_call_id(token)
             is_error = False
         except Exception as exc:
-            raw, is_error = f"tool error: {exc}", True
+            raw, is_error = self._redact(f"tool error: {exc}"), True
             if len(raw) > _ERROR_TEXT_CAP:
                 raw = raw[:_ERROR_TEXT_CAP] + " \u2026[truncated]"
         duration_ms = int((time.monotonic() - started) * 1000)
@@ -241,6 +273,7 @@ class Dispatcher:
             try:
                 while True:
                     try:
+                        self.scope.budget.reserve_call("model")
                         source = provider.complete(
                             model=effective_model, messages=resolved_messages, tools=tools
                         )

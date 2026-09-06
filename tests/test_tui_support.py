@@ -43,6 +43,13 @@ def test_history_ring_remember_resets_walk():
     assert ring.prev("") == "c"
 
 
+def test_history_navigation_restores_unsent_draft():
+    ring = HistoryRing()
+    ring.remember("old prompt")
+    assert ring.prev("work in progress") == "old prompt"
+    assert ring.next("old prompt") == "work in progress"
+
+
 def test_parse_slash_command():
     assert parse_slash_command("hello") is None
     assert parse_slash_command("/help") == SlashCommand(name="help", arg="")

@@ -232,7 +232,7 @@ def _read_envelopes_for(tmp_path):
     return read_session(tmp_path, SessionId("s2"))
 
 
-_CANCELLED_TEXT = "(call did not complete)"
+_CANCELLED_TEXT = "(call cancelled; side effects may have occurred)"
 
 
 async def test_interrupt_during_model_is_benign(tmp_path):

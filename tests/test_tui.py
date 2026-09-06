@@ -183,7 +183,7 @@ class GatedProvider:
         yield StreamStop(stop_reason="end_turn")
 
 
-async def test_second_submit_while_turn_running_is_rejected(tmp_path):
+async def test_second_submit_while_turn_running_is_queued(tmp_path):
     provider = GatedProvider()
     app = make_app(tmp_path, provider=provider, model=ModelId("gated"))
     async with app.run_test() as pilot:
@@ -194,32 +194,20 @@ async def test_second_submit_while_turn_running_is_rejected(tmp_path):
         await pilot.press(*"two", "enter")
         await pilot.pause(0.1)
         lines = "\n".join(str(line) for line in app.query_one(RichLog).lines)
-        assert "already running" in lines
+        assert "queued #2: two" in lines
+        assert [p.text for p in app.controller.pending] == ["two"]
         provider.release.set()  # let the first turn finish
         await pilot.pause(0.3)
         lines = "\n".join(str(line) for line in app.query_one(RichLog).lines)
         assert "gated done" in lines
-    # exactly ONE user_message in the log
+    # Both accepted prompts eventually run, in submission order.
     app.kernel.session.close()
     envelopes = read_session(tmp_path, app.kernel.session.id)
-    assert [e.event.type for e in envelopes].count("user_message") == 1
+    assert [e.event.text for e in envelopes if e.event.type == "user_message"] == ["one", "two"]
 
 
-async def test_busy_guard_rechecked_after_mention_injection_await(tmp_path):
-    """M-1: _refuse_if_busy() was checked only BEFORE await _inject_mentions
-    -- a second submit that starts (and keeps running) its own turn while an
-    earlier submit is still parked in a slow injection would, once that
-    earlier submit's injection finally resolves, silently overwrite
-    _turn_worker/turn_context and start ITS OWN turn too -- two concurrent
-    run_turn workers. The guard must be re-checked AFTER the await too,
-    dropping the turn (with a visible message) if something is now busy.
-
-    Textual's message pump serializes handling of the SAME Input.Submitted
-    source (a genuinely concurrent second keypress can't even be dispatched
-    while the first _submitted call is parked inline -- pilot.press() itself
-    would hang waiting for the pump to go idle), so this drives two
-    concurrent _submitted() calls directly, exactly as two independently
-    scheduled dispatches of the same handler would race in practice."""
+async def test_slow_mention_preparation_keeps_submission_order(tmp_path):
+    """Preparation owns the active turn; a later submission stays queued."""
     provider = GatedProvider()
     calls = 0
     real_complete = provider.complete
@@ -251,23 +239,25 @@ async def test_busy_guard_rechecked_after_mention_injection_await(tmp_path):
         )
         await pilot.pause(0.05)  # task1 now parked in the gated injection await
         task2 = asyncio.create_task(app._submitted(Input.Submitted(input=prompt, value="second")))
-        await pilot.pause(0.1)  # task2's (mention-free) injection is instant; its turn is
-        # now RUNNING (parked on GatedProvider's OWN gate) -- _turn_worker.is_running is True
+        await pilot.pause(0.1)
         assert app._turn_worker is not None and app._turn_worker.is_running
+        assert calls == 0
+        assert app.controller.active.text == "slow one"
+        assert [p.text for p in app.controller.pending] == ["second"]
 
-        injection_gate.set()  # release task1 -- its post-await recheck must refuse now
+        injection_gate.set()
         await asyncio.wait_for(asyncio.gather(task1, task2), timeout=5)
         await pilot.pause(0.1)
 
         lines = "\n".join(str(line) for line in app.query_one(RichLog).lines)
-        assert "already running" in lines
+        assert "queued #2: second" in lines
 
-        provider.release.set()  # let the surviving (second) turn finish
+        provider.release.set()
         await pilot.pause(0.3)
 
-    assert calls == 1  # exactly one turn ever dispatched to the provider
-    texts = [m.text() for m in app.kernel.loop.history]
-    assert not any("slow one" in t for t in texts)  # the refused turn never ran
+    assert calls == 2
+    texts = [m.text() for m in app.kernel.loop.history if m.role == "user"]
+    assert texts == ["slow one", "second"]
 
 
 async def test_turn_failure_renders_and_loop_survives(tmp_path):
@@ -1113,8 +1103,8 @@ async def test_plugin_command_listed_in_help_and_unknown_still_unknown(tmp_path)
         assert "unknown command" in lines
 
 
-async def test_plugin_command_respects_turn_guard(tmp_path):
-    """Invoking a plugin command mid-turn renders the \"already running\" message."""
+async def test_plugin_command_uses_the_prompt_queue(tmp_path):
+    """Plugin commands keep their expansion and wait for the active turn."""
     loaded = _make_echo_plugin(tmp_path / "plugins")
     provider = GatedProvider()  # parks until released -- never released here
     app = make_app(tmp_path, plugins=loaded, provider=provider, model=ModelId("gated"))
@@ -1126,7 +1116,8 @@ async def test_plugin_command_respects_turn_guard(tmp_path):
         await pilot.press(*"/echo-args hi", "enter")  # plugin command mid-turn
         await pilot.pause(0.1)
         lines = "\n".join(str(line) for line in app.query_one(RichLog).lines)
-        assert "already running" in lines
+        assert "queued #2: Please echo: hi" in lines
+        assert app.controller.pending[0].expand_mentions is False
 
 
 async def test_slash_model_upgrade_wires_claude_code_backend(tmp_path):
@@ -1884,12 +1875,9 @@ async def test_esc_during_compact_cancels_cleanly_without_user_interrupt(tmp_pat
     assert "compaction_applied" not in event_types
 
 
-async def test_compact_worker_blocks_other_commands_while_running(tmp_path):
-    """The busy guard must ALSO check the (separately tracked) compact
-    worker -- /compact still blocks other commands while it's running, even
-    though it's no longer tracked in _turn_worker (item 8)."""
+async def test_compact_worker_queues_new_prompts_until_completion(tmp_path):
     provider = _GateOnNthCallProvider(
-        [text_turn("first reply"), text_turn("SUMMARY-TEXT")], gate_at=2
+        [text_turn("first reply"), text_turn("SUMMARY-TEXT"), text_turn("follow-up")], gate_at=2
     )
     app = make_app(tmp_path, provider=provider, model=ModelId("gated"))
     async with app.run_test() as pilot:
@@ -1904,10 +1892,13 @@ async def test_compact_worker_blocks_other_commands_while_running(tmp_path):
         await pilot.press(*"sneaky", "enter")
         await pilot.pause(0.1)
         lines = "\n".join(str(line) for line in app.query_one(RichLog).lines)
-        assert "already running" in lines
+        assert "queued #2: sneaky" in lines
+        assert app.controller.pending[0].text == "sneaky"
 
         provider.release.set()
         await pilot.pause(0.3)
+        assert not app.controller.pending
+        assert app.kernel.loop.history[-1].text() == "follow-up"
 
 
 # --- /resume ---
@@ -2090,6 +2081,8 @@ async def test_rebuild_in_progress_refuses_turn_and_clear_and_ignores_esc(tmp_pa
 
             # /clear is refused too -- it would try to tear down a kernel
             # that's already mid-teardown
+            assert app.query_one("#prompt", Input).value == "sneaky"
+            app.query_one("#prompt", Input).value = ""
             await pilot.press(*"/clear", "enter")
             await pilot.pause(0.1)
             lines = "\n".join(str(line) for line in app.query_one(RichLog).lines)

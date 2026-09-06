@@ -8,7 +8,10 @@ restated locally only for models it doesn't know (local models). Models are
 real streams - "litellm routes there" is not "the harness works there"."""
 
 import tomllib
+import json
 from dataclasses import dataclass, field
+from functools import cache
+from importlib.metadata import PackageNotFoundError, distribution
 from pathlib import Path
 
 from harness.types import ModelId
@@ -91,11 +94,26 @@ class Catalog:
         return tuple(self.entries)
 
 
-def _cost_map_lookup(route: str) -> dict:
-    """litellm.model_cost keyed by bare or provider-prefixed names; try both."""
-    import litellm  # deferred: importing litellm is slow; only catalog users pay it
+@cache
+def _packaged_cost_map() -> dict:
+    """Read installed metadata without importing a runtime or fetching remote prices."""
+    try:
+        path = distribution("litellm").locate_file("litellm/model_prices_and_context_window_backup.json")
+        cost = json.loads(path.read_text(encoding="utf-8"))
+    except (PackageNotFoundError, OSError, ValueError):
+        return {}  # Missing metadata means unknown, never zero-cost inference.
+    aliases = {}
+    for entry in cost.values():
+        if isinstance(entry, dict) and isinstance(entry.get("aliases"), list):
+            for alias in entry["aliases"]:
+                if isinstance(alias, str) and alias not in cost:
+                    aliases.setdefault(alias, entry)
+    return {**cost, **aliases}
 
-    cost = litellm.model_cost
+
+def _cost_map_lookup(route: str) -> dict:
+    """Installed snapshot keyed by bare or provider-prefixed names; overrides win."""
+    cost = _packaged_cost_map()
     for key in (route, route.split("/", 1)[-1]):
         if key in cost:
             return cost[key]

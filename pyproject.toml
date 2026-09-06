@@ -9,6 +9,7 @@ dependencies = [
     "mcp>=1.24,<2",
     "textual>=8.2.7,<9",
     "pyyaml>=6.0",
+    "jsonschema>=4.23",
 ]
 
 [project.optional-dependencies]

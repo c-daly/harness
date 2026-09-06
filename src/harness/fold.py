@@ -96,7 +96,10 @@ def fold(envelopes: list[Envelope]) -> FoldedState:
             state.open_intents.pop(ev.call_id, None)
             state._append(
                 env.seq,
-                Message.tool_result(ev.call_id, text="(call did not complete)", is_error=True),
+                Message.tool_result(
+                    ev.call_id, text=(ev.result_text if isinstance(ev, ToolCallCancelled)
+                                      else "(call did not complete)"), is_error=True,
+                ),
             )
         elif isinstance(ev, CompactionApplied):
             kept_msgs, kept_seqs = [], []

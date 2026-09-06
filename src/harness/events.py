@@ -111,6 +111,7 @@ class ToolCallCompleted(_Event):
 class ToolCallCancelled(_Event):
     type: Literal["tool_call_cancelled"] = "tool_call_cancelled"
     call_id: CallId
+    result_text: str = "(call did not complete)"
 
 
 class ToolCallAborted(_Event):

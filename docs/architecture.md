@@ -215,6 +215,40 @@ of the valid prefix. A JSON value without its final newline is an uncommitted
 record. Identity or sequence inconsistencies fail loudly rather than being
 silently repaired. Clean readers can observe live logs without taking ownership.
 
+`ExecutionScope` carries the active session, cumulative registry view, and one
+shared `ExecutionBudget` through native delegation and coordination tools.
+Agent definitions narrow the inherited view. The live session tree defaults to
+1,024 model attempts (including retries), 4,096 tool dispatches, 128 child
+reservations, depth 4, and 16 active children. Exhaustion is an explicit error;
+waiting ancestors cannot deadlock a semaphore needed by descendants. These are
+live execution limits, not yet durable token or monetary budgets. Callers can
+provide `ExecutionLimits` to `build_kernel`.
+
+Final rewritten tool arguments are checked against their registered JSON schema
+before execution. External schema references are rejected. Tool cancellation is
+recorded by dispatch, with uncertain side effects stated explicitly; transcript
+repair reuses that result instead of adding a duplicate terminal event.
+
+Outward MCP URLs contain a random per-server bearer capability. Requests without
+it and requests carrying browser origins are rejected before MCP processing.
+The URL is a credential and must not be published in diagnostics. This protects
+the served tool surface; it does not certify an external CLI's native tools or
+filesystem containment.
+
+`InteractionController` owns accepted prompts for both TUI and headless clients.
+The first queue is bounded and in memory; it cannot survive a crash. Pending
+prompts are not conversation events until their turn starts. The TUI keeps drafts
+editable, shows queued work, supports `/queue` list/edit/remove/pause/resume/clear,
+and pauses pending work on failure or cancellation. Mention reads are part of
+the active turn's preparation. Model switches apply between logical turns,
+including all tool iterations, and shutdown waits for cancelled workers.
+
+The status, queue, and composer share one bottom container so their final
+terminal regions do not overlap. Catalog pricing/context lookup reads the
+installed LiteLLM metadata snapshot without importing the inference runtime or
+fetching remote prices. Catalog overrides remain authoritative; that snapshot
+is not a claim of current vendor pricing.
+
 ---
 
 ## Hooks: two families

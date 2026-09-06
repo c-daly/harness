@@ -2,6 +2,8 @@
 
 Implementation branch: `feat/core-agency`, based on `main` at `ce722b4`.
 
+Committed checkpoint: `0351b75` (roadmap, lifecycle, and storage/result integrity).
+
 **Resumed after machine restart.** All 26 files in the
 [restart handoff](../../../HANDOFF.md) matched their saved hashes before new
 edits. That handoff remains a historical snapshot; this record tracks subsequent
@@ -14,8 +16,8 @@ qualification. Milestone completion requires its roadmap gates, not just code.
 
 | Milestone | State | Evidence / remaining work |
 |---|---|---|
-| M0 baseline and feasibility | In progress | Baseline: 885 passed, 7 skipped, 4 warnings in 254.23s. Lint fixed, CI defined, sdist/wheel built. Local request shape investigated; broader quality, latency, and installation checks remain. |
-| M1 correctness and interaction | In progress | Lifecycle and storage integration: 914 passed, 7 skipped. Four subsequent delegation/validation RED cases reproduced. Input/controller and applicable enforcement controls remain. |
+| M0 baseline and feasibility | In progress | Baseline: 885 passed, 7 skipped. CI, build and fresh wheel installation checked locally. Two restart inference probes remain too slow for synchronous UI use. Hardware/profile selection and cold startup remain. |
+| M1 correctness and interaction | In progress | 931 passed, 7 skipped after storage, delegation, controller/UI and MCP capability changes. Context budgets, broader enforcement/redaction and fault qualification remain. |
 | M2 inference / agent contracts | Pending | Separate execution kinds and migrate actual call paths. |
 | M3 local core assistant | Pending | Readiness, runtime ownership, normal memory access, and offline task journey. |
 | M4 bounded semantic agency | Pending | Typed functions, evaluation, scheduling, capability-aware fallback, and operational self-improvement lifecycle. |
@@ -101,8 +103,43 @@ controls must stay independent of inference completion.
   The next file, `tests/test_delegation_scope.py`, was written after this run's
   collection and separately produced four expected RED failures; it is not
   evidence against the completed storage change or a passing delegation gate.
-- Full context budgeting, root-shared delegation limits, and broader storage
+- Full context budgeting and broader storage
   fault qualification remain separate work. This is not a complete M1 claim.
+
+## Delegation, controller, and UI checkpoint
+
+- Descendants retain their actual parent session and intersect tool restrictions,
+  including through coordination tools. Root-shared dispatch/depth/child limits
+  cannot be reset by a grandchild. Tests cover excluded tool attempts, recursive
+  limits, retry accounting, cancellation release, and failed child initialization.
+- Dispatcher validates final arguments, records tool cancellation, and preserves
+  the same terminal result in live and folded history. Concurrent tool failures
+  settle siblings before teardown. Outward MCP requires a per-run URL capability
+  and rejects browser-origin requests.
+- Both frontends use the core prompt controller. TUI follow-ups are acknowledged
+  and queued; edit/remove/pause/resume/clear are explicit, draft history is
+  preserved, and model changes wait for logical turn boundaries. The queue is
+  visibly **memory only**. Queued text is not logged as user speech until started.
+- Final-compositor tests found overlapping bottom widgets; one container now
+  renders queue, status, and composer without hiding them. Tests verify visible
+  pending/paused state, unsent drafts, edit/remove, and a model switch between
+  whole turns rather than between tool iterations.
+- Catalog resolution no longer imports LiteLLM or triggers its remote cost-map
+  fetch. It reads the installed snapshot; unknown metadata remains unknown.
+- Final integration: **931 passed, 7 skipped, 5 warnings in 261.13s** with
+  `UV_CACHE_DIR=/tmp/uv-cache uv run --offline pytest -q -ra` and localhost/process
+  access. Warnings are the existing deprecated MCP client helper in five tests.
+  Ruff and whitespace checks passed. Sdist/wheel built, and the wheel installed
+  offline into a new isolated environment for the CLI help check.
+- Diagnostic qualification: restricted test runs exposed a 300-second asyncio
+  executor shutdown warning. A minimal `asyncio.to_thread(lambda: 1)` reproduction
+  with a one-second shutdown timeout reproduced it in the restricted sandbox
+  (1.003s), while the same program outside it finished in 0.002s without warning.
+  This distinguishes the sandbox notification issue from catalog SDK imports;
+  do not claim that the metadata change alone fixes that sandbox behavior.
+- This checkpoint does not implement resident local fallback, the inference/agent
+  contract split, or self-improvement experiments/adoption. Those remain active
+  roadmap work, including the user's first-class self-improvement requirement.
 
 ## Validation policy
 

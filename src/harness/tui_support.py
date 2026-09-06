@@ -15,24 +15,24 @@ Answer = str
 
 
 class HistoryRing:
-    """Input history with shell-like up/down semantics.
-
-    Known v1 gap: prev() does not stash the unsaved draft - walking up from a
-    half-typed line and back down loses it."""
+    """Input history with shell-like up/down semantics and an independent draft."""
 
     def __init__(self) -> None:
         self._items: list[str] = []
         self._idx: int | None = None
+        self._draft = ""
 
     def remember(self, line: str) -> None:
         if line and (not self._items or self._items[-1] != line):
             self._items.append(line)
         self._idx = None
+        self._draft = ""
 
     def prev(self, current: str) -> str:
         if not self._items:
             return current
         if self._idx is None:
+            self._draft = current
             self._idx = len(self._items) - 1
         elif self._idx > 0:
             self._idx -= 1
@@ -45,7 +45,7 @@ class HistoryRing:
             self._idx += 1
             return self._items[self._idx]
         self._idx = None
-        return ""
+        return self._draft
 
 
 @dataclass(frozen=True)
