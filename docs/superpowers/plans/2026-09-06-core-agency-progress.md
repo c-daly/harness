@@ -2,7 +2,8 @@
 
 Implementation branch: `feat/core-agency`, based on `main` at `ce722b4`.
 
-Committed checkpoint: `0351b75` (roadmap, lifecycle, and storage/result integrity).
+Committed checkpoints: `0351b75` (roadmap, lifecycle, and storage/result integrity),
+`a2e565e` (controller/UI, delegated scope and limits, catalog, authenticated MCP).
 
 **Resumed after machine restart.** All 26 files in the
 [restart handoff](../../../HANDOFF.md) matched their saved hashes before new

@@ -1,5 +1,17 @@
 # Core agency implementation — restart handoff
 
+> **Resumption update, September 6:** the snapshot below was verified after reboot
+> and has since been implemented further. Current HEAD is `a2e565e`, following
+> `0351b75`, on `feat/core-agency`. The implementation tree is committed; only
+> the preserved user `.claude/` and `.context/` are untracked. Full integration
+> reached **931 passed, 7 skipped**. Read the current
+> [implementation record](docs/superpowers/plans/2026-09-06-core-agency-progress.md)
+> for subsequent storage, delegation, controller/UI, catalog, and MCP changes.
+> The original roadmap remains active: M1 is not yet complete; M2–M6, including
+> resident local fallback and operational self-improvement, remain to implement.
+> Treat the following unstaged-file inventory and hashes as the pre-reboot
+> historical snapshot, not instructions to restore those versions.
+
 **Saved:** 2026-09-06. Work paused at the user's request to restart the machine.
 **Workspace:** `/home/fearsidhe/projects/harness`
 **Branch:** `feat/core-agency`, created from `main` at `ce722b4`.
