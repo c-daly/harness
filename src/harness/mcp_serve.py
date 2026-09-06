@@ -66,6 +66,8 @@ class McpToolServer:
         self._serve_task: asyncio.Task | None = None
         self._port: int | None = None
         self._capability = secrets.token_urlsafe(32)
+        self._stopping = False
+        self._tool_tasks: set[asyncio.Task] = set()
 
     @property
     def url(self) -> str:
@@ -87,13 +89,24 @@ class McpToolServer:
 
         @server.call_tool()
         async def _call_tool(name: str, arguments: dict[str, Any] | None):
+            if self._stopping:
+                raise ValueError("Agent runtime stopped")
             if name not in self._by_name:
                 raise ValueError(f"unknown tool {name!r}")
-            outcome = await self._dispatch(
+            task = asyncio.create_task(self._dispatch(
                 ProposedToolCall(
                     call_id=new_call_id(), tool=ToolName(name), args=arguments or {}
                 )
-            )
+            ))
+            self._tool_tasks.add(task)
+            try:
+                outcome = await task
+            except asyncio.CancelledError:
+                if self._stopping:
+                    raise ValueError("Agent runtime stopped") from None
+                raise
+            finally:
+                self._tool_tasks.discard(task)
             if outcome.is_error:
                 raise ValueError(outcome.read_text())
             return [mcp_types.TextContent(type="text", text=outcome.read_text())]
@@ -115,6 +128,7 @@ class McpToolServer:
         return app
 
     async def start(self) -> None:
+        self._stopping = False
         config = uvicorn.Config(
             self._build_app(), host="127.0.0.1", port=0, log_level="error", lifespan="on"
         )
@@ -127,6 +141,14 @@ class McpToolServer:
         self._port = self._uvicorn.servers[0].sockets[0].getsockname()[1]
 
     async def stop(self) -> None:
+        # HTTP shutdown alone can leave MCP dispatch work alive. Own and settle
+        # it explicitly before the runtime may publish a terminal fact.
+        self._stopping = True
+        tasks = tuple(self._tool_tasks)
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
         if self._uvicorn is not None:
             self._uvicorn.should_exit = True
         if self._serve_task is not None:

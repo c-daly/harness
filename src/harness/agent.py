@@ -50,6 +50,8 @@ class AgentResult(BaseModel):
     status: Literal["completed", "incomplete", "failed", "cancelled", "aborted"]
     reason: str = ""
     output: BlobRef | None = None
+    # Optional bounded assistant response for transcript replay, including reasoning.
+    response: Message | None = None
     usage: Usage = Field(default_factory=Usage)
     acceptance: Literal["unverified"] = "unverified"
     remaining_criteria: tuple[str, ...] = ()
@@ -62,7 +64,7 @@ class AgentResult(BaseModel):
 class AgentProgress:
     task_id: str
     run_id: str
-    phase: Literal["inference", "tools", "stream"]
+    phase: Literal["inference", "execution", "tools", "stream"]
     iteration: int
     chunk: Chunk | None = None
 
@@ -77,6 +79,7 @@ class AgentRuntime(Protocol):
 class ActiveAgentRun:
     task: AgentTask
     run_id: str
+    runtime: str = "harness"
 
 
 current_agent_run: ContextVar[ActiveAgentRun | None] = ContextVar("agent_run", default=None)
@@ -88,6 +91,7 @@ class AgentOutput:
     status: Literal["completed", "incomplete"] = "completed"
     reason: str = ""
     usage: Usage = Usage()
+    response: Message | None = None
 
 
 def add_usage(total: Usage, increment: Usage) -> Usage:
@@ -98,6 +102,8 @@ def add_usage(total: Usage, increment: Usage) -> Usage:
 async def execute_task(
     session: "Session", task: AgentTask, *, runtime: str, model: ModelId | None,
     execute: Callable[[], Awaitable[AgentOutput]],
+    purpose: Literal["task", "conversation"] = "task",
+    capabilities: dict | None = None,
 ) -> AgentResult:
     """Record one run. Failures/cancellation propagate after recording their outcome.
 
@@ -113,8 +119,8 @@ async def execute_task(
                                    parent_run_id=parent.run_id if parent else None,
                                    agent=task.agent, model=model,
                                    acceptance_criteria=task.acceptance_criteria,
-                                   limits=task.limits.model_dump()))
-    token = current_agent_run.set(ActiveAgentRun(task, run_id))
+                                   limits=task.limits.model_dump(), capabilities=capabilities or {}))
+    token = current_agent_run.set(ActiveAgentRun(task, run_id, runtime))
 
     def terminal(status, reason="", **kwargs):
         return AgentResult(task_id=task.id, run_id=run_id, status=status, reason=reason,
@@ -127,8 +133,11 @@ async def execute_task(
             payload = output.text.encode("utf-8")
             if len(payload) > task.limits.max_response_bytes:
                 raise BudgetExceeded("agent result exceeds its output limit")
+            response = Message.model_validate(output.response.model_dump()) if output.response else None
+            if response is not None and (response.role != "assistant" or response.text() != output.text):
+                raise ValueError("agent response must match its assistant output")
             result = terminal(output.status, output.reason, output=session.blobs.put(payload),
-                              usage=output.usage)
+                              usage=output.usage, response=response)
         except asyncio.CancelledError:
             session.append(AgentRunFinished(result=terminal("cancelled", "cancelled")))
             raise
@@ -139,7 +148,7 @@ async def execute_task(
         except Exception as exc:
             session.append(AgentRunFinished(result=terminal("failed", type(exc).__name__)))
             raise
-        session.append(AgentRunFinished(result=result))
+        session.append(AgentRunFinished(result=result, purpose=purpose))
         return result
     finally:
         current_agent_run.reset(token)

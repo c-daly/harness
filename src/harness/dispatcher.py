@@ -137,8 +137,11 @@ class Dispatcher:
         return outcome.effective, None
 
     async def dispatch_tool(self, call: ProposedToolCall) -> ToolOutcome:
+        active_run = current_agent_run.get()
+        lineage = {"task_id": active_run.task.id, "agent_run_id": active_run.run_id,
+                   "purpose": "conversation" if active_run.runtime == "harness" else "agent-task"} if active_run else {}
         self.session.append(
-            ToolCallProposed(call_id=call.call_id, tool=call.tool, args=dict(call.args))
+            ToolCallProposed(call_id=call.call_id, tool=call.tool, args=dict(call.args), **lineage)
         )
         scope_token = current_scope.set(self.scope)
         try:
@@ -271,9 +274,21 @@ class Dispatcher:
             pricing=pricing, pricing_for=pricing_for, pinned=pinned, on_chunk=on_chunk,
         )
 
+    async def dispatch_agent_response(
+        self, *, provider, request: InferenceRequest, runtime: str,
+        pricing=None, pricing_for=None, pinned=False, on_chunk=None,
+    ) -> InferenceResult:
+        """Compatibility transport inside a bound task; hooks cannot change runtime."""
+        if request.purpose != "agent-task":
+            raise ValueError("agent transport requires agent-task purpose")
+        return await self._dispatch_generation(
+            provider=provider, request=request, allow_agent=True, required_runtime=runtime,
+            pricing=pricing, pricing_for=pricing_for, pinned=pinned, on_chunk=on_chunk,
+        )
+
     async def _dispatch_generation(
         self, *, provider, request: InferenceRequest, allow_agent: bool,
-        pricing, pricing_for, pinned, on_chunk,
+        pricing, pricing_for, pinned, on_chunk, required_runtime=None,
     ) -> InferenceResult:
         request = InferenceRequest.model_validate(request.model_dump())
         model, messages, tools, purpose = request.model, request.messages, request.tools, request.purpose
@@ -311,6 +326,11 @@ class Dispatcher:
                 raise ModelDispatchBlocked("rewrite changed action type — refused")
             effective_model = effective.model
             execution_kind = kind_for(effective_model)
+            if required_runtime is not None:
+                describe = getattr(provider, "agent_runtime_info", None)
+                info = describe(effective_model) if describe is not None else None
+                if execution_kind != "agent" or info is None or info.runtime != required_runtime:
+                    raise ProviderError("routing changed the bound agent runtime; select a new runtime explicitly")
             if execution_kind == "agent" and not allow_agent:
                 raise ProviderError(
                     f"{effective_model!r} is an agent runtime; select an inference alias for {purpose}"
@@ -347,6 +367,8 @@ class Dispatcher:
                             message, usage, stop_reason = await collect_bounded(
                                 source, attempt_request, on_chunk=observed,
                             )
+                            if required_runtime is not None and message.tool_calls():
+                                raise ProviderError("agent runtime returned unexecuted tool proposals")
                             result = InferenceResult(message, usage, stop_reason)
                         else:
                             bounded_provider = provider if hasattr(provider, "infer") else LegacyCompletionAdapter(provider)

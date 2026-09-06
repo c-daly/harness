@@ -71,6 +71,9 @@ class ToolCallProposed(_Event):
     call_id: CallId
     tool: ToolName
     args: dict[str, Any]
+    purpose: Literal["conversation", "agent-task"] = "conversation"
+    task_id: str | None = None
+    agent_run_id: str | None = None
 
 
 class ModelCallProposed(_Event):
@@ -226,11 +229,13 @@ class AgentRunStarted(_Event):
     model: ModelId | None = None
     acceptance_criteria: tuple[str, ...] = ()
     limits: dict[str, Any] = Field(default_factory=dict)
+    capabilities: dict[str, Any] = Field(default_factory=dict)
 
 
 class AgentRunFinished(_Event):
     type: Literal["agent_run_finished"] = "agent_run_finished"
     result: AgentResult
+    purpose: Literal["task", "conversation"] = "task"
 
 
 # --- transcript transforms ---

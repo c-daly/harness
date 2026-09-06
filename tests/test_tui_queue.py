@@ -26,6 +26,31 @@ async def test_stats_tick_after_widgets_unmount_does_not_crash(tmp_path):
         app._refresh_statusbar()
 
 
+async def test_external_execution_is_visible_and_interruption_preserves_draft(tmp_path):
+    from tests.test_external_agent_runtime import ScriptedCodex
+
+    provider = ScriptedCodex(hang=True)
+    app = make_app(tmp_path, provider=provider, model=ModelId("codex/default"))
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.1)
+        await pilot.click("#prompt")
+        await pilot.press(*"first", "enter")
+        await asyncio.wait_for(provider.entered.wait(), 2)
+        await pilot.press(*"next", "enter")
+        await pilot.press(*"unsent draft")
+        assert "agent running" in screen_text(app)
+        await pilot.press("escape")
+        await pilot.pause(0.3)
+        assert provider.closed
+        assert "Queue paused" in screen_text(app) and "#2 next" in screen_text(app)
+        assert app.query_one("#prompt", Input).value == "unsent draft"
+        assert "unsent draft" in screen_text(app)
+        from harness.fold import fold
+        state = fold(read_session(tmp_path, app.kernel.session.id))
+        assert len(state.agent_runs) == 2 and not state.open_agent_runs
+        assert all(r.status == "cancelled" for r in state.agent_runs.values())
+
+
 async def test_queue_visible_draft_preserved_and_cancel_requires_resume(tmp_path):
     provider = GatedProvider()
     app = make_app(tmp_path, provider=provider, model=ModelId("gated"))

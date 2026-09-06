@@ -81,7 +81,8 @@ arrives; they cannot constrain generation before a runtime reports usage. Unknow
 usage remains unknown. Response bounds cover owned chunks, not raw subprocess
 stdout/stderr, native tool side effects, or arbitrary scratch-file growth; those
 still require the planned external-runtime containment and capability gates.
-External runtimes still need migration to the task contract below.
+Codex now has the task binding described below; Claude Code and Antigravity
+remain on this legacy path.
 
 Catalog entries infer `execution_kind = "agent"` from an external CLI backend,
 otherwise `inference`. An explicit value must agree with the backend. Old aliases
@@ -125,8 +126,9 @@ Each run records `AgentRunStarted` before work and `AgentRunFinished` after
 cleanup. Starts link nested runs to their parent run; model call proposals and
 completions carry task/run identities. Progress callbacks expose inference,
 streaming, and tool phases. Observer failures do not control execution. The
-conversation fold ignores these lifecycle facts while retaining results and
-open runs in separate projections. Resume marks unfinished runs `aborted`,
+conversation fold ignores native lifecycle facts while retaining results and
+open runs in separate projections. External conversation results are folded once,
+as described below. Resume marks unfinished runs `aborted`,
 after repairing model/tool intents, without replaying uncertain side effects.
 
 `AgentResult.status` distinguishes `completed`, `incomplete`, `failed`,
@@ -149,12 +151,52 @@ than `ok`, and the activity panel retains that status even when the enclosing
 tool returns text. Legacy coordination still uses a string bridge with a
 preserved error prefix; it is not yet a fully typed heterogeneous result protocol.
 
-This is the native part of M2. External CLI execution still passes through the
-legacy conversation adapter inside the native loop, with existing containment
-limits. The outer native task deadline does not certify external process cleanup
-or provider-native tool authority. Runtime capability qualification, explicit
-resume support, durable task continuation, and external artifact contracts remain
-required before advertising the full M2 gate.
+## External agent tasks: Codex migration
+
+`bind_agent_runtime(provider, model, dispatcher)` returns an `ExternalAgentRuntime`
+for a Codex adapter or catalog alias. Unmigrated adapters return `None`. The bound
+runtime implements the same `run_task(AgentTask, on_progress=...)` contract as
+the native loop. It retains the supplied dispatcher's tools, hooks, permissions,
+and shared budgets. Runtime selection is explicit: routing hooks may select
+another Codex model, but cannot change an already bound task into inference or
+another agent runtime. Internal inference still rejects agent aliases.
+
+`AgentLoop` selects this binding automatically for Codex, so CLI, TUI, and child
+sessions use it through their existing entry points. The continuing Harness task
+owns a nested Codex run with distinct task/run IDs, a capability snapshot, an
+`execution` progress phase, and its own result. Supplied context and acceptance
+criteria reach the child without duplicating the user's prompt or persisting
+ephemeral input. The TUI reports `agent running` and retains normal queue,
+draft, and interruption behavior. Standalone runtime callers pass context through
+`AgentTask`; the loop's internal `prepared_messages` bridge accepts context that
+it has already assembled and recorded.
+
+The transport still uses the adapter's `complete` stream and one compatibility
+`ModelCallCompleted` for usage/pricing, with `execution_kind="agent"` and
+`purpose="agent-task"`. It does not become a second conversation message or a
+second accounting charge. `AgentResult.response` preserves the bounded assistant
+response, including reasoning/signatures; its verified output blob holds the
+plain answer. `AgentRunFinished(purpose="conversation")` owns transcript replay.
+MCP tool proposals carry task/run lineage and `purpose="agent-task"`; their
+results remain audited, including on recovery, without inserting orphan tool
+replies into conversation history. Old events retain their existing defaults.
+
+Codex executes its own MCP tools. Returned, unexecuted tool proposals are a
+protocol failure, never instructions to start a second native tool loop. A
+non-`end_turn` stop returns `incomplete`; acceptance always stays `unverified`.
+Failures are never retried automatically. Task cancellation closes the transport,
+reaps its child process, and tears down its scratch resources before terminal
+publication. Resume aborts interrupted runs without relaunching the CLI.
+
+The capability snapshot is an **adapter declaration, not live qualification**.
+It explicitly reports unsupported native resume and internal iteration caps,
+provider-controlled native tools, response bounds over adapter chunks, and token
+overrun checks based on reported usage. Zero iterations prevents launch; a
+positive iteration limit does not cap the CLI's internal steps. The task deadline
+and Harness-dispatched call budgets still apply. Raw stdout/stderr bounds,
+scratch-file containment, CLI-version probes, portable continuation, and the
+remaining external adapters are outstanding. These changes advance M2 without
+claiming its complete capability or live-provider gate.
 
 ## Improvement records and fixed evaluation gates
 

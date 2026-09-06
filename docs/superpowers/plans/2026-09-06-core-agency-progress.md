@@ -1,15 +1,17 @@
 # Core agency implementation record
 
-Implementation branch: `feat/core-agency`, based on `main` at `ce722b4`.
+Current implementation branch: `feat/agent-runtimes`, based on merged `main`
+at `63449eb`. Previous branch: `feat/core-agency`, originally based on `ce722b4`.
 
 Committed checkpoints: `0351b75` (roadmap, lifecycle, and storage/result integrity),
 `a2e565e` (controller/UI, delegated scope and limits, catalog, authenticated MCP),
 `7c5fa95` (merge main, including terminal math and experiment-plugin docs),
 `9965b60` (bounded inference and core improvement records),
 `94301a7` (native task outcomes and queue recovery), and `c4cd1cc` (resolve
-CI/documentation conflicts with main at `88a9d42`).
-PR: https://github.com/c-daly/harness/pull/9.
-Implementation continues on this branch while the PR is unmerged.
+CI/documentation conflicts with main at `88a9d42`), then `ca39617` (external
+response stream bounds and review resolution).
+[PR #9](https://github.com/c-daly/harness/pull/9) merged on September 6 at
+`63449eb`; continuation starts from that merge rather than the old PR branch.
 
 **Resumed after machine restart.** All 26 files in the
 [restart handoff](../../../HANDOFF.md) matched their saved hashes before new
@@ -25,7 +27,7 @@ qualification. Milestone completion requires its roadmap gates, not just code.
 |---|---|---|
 | M0 baseline and feasibility | In progress | Baseline: 885 passed, 7 skipped. CI, build and fresh wheel installation checked locally. Two restart inference probes remain too slow for synchronous UI use. Hardware/profile selection and cold startup remain. |
 | M1 correctness and interaction | In progress | 931 passed, 7 skipped after storage, delegation, controller/UI and MCP capability changes. Context budgets, broader enforcement/redaction and fault qualification remain. |
-| M2 inference / agent contracts | In progress | Bounded inference, native task/progress/results, explicit execution kinds, nullable usage, and core improvement records implemented. External runtime migration and capability qualification remain. |
+| M2 inference / agent contracts | In progress | Bounded inference, native tasks, Codex task binding, explicit execution kinds, nullable usage, and core improvement records implemented. Remaining adapters and live capability qualification remain. |
 | M3 local core assistant | Pending | Readiness, runtime ownership, normal memory access, and offline task journey. |
 | M4 bounded semantic agency | Pending | Typed functions, evaluation, scheduling, capability-aware fallback, and operational self-improvement lifecycle. |
 | M5 heterogeneous work / plugins | Pending | Supervision, plugin reconciliation, portable continuation, isolated improvement patches and rollback. |
@@ -263,7 +265,51 @@ controls must stay independent of inference completion.
   263.42s** with `UV_CACHE_DIR=/tmp/uv-cache uv run --offline --no-sync pytest -q -ra`
   and localhost/process access. Ruff, whitespace checks, sdist/wheel build, and
   the clean wheel smoke gate (all 52 module imports) passed. Hosted validation
-  for this review-fix commit follows its push; check PR #9 for that status.
+  for `ca39617` passed on both Python 3.12 and 3.13; review threads were resolved
+  and PR #9 subsequently merged at `63449eb`.
+
+## Codex task runtime continuation
+
+- A new branch, `feat/agent-runtimes`, starts from merged main at `63449eb`.
+  Codex now binds the core `AgentRuntime` task API through ordinary dispatch.
+  CLI/TUI/native child sessions select that path automatically for Codex aliases.
+  The continuing Harness task owns a distinct Codex run, declared capability
+  snapshot, execution progress, unverified acceptance, and verified answer blob.
+- Hook rewrites cannot change a bound runtime into inference or another backend.
+  MCP tools retain the run's dispatcher, permissions, shared budget, and task/run
+  lineage. External tool results remain auditable without orphan replies in
+  conversation history. The typed result preserves reasoning and signatures;
+  its conversation terminal fact is folded once. One compatibility model-call
+  record retains usage/pricing, without double-counting the nested run.
+  Session summaries retain the completed Codex alias for resume/model continuity.
+- Regression tests use both scripted streams and real fake-CLI subprocesses
+  making MCP HTTP calls. They cover supplied context, routing denial, output
+  bounds, zero-iteration refusal, unexecuted tool proposals, unknown usage,
+  cancellation, allowed/denied MCP effects, cleanup order, and resume without
+  replay. A final-compositor test verifies visible agent activity, cancellation,
+  paused follow-ups, and preservation of the unsent draft.
+- An additional RED shutdown test reproduced an existing MCP lifecycle defect:
+  server shutdown could return while tool dispatch was still alive. The server
+  now owns dispatch tasks, refuses new work during shutdown, cancels and settles
+  in-flight tools, then closes HTTP serving. A real fake-CLI cancellation test
+  asserts that tool cleanup precedes both external and enclosing task terminals.
+- Capability declarations remain explicitly **unverified** for installed CLIs.
+  Native resume and internal iteration caps are unsupported; native tools remain
+  provider-controlled. Token caps reject reported overruns, and response bounds
+  cover adapter chunks. Raw subprocess output/scratch containment, live version
+  probes, the other adapters, local readiness, and self-improvement evaluator /
+  activation / rollback services remain pending. This is progress within M2,
+  not completion of M2 or the broader roadmap.
+- The initial integration run passed **1053 tests, 7 skipped, 5 warnings in
+  282.45s** before the extra active-tool shutdown and session-identity regressions.
+  Those regressions were reproduced RED and fixed. Final focused integration:
+  **29 passed, 6 warnings in 4.71s**. Final full integration: **1055 passed,
+  7 skipped, 6 warnings in 282.68s**, using `UV_CACHE_DIR=/tmp/uv-cache uv run
+  --offline --no-sync pytest -q -ra` with localhost/process access. The warnings
+  are the deprecated MCP client helper; skips retain missing conformance fixtures
+  and the opt-in live Antigravity gate. Locked dependency sync, Ruff, whitespace,
+  sdist/wheel build, and a fresh offline wheel installation importing all 53
+  modules passed. Hosted CI is pending the continuation PR.
 
 ## Validation policy
 

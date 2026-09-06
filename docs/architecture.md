@@ -9,7 +9,7 @@ For day-to-day contribution mechanics and the invariants you must preserve, see
 internals, see [plugin-authoring.md](plugin-authoring.md).
 
 The ongoing core-agency implementation adds
-[bounded inference, native tasks, and core improvement records](core-inference-and-improvement.md).
+[bounded inference, native/external tasks, and core improvement records](core-inference-and-improvement.md).
 That document identifies the implemented interfaces and remaining agent-runtime,
 activation, and local-readiness boundaries.
 
@@ -52,6 +52,8 @@ The source is flat under `src/harness/`. Grouped by role:
 - `resume.py` — rebuild a `Session` from an existing log.
 
 **Kernel**
+- `agent.py` — typed tasks, results, progress, and durable agent run boundaries.
+- `agent_runtime.py` — external task binding, initially Codex, retaining dispatcher authority.
 - `loop.py` — `AgentLoop`: build context → model call → dispatch → repeat.
 - `dispatcher.py` — the single enforcement point for tool *and* model calls.
 - `tools.py` — `Tool` protocol, `ToolRegistry`, `FilteredRegistry`.

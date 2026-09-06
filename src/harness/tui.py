@@ -1196,7 +1196,8 @@ class HarnessApp(App[None]):
             if isinstance(event, PermissionRequested):
                 self.controller.phase = "waiting for permission"
             elif isinstance(event, ModelCallStarted):
-                self.controller.phase = "waiting for response"
+                self.controller.phase = ("agent running" if event.execution_kind == "agent"
+                                         else "waiting for response")
             elif isinstance(event, ToolCallProposed):
                 self.controller.phase = f"tool {event.tool}"
             elif isinstance(event, PermissionResolved):
