@@ -5,9 +5,12 @@ Linux container. It advances the M3 feasibility gate. It is a small public fixtu
 run, not evidence for automatic semantic control, prompt promotion, or general
 agent reliability. `memory` remains an external plugin; the core also runs without it.
 
-The only core configuration change is optional `local.cwd`, needed by the cached
+The initial core configuration change was optional `local.cwd`, needed by the cached
 llama.cpp image to locate its shared library. The driver selects an explicit local
 alias; it does not install defaults or implement automatic provider fallback.
+The subsequent [tool-planning slice](local-tool-planning.md) adds an opt-in
+single-response limit and a core-journal context experiment. The original report
+below binds the driver/core at PR #14's `20c36ad`; it remains historical evidence.
 
 **September 6 result: this profile fails the complete smoke gate.** The
 [final three-run report](handoffs/2026-09-06-core-agency/local-qualification.json)

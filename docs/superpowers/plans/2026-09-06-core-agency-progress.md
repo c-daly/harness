@@ -1,7 +1,7 @@
 # Core agency implementation record
 
-Current implementation branch: `feat/local-qualification`, based on merged `main`
-at `68936ae`. Previous branches: `feat/semantic-evaluation`, `feat/local-context`, `feat/local-readiness`, `feat/agent-runtimes`,
+Current implementation branch: `feat/local-tool-planning`, based on merged `main`
+at `e3ea2c0`. Previous branches: `feat/local-qualification`, `feat/semantic-evaluation`, `feat/local-context`, `feat/local-readiness`, `feat/agent-runtimes`,
 and `feat/core-agency`.
 
 Committed checkpoints: `0351b75` (roadmap, lifecycle, and storage/result integrity),
@@ -23,6 +23,9 @@ merged at `63cfd04` on September 6.
 `3c626af` added semantic observations and paired evaluation in
 [PR #13](https://github.com/c-daly/harness/pull/13), merged at `68936ae` on
 September 6 after Python 3.12/3.13 CI and automated review passed.
+`20c36ad` added the local startup directory and real offline evidence in
+[PR #14](https://github.com/c-daly/harness/pull/14), merged at `e3ea2c0` on
+September 6 after both CI versions and automated review passed.
 
 **Resumed after machine restart.** All 26 files in the
 [restart handoff](../../../HANDOFF.md) matched their saved hashes before new
@@ -40,7 +43,7 @@ qualification. Milestone completion requires its roadmap gates, not just code.
 | M1 correctness and interaction | In progress | 931 passed, 7 skipped after storage, delegation, controller/UI and MCP capability changes. Context budgets, broader enforcement/redaction and fault qualification remain. |
 | M2 inference / agent contracts | In progress | Bounded inference, native tasks, Codex task binding, explicit execution kinds, nullable usage, and core improvement records implemented. Remaining adapters and live capability qualification remain. |
 | M3 local core assistant | In progress | Real 4B offline file work, normal-memory retrieval, and no-plugin terminal cancellation/resume measured with CPU/RAM caps. Memory-assisted artifact quality fails the exact oracle. Combined memory/TUI, human use, crash recovery, and full product qualification remain. |
-| M4 bounded semantic agency | In progress | Explicit shadow message interpretation and paired prompt evaluation implemented. Context/progress functions, real-model held-out qualification, scheduling, fallback, candidate generation, activation, and rollback remain. |
+| M4 bounded semantic agency | In progress | Shadow message interpretation, paired prompt evaluation, and an explicit real context-policy experiment using core improvement records implemented. The context candidate was refused. Context/progress functions, broader held-out qualification, scheduling, fallback, candidate generation, activation, and rollback remain. |
 | M5 heterogeneous work / plugins | Pending | Supervision, plugin reconciliation, portable continuation, isolated improvement patches and rollback. |
 | M6 daily-use qualification | Pending | Measured UI, live adapter boundaries, offline and human dogfood gates. |
 
@@ -512,6 +515,50 @@ controls must stay independent of inference completion.
   dependency sync, Ruff, whitespace checks, sdist/wheel build, and a fresh
   offline wheel installation importing all **58 modules** passed. These checks
   validate the core fix and report logic; the real model-quality gate still fails.
+
+## Local response policy and context experiment (September 6)
+
+- `feat/local-tool-planning` begins from merged PR #14. A real diagnostic recorded
+  `read_file`, `write_file`, and `memory_list` in one model response, confirming
+  that the model generated write arguments before observing the source. A
+  prompt-only candidate omitted the artifact and was not adopted.
+- Optional `ContextPolicy.parallel_tool_calls = false` now constrains each
+  inference response to one proposal. LiteLLM forwards the provider option;
+  local validation rejects a complete oversized batch before tool execution.
+  `ToolCallLimitExceeded` gives that failure an explicit, redaction-safe type.
+  Root scope wins over a wider caller request. The setting survives normal
+  profile persistence/resume and refuses external agents before provider execution
+  because their internal batches cannot be constrained. Existing defaults remain.
+- The opt-in evaluator imports prior evidence and records a context candidate,
+  fixed plan, run boundaries, measurements and result through the existing core
+  improvement journal. Eight paired cases cover original and reserved synthetic
+  facts, with/without normal memory, twice each; order alternates. Case failures
+  and interruptions cannot qualify adoption. Successful evaluation would still
+  require review; there is no activation path.
+- The [experiment contract](../../local-tool-planning.md) and
+  [recorded result](../../handoffs/2026-09-06-core-agency/local-planning-evaluation.json)
+  separate the protocol bound from model quality. The candidate remains opt-in;
+  the failed PR #14 profile has not become an automatic fallback.
+- Final paired result: **baseline 4/8, candidate 2/8**, with core verdict `failed`
+  and adoption `refused`. Four candidate memory cases hit the typed batch-limit
+  error before dispatch; two no-plugin cases omitted the file or wrote malformed
+  JSON. The result matches the current driver/core hashes. Earlier paired reports
+  also failed (candidate 3/8 and 4/8) and remain in ignored local reports; no run
+  was substituted to qualify the candidate. The core audit session is
+  `4f80a5dca95648bf869bfe0e2fc46f74` under `.local-runtime/reports/planning-audit`.
+- Development validation exposed environment limits: `/tmp` filled and blocked
+  sandbox initialization. A Harness wheel-test directory was preserved on project
+  disk with a symlink at its old path; unrelated temporary data was untouched.
+  Restricted native file-read tests stalled, while the same tests passed with
+  normal localhost/thread wakeup access. An initial full run was deliberately
+  interrupted after **804 passed, 6 skipped** to finish typed failure diagnostics;
+  that partial run is not the final integration result.
+- Final integration passed **1180 tests, 7 skipped, 6 warnings in 289.99s** on
+  Python 3.13, including 18 added regression/oracle cases. Locked offline sync,
+  Ruff, whitespace checks, sdist/wheel build, and a fresh offline wheel install
+  importing all **58 modules** passed. The saved report's source hashes match
+  the measured code, and the persisted core journal replays the failed verdict.
+  Task-owned experiment containers exited; no model/server from this work remains.
 
 ## Validation policy
 

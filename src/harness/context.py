@@ -21,6 +21,7 @@ class ContextPolicy(BaseModel):
     history_turns: int = Field(default=4, ge=1, le=128, strict=True)
     max_input_bytes: int = Field(default=32768, gt=0, le=4 * 1024 * 1024, strict=True)
     tools: tuple[str, ...] | None = Field(default=None, max_length=256)
+    parallel_tool_calls: bool | None = Field(default=None, strict=True)
 
     @field_validator("tools")
     @classmethod
@@ -88,4 +89,6 @@ def render_context_policy(policy, tools):
     names = ", ".join(str(tool.name) for tool in tools) or "none"
     return (f"Context profile: up to {policy.history_turns} recent turns, "
             f"{policy.max_input_bytes} input bytes. Tools: {names}. "
+            + ("At most one tool call per response; requires an inference model. "
+               if policy.parallel_tool_calls is False else "") +
             "Full session history is retained; byte limits are not token limits.")

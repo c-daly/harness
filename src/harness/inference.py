@@ -14,7 +14,7 @@ from jsonschema import Draft202012Validator
 from jsonschema.exceptions import ValidationError
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from harness.errors import ContextOverflow, MalformedStreamError, ProviderError
+from harness.errors import ContextOverflow, MalformedStreamError, ProviderError, ToolCallLimitExceeded
 from harness.messages import Message
 from harness.provider import Chunk, StreamStop, Usage, UsageReport, collect
 from harness.tools import ToolSpec, validate_schema
@@ -28,6 +28,7 @@ class InferenceRequest(BaseModel):
     messages: tuple[Message, ...]
     tools: tuple[ToolSpec, ...] = ()
     tool_choice: Literal["none", "auto"] = "none"
+    parallel_tool_calls: bool | None = Field(default=None, strict=True)
     purpose: str = Field(min_length=1, max_length=128)
     max_input_bytes: int = Field(default=4 * 1024 * 1024, gt=0, strict=True)
     max_output_bytes: int = Field(default=1024 * 1024, gt=0, strict=True)
@@ -167,6 +168,11 @@ async def infer(
     message, usage, stop = await collect_bounded(method(request), request, on_chunk=on_chunk)
     if message.tool_calls() and request.tool_choice == "none":
         raise MalformedStreamError("inference proposed an unadvertised tool with tool_choice=none")
+    if request.parallel_tool_calls is False and len(message.tool_calls()) > 1:
+        raise ToolCallLimitExceeded(
+            "inference must propose at most one tool call per response; "
+            "no calls in this batch were executed"
+        )
     # Native agents return bad names/arguments through ordinary tool dispatch,
     # preserving hooks, audit facts, and useful error feedback for correction.
     structured = None

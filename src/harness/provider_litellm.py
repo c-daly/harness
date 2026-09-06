@@ -239,6 +239,8 @@ async def _acomplete(
     if request is not None:
         if tools:
             kwargs["tool_choice"] = request.tool_choice
+            if request.parallel_tool_calls is not None:
+                kwargs["parallel_tool_calls"] = request.parallel_tool_calls
         kwargs["max_tokens"] = request.max_output_tokens
         kwargs["timeout"] = request.timeout_seconds
         # SDK retries must not evade the dispatcher's shared budget/deadline.

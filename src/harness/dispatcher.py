@@ -291,6 +291,12 @@ class Dispatcher:
         pricing, pricing_for, pinned, on_chunk, required_runtime=None,
     ) -> InferenceResult:
         request = InferenceRequest.model_validate(request.model_dump())
+        policy = self.scope.context_policy
+        if policy is not None and policy.parallel_tool_calls is not None:
+            # A narrower caller request remains narrow; descendants cannot
+            # widen the root's single-call profile with an explicit True.
+            parallel = False if False in (policy.parallel_tool_calls, request.parallel_tool_calls) else True
+            request = request.model_copy(update={"parallel_tool_calls": parallel})
         model, messages, tools, purpose = request.model, request.messages, request.tools, request.purpose
 
         def kind_for(alias):
@@ -326,6 +332,11 @@ class Dispatcher:
                 raise ModelDispatchBlocked("rewrite changed action type — refused")
             effective_model = effective.model
             execution_kind = kind_for(effective_model)
+            if execution_kind == "agent" and request.parallel_tool_calls is False:
+                raise ProviderError(
+                    "one tool call per response requires an inference model; "
+                    "provider-native agent tool batches cannot be constrained"
+                )
             if required_runtime is not None:
                 describe = getattr(provider, "agent_runtime_info", None)
                 info = describe(effective_model) if describe is not None else None

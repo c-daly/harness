@@ -33,3 +33,7 @@ class MalformedStreamError(ProviderError):
     missing id/name). Not retryable: the same request likely fails the same way."""
 
     retryable: ClassVar[bool] = False
+
+
+class ToolCallLimitExceeded(MalformedStreamError):
+    """The inference response exceeded an explicit tool proposal limit."""
