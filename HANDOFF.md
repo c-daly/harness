@@ -1,28 +1,24 @@
 # Core agency implementation — restart handoff
 
-> **Continuation update, September 6:** [PR #11](https://github.com/c-daly/harness/pull/11)
-> is merged into `main` at `77a0108`. Its final checkpoint `ca213a2` passed
-> **1098 tests, 7 skipped**, packaging, hosted Python 3.12/3.13 CI, and review.
-> Implementation continues on `feat/local-context`, created from that merge.
-> This checkpoint adds [bounded context profiles](docs/context-profiles.md),
-> exact tool restrictions across delegation, persisted profile recovery, and
-> `/context` inspection. The full suite passed **1117 tests, 7 skipped**.
-> Ruff, packaging, and a fresh offline wheel install (55 modules) also passed.
-> A read-only check in an isolated network namespace exercised native project
-> inspection and the installed memory plugin's normal vault with scripted
-> inference. It does not qualify real-model quality or the complete offline M3
-> journey. Cached models are still the large 30B/35B profiles; selecting and
-> measuring a useful local setup remains outstanding.
-> The user authorized commits, the PR, and continued implementation. Read the
+> **Continuation update, September 6:** [PR #12](https://github.com/c-daly/harness/pull/12)
+> is merged into `main` at `63cfd04`. Its final checkpoint `ddfa908` passed
+> **1123 tests, 7 skipped**, lint, packaging, and wheel installation locally.
+> Implementation continues on `feat/semantic-evaluation`, created from that merge.
+> This slice adds [shadow semantic observations and paired prompt evaluation](docs/semantic-evaluation.md),
+> fixed grading, persisted experiment evidence, cancellation/crash recovery,
+> explicit CLI execution, and terminal inspection. The final suite passed
+> **1153 tests, 7 skipped**; all 30 new tests passed with networking disabled.
+> Ruff, packaging, and a fresh offline wheel install (58 modules) also passed.
+> It does not activate candidates.
+> The user authorized commits, PR creation, and continued implementation. Read the
 > [implementation record](docs/superpowers/plans/2026-09-06-core-agency-progress.md)
-> and [new contract notes](docs/core-inference-and-improvement.md) before resuming.
-> M0–M3 remain in progress; M4–M6 remain pending. Native tasks now have bounded
-> execution, progress, durable outcomes, and explicitly unverified acceptance.
-> Remaining external adapters, live capability qualification, resident local
-> operation, experiment execution, activation, and rollback still require work.
-> User `.claude/` and `.context/` are preserved and now
-> ignored by main's `.gitignore`. The file/hash inventory below is the historical
-> pre-reboot snapshot, not instructions to restore those versions.
+> for current validation. M0–M4 remain in progress; M5–M6 remain pending.
+> The current slice validates behavior with scripted providers. Actual local-model
+> quality/latency, the complete offline M3 journey, context/progress semantic
+> functions, candidate generation, scheduling, fallback, and activation/rollback
+> remain outstanding. Memory and agent-swarm remain independent plugins.
+> User `.claude/` and `.context/` remain preserved and ignored. The inventory
+> below is the historical pre-reboot snapshot, not a restoration instruction.
 
 ## Historical pre-reboot inventory
 

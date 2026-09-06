@@ -1579,7 +1579,7 @@ class HarnessApp(App[None]):
             self.say(
                 "",
                 "/help  /model [alias]  /thoughts [collapse|full|off]  /markdown [on|off]  "
-                "/clear  /compact  /resume  /panel  /tools  /context  /resources  /improvements  /quit  — @path mentions a file "
+                "/clear  /compact  /resume  /panel  /tools  /context  /resources  /semantics  /improvements  /quit  — @path mentions a file "
                 "(Tab completes), read for the model only; F2 also toggles the activity panel",
             )
             self.say("", "/queue: inspect, edit, remove, pause, resume, clear; queued prompts are memory only")
@@ -1596,6 +1596,11 @@ class HarnessApp(App[None]):
         elif command.name == "context":
             from harness.context import render_context_policy
             self.say("", render_context_policy(self.kernel.context_policy, self.kernel.loop.registry.specs()))
+        elif command.name == "semantics":
+            from harness.semantics import read_semantics, render_semantics
+            observations = read_semantics(self.kernel.session.base, self.kernel.session.id)
+            for line in render_semantics(observations).splitlines():
+                self.say("", line)
         elif command.name == "improvements":
             from harness.improvement_journal import read_improvements, render_improvements
             state = read_improvements(self.kernel.session.base, self.kernel.session.id)

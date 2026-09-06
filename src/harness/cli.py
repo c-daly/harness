@@ -60,6 +60,11 @@ class Kernel:
         from harness.improvement_journal import ImprovementJournal
         return ImprovementJournal(self.session)
 
+    @cached_property
+    def semantics(self):
+        from harness.semantics import SemanticService
+        return SemanticService(self.loop.dispatcher, lambda: self.provider)
+
     def set_provider(self, provider: ModelProvider) -> None:
         """Single point for retargeting the model provider mid-session. The
         loop, the subagent runner, and this kernel share one provider instance
@@ -927,6 +932,10 @@ def _resources_subcommand(argv: list[str]) -> None:
 
 def main() -> None:
     argv = sys.argv[1:]
+    if argv and argv[0] == "semantic":
+        from harness.semantic_cli import main as semantic_main
+        semantic_main(argv[1:])
+        return
     if argv and argv[0] == "resources":
         _resources_subcommand(argv[1:])
         return

@@ -19,6 +19,9 @@ timestamped availability evidence, and process ownership to the shared core scop
 [Context profiles](context-profiles.md) bound conversation requests and tool
 inventories while retaining canonical history and normal plugin ownership.
 
+[Semantic evaluation](semantic-evaluation.md) adds shadow observations and paired
+prompt experiments through the same dispatcher, with fixed grading and recovery.
+
 ---
 
 ## The one big idea: the event log is the unit of truth

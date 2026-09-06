@@ -1,7 +1,7 @@
 # Core agency implementation record
 
-Current implementation branch: `feat/local-context`, based on merged `main`
-at `77a0108`. Previous branches: `feat/local-readiness`, `feat/agent-runtimes`,
+Current implementation branch: `feat/semantic-evaluation`, based on merged `main`
+at `63cfd04`. Previous branches: `feat/local-context`, `feat/local-readiness`, `feat/agent-runtimes`,
 and `feat/core-agency`.
 
 Committed checkpoints: `0351b75` (roadmap, lifecycle, and storage/result integrity),
@@ -17,6 +17,9 @@ response stream bounds and review resolution).
 `18c2e38` added local readiness and process ownership; `ca213a2` addressed its
 review findings. [PR #11](https://github.com/c-daly/harness/pull/11) merged at
 `77a0108` after Python 3.12/3.13 CI and automated review passed.
+`80008be` added context profiles and the offline normal-memory check; `ddfa908`
+rejected blank subjects. [PR #12](https://github.com/c-daly/harness/pull/12)
+merged at `63cfd04` on September 6.
 
 **Resumed after machine restart.** All 26 files in the
 [restart handoff](../../../HANDOFF.md) matched their saved hashes before new
@@ -34,7 +37,7 @@ qualification. Milestone completion requires its roadmap gates, not just code.
 | M1 correctness and interaction | In progress | 931 passed, 7 skipped after storage, delegation, controller/UI and MCP capability changes. Context budgets, broader enforcement/redaction and fault qualification remain. |
 | M2 inference / agent contracts | In progress | Bounded inference, native tasks, Codex task binding, explicit execution kinds, nullable usage, and core improvement records implemented. Remaining adapters and live capability qualification remain. |
 | M3 local core assistant | In progress | Local readiness/ownership and bounded context/tool profiles implemented. Actual normal-memory listing and project tools checked offline with scripted inference. Real model/profile selection and the full model-driven offline journey remain. |
-| M4 bounded semantic agency | Pending | Typed functions, evaluation, scheduling, capability-aware fallback, and operational self-improvement lifecycle. |
+| M4 bounded semantic agency | In progress | Explicit shadow message interpretation and paired prompt evaluation implemented. Context/progress functions, real-model held-out qualification, scheduling, fallback, candidate generation, activation, and rollback remain. |
 | M5 heterogeneous work / plugins | Pending | Supervision, plugin reconciliation, portable continuation, isolated improvement patches and rollback. |
 | M6 daily-use qualification | Pending | Measured UI, live adapter boundaries, offline and human dogfood gates. |
 
@@ -431,6 +434,33 @@ controls must stay independent of inference completion.
   measured local model/profile, physical ceilings, real cold startup and
   cancellation, automatic fallback, and semantic/evaluation/activation services
   remain outstanding. See [profile configuration](../../context-profiles.md).
+
+## Shadow message interpretation and paired prompt evaluation
+
+- `SemanticService` records bounded, versioned, tool-free message judgments
+  through ordinary inference dispatch. Schema errors, permission/budget denial,
+  timeout, unavailable providers, and concurrent calls abstain. Cancellation
+  propagates. No classifier runs on the input path or changes queue/task state.
+- Paired experiments bind exact incumbent/candidate/suite bytes, core grader and
+  inference source, provider configuration, selected dependency/runtime versions,
+  and limits before execution. Fixed critical stop/ambiguity cases remain intact;
+  expected labels never enter prompts. Results include deterministic baseline,
+  quality, abstention, sample counts, and latency by partition.
+- Durable run boundaries and partial results distinguish completion, cancellation,
+  deadline, failure, and crash recovery. Resume never reruns an experiment. It
+  preserves an already durable result if only the final run marker was missing.
+- `harness semantic classify/inspect/evaluate` exposes explicit use; TUI
+  `/semantics` and `/improvements` expose recorded evidence. All adoption still
+  requires the separate policy; this change adds no activation mechanism.
+- The final full suite passed **1153 tests, 7 skipped, 6 warnings in 293.49s**
+  on Python 3.13. Existing skips and MCP deprecation warnings are unchanged.
+  Targeted integration passed **61 tests in 4.21s**. All **30 new tests passed
+  in 3.79s** inside a Linux network namespace without external networking,
+  including CLI execution and final terminal inspection. Locked dependency sync,
+  Ruff, whitespace, sdist/wheel build, and a fresh offline wheel installation
+  importing all **58 modules** passed. Real model quality/latency and the full
+  M3 offline journey remain unqualified.
+  See [contracts and examples](../../semantic-evaluation.md).
 
 ## Validation policy
 

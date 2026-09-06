@@ -4,7 +4,7 @@
 import asyncio
 import time
 from contextvars import ContextVar
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Callable
 
 from harness.blobs import INLINE_THRESHOLD, BlobRef, BlobStore
@@ -430,4 +430,4 @@ class Dispatcher:
                 **lineage,
             )
         )
-        return result
+        return replace(result, model=effective_model, call_id=call.call_id)
