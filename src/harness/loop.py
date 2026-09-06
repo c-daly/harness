@@ -7,6 +7,7 @@ from typing import Callable
 from harness.agent import (
     AgentOutput, AgentProgress, AgentResult, AgentTask, add_usage, current_agent_run, execute_task,
 )
+from harness.agent_runtime import bind_agent_runtime
 from harness.dispatcher import Dispatcher, ToolOutcome
 from harness.execution import ExecutionScope
 from harness.events import (
@@ -154,6 +155,20 @@ class AgentLoop:
                       if task.acceptance_criteria else []),
                     *self.history,
                 ]
+                runtime = bind_agent_runtime(
+                    self.provider, self.model, self.dispatcher, prepared_messages=tuple(messages),
+                    pricing=self.pricing, pricing_for=self.pricing_for, pinned=self.model_pinned,
+                    on_chunk=self.on_chunk,
+                )
+                if runtime is not None:
+                    child = await runtime.run_task(AgentTask(
+                        prompt=task.prompt, agent=task.agent, acceptance_criteria=task.acceptance_criteria,
+                        limits=task.limits,
+                    ), on_progress=on_progress)
+                    if child.response is not None:
+                        self.history.append(child.response)
+                    return AgentOutput(child.read_text(self.session.blobs), child.status,
+                                       child.reason, child.usage)
                 progress("inference", iteration)
 
                 def chunk_received(chunk):

@@ -304,6 +304,16 @@ class CatalogProvider:
     codex: "CodexProvider | None" = None
     antigravity: "AntigravityProvider | None" = None
 
+    def agent_runtime_info(self, model: ModelId):
+        try:
+            resolved = self.catalog.resolve(str(model))
+        except UnknownAliasError:
+            return None
+        if resolved.backend == "codex" and self.codex is not None:
+            describe = getattr(self.codex, "agent_runtime_info", None)
+            return describe(ModelId(resolved.route)) if describe is not None else None
+        return None
+
     def execution_kind(self, model: ModelId) -> str:
         try:
             return self.catalog.resolve(str(model)).execution_kind

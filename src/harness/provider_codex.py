@@ -108,6 +108,10 @@ def _error_text(event: dict) -> str:
 class CodexProvider:
     execution_kind = "agent"
 
+    def agent_runtime_info(self, model: ModelId):
+        from harness.agent_runtime import AgentRuntimeInfo
+        return AgentRuntimeInfo(runtime="codex")
+
     def __init__(self, *, binary: str = "codex", timeout_s: float = 600.0) -> None:
         self.binary = binary
         self.timeout_s = timeout_s

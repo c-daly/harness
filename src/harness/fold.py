@@ -52,6 +52,8 @@ class FoldedState:
     read_paths: set[str] = field(default_factory=set)
     # call_id -> file_path for in-flight read_file/write_file proposals
     _read_intents: dict[CallId, str] = field(default_factory=dict)
+    # External runtime tool results are audited but are not native-loop replies.
+    _agent_tool_calls: set[CallId] = field(default_factory=set)
     # native todo list: last-write-wins from TodoListUpdated events
     todos: list[dict] = field(default_factory=list)
 
@@ -74,6 +76,8 @@ def fold(envelopes: list[Envelope]) -> FoldedState:
         elif isinstance(ev, AgentRunFinished):
             state.open_agent_runs.pop(ev.result.run_id, None)
             state.agent_runs[ev.result.run_id] = ev.result
+            if ev.purpose == "conversation" and ev.result.response is not None:
+                state._append(env.seq, ev.result.response)
         elif isinstance(ev, ModelCallCompleted):
             state.open_model_intents.pop(ev.call_id, None)
             if ev.purpose == "conversation":
@@ -82,6 +86,8 @@ def fold(envelopes: list[Envelope]) -> FoldedState:
             state.open_model_intents.pop(ev.call_id, None)
         elif isinstance(ev, ToolCallProposed):
             state.open_intents[ev.call_id] = env.seq
+            if ev.purpose == "agent-task":
+                state._agent_tool_calls.add(ev.call_id)
             if str(ev.tool) in ("read_file", "write_file"):
                 fp = ev.args.get("file_path")
                 if fp is not None:
@@ -96,6 +102,9 @@ def fold(envelopes: list[Envelope]) -> FoldedState:
             if path is not None and not ev.is_error:
                 state.read_paths.add(path)
             state.open_intents.pop(ev.call_id, None)
+            if ev.call_id in state._agent_tool_calls:
+                state._agent_tool_calls.discard(ev.call_id)
+                continue
             state._append(
                 env.seq,
                 Message.tool_result(
@@ -104,6 +113,9 @@ def fold(envelopes: list[Envelope]) -> FoldedState:
             )
         elif isinstance(ev, (ToolCallCancelled, ToolCallAborted)):
             state.open_intents.pop(ev.call_id, None)
+            if ev.call_id in state._agent_tool_calls:
+                state._agent_tool_calls.discard(ev.call_id)
+                continue
             state._append(
                 env.seq,
                 Message.tool_result(

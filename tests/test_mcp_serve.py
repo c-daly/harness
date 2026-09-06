@@ -1,6 +1,8 @@
 """McpToolServer: harness ToolSpecs served over streamable-HTTP MCP; every
 call routes through the injected dispatch callable (the dispatcher seam)."""
 
+import asyncio
+
 from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
 import httpx
@@ -131,4 +133,36 @@ async def test_http_requests_require_the_per_server_capability():
             assert response.status_code == 403
         assert calls == []
     finally:
+        await server.stop()
+
+
+async def test_shutdown_settles_an_active_tool_before_returning():
+    entered, cleaned, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+    async def dispatch(call):
+        try:
+            entered.set()
+            await release.wait()
+            return ToolOutcome(text="done", blob=None, is_error=False)
+        finally:
+            cleaned.set()
+
+    server = McpToolServer(specs=(ECHO,), dispatch=dispatch)
+    await server.start()
+
+    async def request():
+        async with streamablehttp_client(server.url) as (read, write, _):
+            async with ClientSession(read, write) as client:
+                await client.initialize()
+                await client.call_tool("echo", {"text": "wait"})
+
+    client_task = asyncio.create_task(request())
+    try:
+        await asyncio.wait_for(entered.wait(), 2)
+        await asyncio.wait_for(server.stop(), 1)
+        assert cleaned.is_set()
+    finally:
+        release.set()
+        client_task.cancel()
+        await asyncio.gather(client_task, return_exceptions=True)
         await server.stop()
