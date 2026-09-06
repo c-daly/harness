@@ -1,17 +1,22 @@
 # Core agency implementation — restart handoff
 
-> **Continuation update, September 6:** [PR #9](https://github.com/c-daly/harness/pull/9)
-> is merged into `main` at `63449eb`. Its final review fix, `ca39617`, passed
-> **1039 tests, 7 skipped**, lint/build/wheel smoke, and hosted Python 3.12/3.13 CI.
-> Implementation now continues on `feat/agent-runtimes`, created from that merge.
-> The new checkpoint binds Codex to typed task execution through the existing
-> dispatcher, records separate run identity/capabilities, preserves one replayable
-> response, and settles MCP tool work before runtime shutdown. Detailed validation
-> and checkpoint status are in the implementation record below.
+> **Continuation update, September 6:** [PR #10](https://github.com/c-daly/harness/pull/10)
+> is merged into `main` at `8d732f2`. Its checkpoint `dbe9db5` passed **1055 tests,
+> 7 skipped**, packaging, and hosted Python 3.12/3.13 CI. Implementation now
+> continues on `feat/local-readiness`, created from that merge. This checkpoint
+> adds explicit local profiles, bounded readiness checks, event-backed observations,
+> scoped process ownership, and responsive `/resources` controls. See
+> [local runtime readiness](docs/local-runtime-readiness.md) for configuration,
+> behavior, and qualification limits. PR #11 review fixes recheck negative
+> diagnostic results at dispatch and preserve TUI session termination after
+> resource-journal errors. Final local validation passed **1098 tests,
+> 7 skipped**, Ruff, packaging, and a fresh offline wheel install (54 modules).
+> The previous local endpoint on port 8080
+> was unreachable during this continuation; it was not started or stopped.
 > The user authorized commits, the PR, and continued implementation. Read the
 > [implementation record](docs/superpowers/plans/2026-09-06-core-agency-progress.md)
 > and [new contract notes](docs/core-inference-and-improvement.md) before resuming.
-> M0/M1/M2 remain in progress; M3–M6 remain pending. Native tasks now have bounded
+> M0–M3 remain in progress; M4–M6 remain pending. Native tasks now have bounded
 > execution, progress, durable outcomes, and explicitly unverified acceptance.
 > Remaining external adapters, live capability qualification, resident local
 > operation, experiment execution, activation, and rollback still require work.

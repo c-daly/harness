@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from harness.blobs import BlobRef
 from harness.agent import AgentResult
+from harness.resources import ResourceObservation
 from harness.improvement import ImprovementRecord
 from harness.types import SCHEMA_VERSION, AgentId, CallId, ModelId, SessionId, ToolName
 
@@ -60,6 +61,19 @@ class UserMessage(_Event):
 
 class UserInterrupt(_Event):
     type: Literal["user_interrupt"] = "user_interrupt"
+
+
+class ResourceObserved(_Event):
+    type: Literal["resource_observed"] = "resource_observed"
+    observation: ResourceObservation
+
+
+class LocalRuntimeRequested(_Event):
+    type: Literal["local_runtime_requested"] = "local_runtime_requested"
+    is_intent: ClassVar[bool] = True
+    alias: str
+    config_digest: str
+    action: Literal["start", "stop"]
 
 
 # --- dispatch: intents ---
@@ -343,6 +357,8 @@ Event = Annotated[
         SubagentFinished,
         AgentRunStarted,
         AgentRunFinished,
+        ResourceObserved,
+        LocalRuntimeRequested,
         CompactionApplied,
         TaskOutcome,
         SessionOutcome,

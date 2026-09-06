@@ -327,10 +327,18 @@ class CatalogProvider:
             resolved = None
         if resolved is not None and resolved.execution_kind != "inference":
             raise ProviderError(f"{request.model!r} is an agent runtime, not a model inference route")
+        from contextlib import nullcontext
+        from harness.execution import current_scope
+        readiness = nullcontext()
+        if resolved is not None and resolved.local is not None:
+            scope = current_scope.get()
+            if scope is None:
+                raise ProviderError("local profiles require bounded inference through a dispatcher")
+            readiness = scope.resources.use(resolved, emit=scope.session.append)
         key = os.environ.get(resolved.api_key_env) if resolved and resolved.api_key_env else None
         if resolved and resolved.api_base and key is None:
             key = "local-no-key"
-        async with aclosing(_acomplete(
+        async with readiness, aclosing(_acomplete(
             model=resolved.route if resolved else request.model,
             messages=request.messages, tools=request.tools,
             api_base=resolved.api_base if resolved else None, api_key=key, request=request,
@@ -393,6 +401,8 @@ class CatalogProvider:
                 async for chunk in source:
                     yield chunk
             return
+        if resolved.local is not None:
+            raise ProviderError("local profiles require bounded inference through a dispatcher")
         api_key = os.environ.get(resolved.api_key_env) if resolved.api_key_env else None
         if resolved.api_base and api_key is None:
             # litellm openai/* routes refuse to run without SOME api_key, even

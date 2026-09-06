@@ -45,6 +45,10 @@ class Kernel:
     _plugin_pumps: list = field(default_factory=list)
     controller: InteractionController = field(default_factory=InteractionController)
 
+    @property
+    def resources(self):
+        return self.loop.dispatcher.scope.resources
+
     @cached_property
     def improvements(self):
         """Core lifecycle records are available even when all plugins are disabled."""
@@ -97,6 +101,7 @@ def build_kernel(
     routing_rules: "RoutingRuleSet | None" = None,
     model_pinned: bool = False,
     execution_limits: ExecutionLimits | None = None,
+    resources=None,
 ) -> Kernel:
     from harness.resume import resume_session
 
@@ -199,7 +204,9 @@ def build_kernel(
     if transcript is not None:
         loop_kwargs["history"] = transcript
     loop = AgentLoop(**loop_kwargs)
-    scope = ExecutionScope(session, registry, ExecutionBudget(execution_limits or ExecutionLimits()))
+    from harness.resources import LocalResources
+    scope = ExecutionScope(session, registry, ExecutionBudget(execution_limits or ExecutionLimits()),
+                           resources=resources if resources is not None else LocalResources())
     loop.dispatcher.scope = scope
     runner._root_scopes[str(session.id)] = scope
     if hasattr(provider, "bind_dispatcher"):
@@ -290,14 +297,19 @@ async def run_once(kernel: Kernel, prompt: str) -> str:
             pass
         raise
     finally:
-        if pump_tasks:
-            for _task in pump_tasks:
-                _task.cancel()
-            await asyncio.gather(*pump_tasks, return_exceptions=True)
-        if kernel.mcp is not None:
-            await kernel.mcp.stop()
-            kernel.mcp.flush_events()
-        kernel.session.close()
+        try:
+            if pump_tasks:
+                for _task in pump_tasks:
+                    _task.cancel()
+                await asyncio.gather(*pump_tasks, return_exceptions=True)
+            if kernel.mcp is not None:
+                await kernel.mcp.stop()
+                kernel.mcp.flush_events()
+        finally:
+            try:
+                await kernel.resources.close(emit=kernel.session.append)
+            finally:
+                kernel.session.close()
 
 
 async def _amain(kernel: Kernel, prompt: str) -> str:
@@ -848,8 +860,41 @@ def _sanitize_for_out(name: str) -> str:
     return _sanitize_name(name)
 
 
+def _resources_subcommand(argv: list[str]) -> None:
+    import json
+    from harness.catalog import Catalog, UnknownAliasError
+    from harness.resources import LocalResources, render_resources
+
+    parser = argparse.ArgumentParser(prog="harness resources", description="Inspect local runtime readiness.")
+    parser.add_argument("--catalog", type=Path, default=Path.home() / ".config/harness/models.toml")
+    parser.add_argument("--check", metavar="ALIAS", help="Refresh a local inventory; does not launch a runtime.")
+    parser.add_argument("--json", action="store_true", help="Print timestamped observations as JSON.")
+    args = parser.parse_args(argv)
+    try:
+        catalog = Catalog.load(args.catalog)
+        entries = ([catalog.resolve(args.check)] if args.check else
+                   [catalog.resolve(alias) for alias in catalog.aliases() if "local" in catalog.entries[alias]])
+    except (OSError, ValueError, UnknownAliasError) as exc:
+        raise SystemExit(f"local resource configuration unavailable ({type(exc).__name__})") from None
+
+    async def inspect():
+        resources = LocalResources()
+        if args.check:
+            return [await resources.check(entries[0], emit=lambda e: None)]
+        return [resources.snapshot(entry) for entry in entries]
+
+    observations = asyncio.run(inspect())
+    print(json.dumps([o.model_dump(mode="json") for o in observations], indent=2)
+          if args.json else render_resources(observations))
+    if args.check and observations[0].status != "ready":
+        raise SystemExit(1)
+
+
 def main() -> None:
     argv = sys.argv[1:]
+    if argv and argv[0] == "resources":
+        _resources_subcommand(argv[1:])
+        return
     if argv and argv[0] in ("stats", "compare", "outcome", "improvements"):
         _subcommand(argv)
         return
