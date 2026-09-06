@@ -12,6 +12,8 @@ from harness.dispatcher import Dispatcher, ToolOutcome
 from harness.execution import ExecutionScope
 from harness.events import (
     CustomEvent,
+    ContextPolicyConfigured,
+    ContextPrepared,
     ErrorRaised,
     SessionEnded,
     ToolCallCancelled,
@@ -105,6 +107,8 @@ class AgentLoop:
 
     async def start(self) -> None:
         self.session.start()
+        if self.dispatcher.scope.context_policy is not None:
+            self.session.append(ContextPolicyConfigured(policy=self.dispatcher.scope.context_policy))
         await self._apply_contributions(
             LifecyclePoint.SESSION_START, {"session_id": self.session.id}
         )
@@ -118,6 +122,11 @@ class AgentLoop:
     ) -> AgentResult:
         """Execute one bounded task; completion leaves acceptance unverified."""
         task = AgentTask.model_validate(task.model_dump())
+        policy = self.dispatcher.scope.context_policy
+        if policy is not None:
+            task = task.model_copy(update={"limits": task.limits.model_copy(update={
+                "max_input_bytes": min(task.limits.max_input_bytes, policy.max_input_bytes),
+            })})
         if self._task_active:
             raise RuntimeError("an agent task is already running")
         self._task_active = True
@@ -147,14 +156,29 @@ class AgentLoop:
 
         try:
             for iteration in range(1, max_iterations + 1):
-                messages = [
+                prefix = [
                     Message.system_text(self.system_prompt),
                     *task.context,
                     *([Message.system_text("Task acceptance criteria:\n" +
                                            "\n".join(f"- {c}" for c in task.acceptance_criteria))]
                       if task.acceptance_criteria else []),
-                    *self.history,
                 ]
+                policy = self.dispatcher.scope.context_policy
+                if policy is not None:
+                    from harness.context import prepare_context
+                    prepared = prepare_context(prefix, self.history, self.registry.specs(), policy,
+                                               max_input_bytes=task.limits.max_input_bytes,
+                                               blobs=self.session.blobs)
+                    messages = prepared.messages
+                    self.session.append(ContextPrepared(
+                        task_id=task.id, policy_digest=policy.digest,
+                        retained_turns=prepared.retained_turns, omitted_turns=prepared.omitted_turns,
+                        omitted_messages=prepared.omitted_messages, input_bytes=prepared.input_bytes,
+                        max_input_bytes=task.limits.max_input_bytes,
+                        tools=tuple(str(t.name) for t in self.registry.specs()),
+                    ))
+                else:
+                    messages = [*prefix, *self.history]
                 runtime = bind_agent_runtime(
                     self.provider, self.model, self.dispatcher, prepared_messages=tuple(messages),
                     pricing=self.pricing, pricing_for=self.pricing_for, pinned=self.model_pinned,

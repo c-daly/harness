@@ -37,6 +37,7 @@ from harness.events import (
     PermissionRequested,
     PermissionResolved,
     ResourceObserved,
+    ContextPrepared,
     RetryAttempted,
     ToolCallCompleted,
     ToolCallProposed,
@@ -638,6 +639,7 @@ class HarnessApp(App[None]):
         # fact in the event-sourced log.
         self._compact_worker = None
         self._resource_worker = None
+        self._context_notice = None
         self._interrupting = False
         # True for the full span of a kernel rebuild (/clear, /resume) --
         # set at entry to _rebuild_kernel, cleared in its finally. A turn
@@ -1021,6 +1023,7 @@ class HarnessApp(App[None]):
             model_pinned=old_kernel.loop.model_pinned,
             execution_limits=old_kernel.loop.dispatcher.scope.budget.limits,
             resources=old_kernel.resources,
+            context_policy=old_kernel.context_policy if resume_session_id is None else None,
         )
         self.kernel = kernel
         self.controller = kernel.controller
@@ -1029,6 +1032,7 @@ class HarnessApp(App[None]):
         # rollup's tool count must not linger in the status bar until the
         # next 1s tick.
         self._last_rollup = None
+        self._context_notice = None
 
         # Re-subscribe stats BEFORE start()/resumed-render so SessionStarted (or
         # SessionResumed) lands in the fresh queue -- mirrors _session_driver's
@@ -1160,8 +1164,8 @@ class HarnessApp(App[None]):
         limit = resolved.max_input_tokens
         if limit is None and "local" in resolved.tags:
             limit = _LOCAL_CONTEXT_DEFAULT
-        if limit:
-            specs = self.kernel.registry.specs()
+        if limit and self.kernel.context_policy is None:
+            specs = self.kernel.loop.registry.specs()
             est = _schema_token_estimate(specs) + sum(
                 len(m.text()) // 4 for m in self.kernel.loop.history
             )
@@ -1188,7 +1192,9 @@ class HarnessApp(App[None]):
         tool_calls = self._last_rollup["tool_calls"] if self._last_rollup else 0
         segments = [str(self.kernel.loop.model)]
         ctx_segment, cost_segment = self._statusbar_catalog_segments()
-        if ctx_segment is not None:
+        if self.kernel.context_policy is not None:
+            segments.append(f"ctx cap {self.kernel.context_policy.max_input_bytes:,}B")
+        elif ctx_segment is not None:
             segments.append(ctx_segment)
         if cost_segment is not None:
             segments.append(cost_segment)
@@ -1212,6 +1218,11 @@ class HarnessApp(App[None]):
                 self.controller.phase = "working"
             self._refresh_queue()
         match event:
+            case ContextPrepared(omitted_turns=count) if count:
+                notice = (event.task_id, event.policy_digest, count)
+                if notice != self._context_notice:
+                    self.say("", f"Context: {count} earlier turn(s) omitted; full history remains in the session.")
+                    self._context_notice = notice
             case ToolCallProposed(tool=tool):
                 self.say("\u2699 ", str(tool))
             case ToolCallCompleted(result_text=text, is_error=is_error):
@@ -1568,7 +1579,7 @@ class HarnessApp(App[None]):
             self.say(
                 "",
                 "/help  /model [alias]  /thoughts [collapse|full|off]  /markdown [on|off]  "
-                "/clear  /compact  /resume  /panel  /tools  /resources  /improvements  /quit  — @path mentions a file "
+                "/clear  /compact  /resume  /panel  /tools  /context  /resources  /improvements  /quit  — @path mentions a file "
                 "(Tab completes), read for the model only; F2 also toggles the activity panel",
             )
             self.say("", "/queue: inspect, edit, remove, pause, resume, clear; queued prompts are memory only")
@@ -1578,10 +1589,13 @@ class HarnessApp(App[None]):
                     "plugin commands: " + "  ".join(f"/{n}" for n in sorted(self._plugin_commands)),
                 )
         elif command.name == "tools":
-            for spec in self.kernel.registry.specs():
+            for spec in self.kernel.loop.registry.specs():
                 self.say("  ", str(spec.name))
         elif command.name == "queue":
             self._queue_command(command.arg)
+        elif command.name == "context":
+            from harness.context import render_context_policy
+            self.say("", render_context_policy(self.kernel.context_policy, self.kernel.loop.registry.specs()))
         elif command.name == "improvements":
             from harness.improvement_journal import read_improvements, render_improvements
             state = read_improvements(self.kernel.session.base, self.kernel.session.id)
@@ -1766,7 +1780,7 @@ class HarnessApp(App[None]):
         if not constrained:
             return
         ctx = resolved.max_input_tokens or _LOCAL_CONTEXT_DEFAULT
-        specs = self.kernel.registry.specs()
+        specs = self.kernel.loop.registry.specs()
         est = _schema_token_estimate(specs)
         if est <= ctx * _CONTEXT_WARN_FRACTION:
             return

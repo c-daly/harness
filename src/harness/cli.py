@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Callable, Sequence
 from harness.hooks import HookBus
 from harness.controller import InteractionController
 from harness.agent import AgentTask
+from harness.context import ContextPolicy
 from harness.execution import ExecutionBudget, ExecutionLimits, ExecutionScope
 from harness.interaction import HeadlessResolver, Resolver
 from harness.loop import AgentLoop
@@ -21,7 +22,7 @@ from harness.permissions import PermissionEngine, default_engine
 from harness.provider import FakeProvider, ModelProvider, text_turn
 from harness.session import Session
 from harness.subagent import DispatchAgentTool, SubagentRunner
-from harness.tools import ToolRegistry
+from harness.tools import FilteredRegistry, ToolRegistry
 from harness.types import ModelId, SessionId, new_session_id
 
 if TYPE_CHECKING:
@@ -48,6 +49,10 @@ class Kernel:
     @property
     def resources(self):
         return self.loop.dispatcher.scope.resources
+
+    @property
+    def context_policy(self):
+        return self.loop.dispatcher.scope.context_policy
 
     @cached_property
     def improvements(self):
@@ -102,6 +107,8 @@ def build_kernel(
     model_pinned: bool = False,
     execution_limits: ExecutionLimits | None = None,
     resources=None,
+    context_policy: ContextPolicy | None = None,
+    inherit_context_policy: bool = True,
 ) -> Kernel:
     from harness.resume import resume_session
 
@@ -115,6 +122,10 @@ def build_kernel(
     if resume_session_id is not None:
         session, transcript = resume_session(base_dir, resume_session_id, default_model=model)
         resumed = True
+        if context_policy is None and inherit_context_policy:
+            from harness.fold import fold
+            from harness.log import read_session
+            context_policy = fold(read_session(base_dir, resume_session_id)).context_policy
     else:
         session = Session(base_dir, new_session_id(), default_model=model)
         transcript = None
@@ -189,10 +200,14 @@ def build_kernel(
     from harness.mixture import register_mixture_tools
 
     register_mixture_tools(registry, runner=runner, parent=session)
+    effective_registry = (FilteredRegistry(registry, allowed=context_policy.tools)
+                          if context_policy is not None and context_policy.tools is not None
+                          else registry)
+    runner.registry = effective_registry
     loop_kwargs: dict = dict(
         session=session,
         provider=provider,
-        registry=registry,
+        registry=effective_registry,
         hooks=hooks,
         resolver=resolver,
         model=model,
@@ -205,10 +220,15 @@ def build_kernel(
         loop_kwargs["history"] = transcript
     loop = AgentLoop(**loop_kwargs)
     from harness.resources import LocalResources
-    scope = ExecutionScope(session, registry, ExecutionBudget(execution_limits or ExecutionLimits()),
-                           resources=resources if resources is not None else LocalResources())
+    scope = ExecutionScope(session, effective_registry,
+                           ExecutionBudget(execution_limits or ExecutionLimits()),
+                           resources=resources if resources is not None else LocalResources(),
+                           context_policy=context_policy)
     loop.dispatcher.scope = scope
     runner._root_scopes[str(session.id)] = scope
+    if resumed and (context_policy is not None or not inherit_context_policy):
+        from harness.events import ContextPolicyConfigured
+        session.append(ContextPolicyConfigured(policy=context_policy))
     if hasattr(provider, "bind_dispatcher"):
         provider.bind_dispatcher(loop.dispatcher)
     if routing_rules is not None:
@@ -446,7 +466,18 @@ def _run_main() -> None:
         "--no-plugins", action="store_true", help="Disable plugin discovery entirely."
     )
     parser.add_argument("--workspace", type=Path, default=None)
+    context_flags = parser.add_mutually_exclusive_group()
+    context_flags.add_argument("--context-profile", type=Path,
+                               help="TOML profile limiting history, input bytes, and exact tool names.")
+    context_flags.add_argument("--no-context-profile", action="store_true",
+                               help="Explicitly clear an inherited context profile when resuming.")
     args = parser.parse_args()
+    context_policy = None
+    if args.context_profile is not None:
+        try:
+            context_policy = ContextPolicy.load(args.context_profile)
+        except (OSError, ValueError) as exc:
+            raise SystemExit(f"context profile unavailable or invalid ({type(exc).__name__})") from None
 
     resume_session_id = SessionId(args.resume_session_id) if args.resume_session_id else None
     if args.continue_last:
@@ -607,6 +638,8 @@ def _run_main() -> None:
             pricing_for=pricing_for,
             routing_rules=routing_rules,
             model_pinned=model_pinned,
+            context_policy=context_policy,
+            inherit_context_policy=not args.no_context_profile,
         )
         asyncio.run(
             run_tui(
@@ -627,6 +660,8 @@ def _run_main() -> None:
         pricing_for=pricing_for,
         routing_rules=routing_rules,
         model_pinned=model_pinned,
+        context_policy=context_policy,
+        inherit_context_policy=not args.no_context_profile,
         resume_session_id=resume_session_id,
         permissions=engine,
         tags=args.tag,

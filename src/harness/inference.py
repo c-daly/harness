@@ -76,13 +76,19 @@ class InferenceResult:
 
 def check_input(request: InferenceRequest) -> None:
     """Measure the complete owned payload, including schemas and metadata."""
+    input_bytes(request.messages, request.tools, request.response_schema, limit=request.max_input_bytes)
+
+
+def input_bytes(messages, tools, schema=None, *, limit):
+    """Shared byte accounting for preparation and final dispatch validation."""
     size = 0
-    payload = {"messages": [m.model_dump(mode="json") for m in request.messages],
-               "tools": [asdict(t) for t in request.tools], "schema": request.response_schema}
+    payload = {"messages": [m.model_dump(mode="json") for m in messages],
+               "tools": [asdict(t) for t in tools], "schema": schema}
     for part in json.JSONEncoder(ensure_ascii=False, allow_nan=False).iterencode(payload):
         size += len(part.encode("utf-8"))
-        if size > request.max_input_bytes:
+        if size > limit:
             raise ContextOverflow("inference input exceeds the configured byte limit")
+    return size
 
 
 async def collect_bounded(

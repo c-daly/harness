@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "observed_at": "2026-09-06T19:30:41.818365+00:00",
+  "provider": "scripted",
+  "qualified_model": false,
+  "ipv4_routes_present": false,
+  "memory_writes": 0,
+  "memory_server_sha256": "263c0c214a2a7f9110a7a38df29b4ff6cf624c66c282cd8981bf775fee9873d7",
+  "cases": [
+    {
+      "memory_enabled": false,
+      "passed": true,
+      "completed_tool_calls": 1,
+      "memory_bytes": 0,
+      "memory_sha256": null,
+      "max_prepared_input_bytes": 1363,
+      "resume_preserved_profile": true,
+      "full_history_retained": true
+    },
+    {
+      "memory_enabled": true,
+      "passed": true,
+      "completed_tool_calls": 2,
+      "memory_bytes": 13802,
+      "memory_sha256": "55482a75decc8659985fae320d2712ec1d006bc6f46947b82422d96b1921f1f6",
+      "max_prepared_input_bytes": 16153,
+      "resume_preserved_profile": true,
+      "full_history_retained": true
+    }
+  ]
+}

@@ -10,6 +10,9 @@ fallback, select a model for the resident assistant, or qualify model quality,
 normal-memory access, and fully offline operation. Existing catalog aliases keep
 their behavior until an explicit `local` profile is added.
 
+[Context profiles](context-profiles.md) separately bound conversation history,
+input bytes, and tool inventories for local or remote execution.
+
 ## Existing server
 
 Use the model ID actually advertised by your server's `/v1/models` inventory.

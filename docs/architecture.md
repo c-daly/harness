@@ -16,6 +16,9 @@ activation, and local-readiness boundaries.
 [Local runtime readiness](local-runtime-readiness.md) adds explicit local profiles,
 timestamped availability evidence, and process ownership to the shared core scope.
 
+[Context profiles](context-profiles.md) bound conversation requests and tool
+inventories while retaining canonical history and normal plugin ownership.
+
 ---
 
 ## The one big idea: the event log is the unit of truth
@@ -58,6 +61,7 @@ The source is flat under `src/harness/`. Grouped by role:
 - `agent.py` — typed tasks, results, progress, and durable agent run boundaries.
 - `agent_runtime.py` — external task binding, initially Codex, retaining dispatcher authority.
 - `resources.py` — bounded local inventory checks, freshness, and owned process lifetime.
+- `context.py` — explicit context profiles, complete-turn selection, and input byte accounting.
 - `loop.py` — `AgentLoop`: build context → model call → dispatch → repeat.
 - `dispatcher.py` — the single enforcement point for tool *and* model calls.
 - `tools.py` — `Tool` protocol, `ToolRegistry`, `FilteredRegistry`.

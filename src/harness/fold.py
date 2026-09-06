@@ -23,6 +23,7 @@ from harness.events import (
     ModelCallFailed,
     ModelCallProposed,
     ResourceObserved,
+    ContextPolicyConfigured,
     TodoListUpdated,
     ToolCallAborted,
     ToolCallCancelled,
@@ -31,6 +32,7 @@ from harness.events import (
     UserMessage,
 )
 from harness.messages import Message
+from harness.context import ContextPolicy
 from harness.agent import AgentResult
 from harness.types import CallId
 
@@ -45,6 +47,7 @@ class FoldedState:
     agent_runs: dict[str, AgentResult] = field(default_factory=dict)
     # Historical observations are evidence only; live readiness must recheck.
     resources: dict = field(default_factory=dict)
+    context_policy: ContextPolicy | None = None
     last_seq: int = 0
     # seq -> index range bookkeeping for compaction
     _msg_seqs: list[int] = field(default_factory=list)
@@ -76,6 +79,8 @@ def fold(envelopes: list[Envelope]) -> FoldedState:
             state.open_model_intents[ev.call_id] = env.seq
         elif isinstance(ev, AgentRunStarted):
             state.open_agent_runs[ev.run_id] = ev
+        elif isinstance(ev, ContextPolicyConfigured):
+            state.context_policy = ev.policy
         elif isinstance(ev, ResourceObserved):
             state.resources[ev.observation.alias] = ev.observation
         elif isinstance(ev, AgentRunFinished):
