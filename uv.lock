@@ -677,6 +677,7 @@ dependencies = [
 
 [package.optional-dependencies]
 dev = [
+    { name = "packaging" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "ruff" },
@@ -688,6 +689,7 @@ requires-dist = [
     { name = "litellm", specifier = ">=1.84.0" },
     { name = "matplotlib", specifier = ">=3.9" },
     { name = "mcp", specifier = ">=1.24,<2" },
+    { name = "packaging", marker = "extra == 'dev'", specifier = ">=24" },
     { name = "pillow", specifier = ">=10.3" },
     { name = "pydantic", specifier = ">=2.7" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
