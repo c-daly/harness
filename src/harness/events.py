@@ -10,6 +10,7 @@ from typing import Annotated, Any, ClassVar, Literal, Union
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from harness.blobs import BlobRef
+from harness.agent import AgentResult
 from harness.improvement import ImprovementRecord
 from harness.types import SCHEMA_VERSION, AgentId, CallId, ModelId, SessionId, ToolName
 
@@ -79,6 +80,8 @@ class ModelCallProposed(_Event):
     model: ModelId
     purpose: str = "conversation"
     execution_kind: Literal["legacy", "inference", "agent"] = "legacy"
+    task_id: str | None = None
+    agent_run_id: str | None = None
 
 
 class HookDecided(_Event):
@@ -144,6 +147,8 @@ class ModelCallCompleted(_Event):
     duration_ms: int = 0
     purpose: str = "conversation"
     execution_kind: Literal["legacy", "inference", "agent"] = "legacy"
+    task_id: str | None = None
+    agent_run_id: str | None = None
 
 
 class ModelCallCancelled(_Event):
@@ -207,7 +212,25 @@ class SubagentSpawned(_Event):
 class SubagentFinished(_Event):
     type: Literal["subagent_finished"] = "subagent_finished"
     child_session_id: SessionId
-    status: Literal["ok", "error", "cancelled"]
+    status: Literal["ok", "error", "cancelled", "incomplete"]
+
+
+class AgentRunStarted(_Event):
+    type: Literal["agent_run_started"] = "agent_run_started"
+    is_intent: ClassVar[bool] = True
+    task_id: str
+    run_id: str
+    parent_run_id: str | None = None
+    runtime: str
+    agent: AgentId | None = None
+    model: ModelId | None = None
+    acceptance_criteria: tuple[str, ...] = ()
+    limits: dict[str, Any] = Field(default_factory=dict)
+
+
+class AgentRunFinished(_Event):
+    type: Literal["agent_run_finished"] = "agent_run_finished"
+    result: AgentResult
 
 
 # --- transcript transforms ---
@@ -313,6 +336,8 @@ Event = Annotated[
         PermissionResolved,
         SubagentSpawned,
         SubagentFinished,
+        AgentRunStarted,
+        AgentRunFinished,
         CompactionApplied,
         TaskOutcome,
         SessionOutcome,

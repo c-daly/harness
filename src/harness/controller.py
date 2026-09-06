@@ -7,6 +7,7 @@ only when the executor starts its turn; queue operations never fabricate history
 import asyncio
 from dataclasses import dataclass, replace
 from typing import Awaitable, Callable
+from harness.agent import AgentResult
 
 
 @dataclass(frozen=True)
@@ -28,6 +29,7 @@ class InteractionController:
         self.last_failed: PendingPrompt | None = None
         self.paused = False
         self.phase = "idle"
+        self.last_result: AgentResult | None = None
 
     @property
     def pending(self) -> tuple[PendingPrompt, ...]:
@@ -75,13 +77,14 @@ class InteractionController:
         if self.active is None:
             self.phase = "idle"
 
-    async def run_next(self, execute: Callable[[PendingPrompt], Awaitable[None]]) -> bool:
+    async def run_next(self, execute: Callable[[PendingPrompt], Awaitable[AgentResult | None]]) -> bool:
         if self.active is not None or self.paused or not self._pending:
             return False
         self.active = self._pending.pop(0)
         self.phase = "preparing"
+        self.last_result = None
         try:
-            await execute(self.active)
+            self.last_result = await execute(self.active)
         except asyncio.CancelledError:
             self.phase = "interrupted"
             self.last_failed = self.active
@@ -93,7 +96,12 @@ class InteractionController:
             self.paused = True
             raise
         else:
-            self.phase = "idle"
+            if self.last_result is not None and self.last_result.status != "completed":
+                self.phase = self.last_result.status
+                self.paused = True
+                self.last_failed = self.active
+            else:
+                self.phase = "idle"
             return True
         finally:
             self.active = None

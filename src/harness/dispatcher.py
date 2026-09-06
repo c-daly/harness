@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from typing import AsyncGenerator, Callable
 
 from harness.blobs import INLINE_THRESHOLD, BlobRef, BlobStore
+from harness.agent import current_agent_run
 from harness.errors import ProviderError
 from harness.events import (
     DispatchResolved,
@@ -243,15 +244,31 @@ class Dispatcher:
         New internal callers use dispatch_inference. Agent runs are never
         retried here: a failed external process may have completed side effects.
         """
-        result = await self._dispatch_generation(
+        result = await self.dispatch_response(
             provider=provider,
             request=InferenceRequest(model=model, messages=tuple(messages), tools=tools,
                                      purpose=purpose,
                                      tool_choice="auto" if purpose == "conversation" else "none"),
-            allow_agent=purpose == "conversation", pricing=pricing, pricing_for=pricing_for,
+            pricing=pricing, pricing_for=pricing_for,
             pinned=pinned, on_chunk=on_chunk,
         )
         return result.message, result.usage
+
+    async def dispatch_response(
+        self, *, provider, request: InferenceRequest,
+        pricing: dict[str, float] | None = None,
+        pricing_for: Callable[[ModelId], dict[str, float]] | None = None,
+        pinned: bool = False, on_chunk: Callable[[Chunk], None] | None = None,
+    ) -> InferenceResult:
+        """Conversation migration path preserving stop reasons for task control.
+
+        External completion remains a legacy agent bridge. Internal inference
+        uses dispatch_inference and cannot cross that runtime boundary.
+        """
+        return await self._dispatch_generation(
+            provider=provider, request=request, allow_agent=request.purpose == "conversation",
+            pricing=pricing, pricing_for=pricing_for, pinned=pinned, on_chunk=on_chunk,
+        )
 
     async def dispatch_inference(
         self, *, provider, request: InferenceRequest,
@@ -286,8 +303,10 @@ class Dispatcher:
                     pass  # frontend failure must not break dispatch
 
         call = ProposedModelCall(call_id=new_call_id(), model=model, pinned=pinned)
+        active_run = current_agent_run.get()
+        lineage = {"task_id": active_run.task.id, "agent_run_id": active_run.run_id} if active_run else {}
         self.session.append(
-            ModelCallProposed(call_id=call.call_id, model=model, purpose=purpose)
+            ModelCallProposed(call_id=call.call_id, model=model, purpose=purpose, **lineage)
         )
         effective_model = model
         started: int | None = None
@@ -397,6 +416,7 @@ class Dispatcher:
                 duration_ms=elapsed(),
                 purpose=purpose,
                 execution_kind=execution_kind,
+                **lineage,
             )
         )
         return result

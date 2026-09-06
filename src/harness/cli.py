@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Callable, Sequence
 
 from harness.hooks import HookBus
 from harness.controller import InteractionController
+from harness.agent import AgentTask
 from harness.execution import ExecutionBudget, ExecutionLimits, ExecutionScope
 from harness.interaction import HeadlessResolver, Resolver
 from harness.loop import AgentLoop
@@ -274,7 +275,9 @@ async def run_once(kernel: Kernel, prompt: str) -> str:
         async def execute(pending):
             nonlocal result
             kernel.controller.phase = "working"
-            result = await kernel.loop.run_turn(pending.text)
+            outcome = await kernel.loop.run_task(AgentTask(prompt=pending.text))
+            result = outcome.read_text(kernel.session.blobs)
+            return outcome
 
         kernel.controller.submit(prompt, expand_mentions=False)
         await kernel.controller.run_next(execute)
@@ -624,6 +627,9 @@ def _run_main() -> None:
 
     try:
         print(asyncio.run(_amain(kernel, args.prompt)))
+        outcome = kernel.controller.last_result
+        if outcome is not None and outcome.status != "completed":
+            raise SystemExit(f"task {outcome.status}: {outcome.reason}")
     except ProviderError as exc:
         raise SystemExit(f"provider error: {exc}") from exc
 

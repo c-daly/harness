@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from harness.callctx import current_call_id
+from harness.agent import AgentTask
 from harness.events import ErrorRaised, SubagentFinished, SubagentSpawned
 from harness.execution import BudgetExceeded, ExecutionScope, current_scope
 from harness.frontmatter import AgentDef
@@ -138,26 +139,32 @@ class SubagentRunner:
                 scope=ExecutionScope(child, registry, scope.budget, scope.depth + 1),
             )
             await loop.start()
-            result = await loop.run_turn(prompt)
+            result = await loop.run_task(AgentTask(prompt=prompt, agent=AgentId(agent) if agent else None))
             try:
                 await loop.end()
             except Exception as exc:
-                # the WORK succeeded; teardown failure is logged, never converted
-                # into a false child error
+                # Preserve the task outcome; log teardown failure separately.
                 parent.append(
                     ErrorRaised(
                         where="subagent:teardown",
                         message=f"{type(exc).__name__}: {exc}",
                     )
                 )
-            parent.append(SubagentFinished(child_session_id=child_id, status="ok"))
-            return _bound(result, limit)
+            status = "ok" if result.status == "completed" else "incomplete"
+            text = _bound(result.read_text(child.blobs), limit)
+            if status == "incomplete":
+                text = f"[subagent error] incomplete ({result.reason}): {text}"
         except asyncio.CancelledError:
             parent.append(SubagentFinished(child_session_id=child_id, status="cancelled"))
             raise
         except Exception as exc:
             parent.append(SubagentFinished(child_session_id=child_id, status="error"))
             return f"[subagent error] {exc}"
+        else:
+            # Publish only after the result is readable. A failed terminal write
+            # must not generate a contradictory second terminal event.
+            parent.append(SubagentFinished(child_session_id=child_id, status=status))
+            return text
         finally:
             if child is not None:
                 child.close()

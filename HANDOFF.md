@@ -2,17 +2,24 @@
 
 > **Resumption update, September 6:** implementation continues on `feat/core-agency`
 > in [draft PR #9](https://github.com/c-daly/harness/pull/9), with current `main`
-> merged at `7c5fa95`. The latest verified checkpoint reached **983 passed,
-> 7 skipped** and adds bounded inference, explicit execution kinds, unknown-usage
-> accounting, core improvement/evaluation records, and inspection in both frontends.
+> merged at `7c5fa95`. Checkpoint `9965b60` reached **983 passed, 7 skipped**
+> locally and all four hosted Python 3.12/3.13 CI jobs passed. It adds bounded
+> inference, explicit execution kinds, unknown-usage accounting, core
+> improvement/evaluation records, and inspection in both frontends. The following
+> native task/recovery checkpoint reached **999 passed, 7 skipped**, with lint,
+> packaging, and a fresh offline wheel smoke check passing. Its hosted checks
+> await the new push; work continues without waiting for PR merge.
 > The user authorized commits, the PR, and continued implementation. Read the
 > [implementation record](docs/superpowers/plans/2026-09-06-core-agency-progress.md)
 > and [new contract notes](docs/core-inference-and-improvement.md) before resuming.
-> M0/M1/M2 remain in progress; M3–M6 remain pending. Dedicated agent task contracts,
-> resident local operation, experiment execution, activation, and rollback still
-> require implementation. User `.claude/` and `.context/` are preserved and now
+> M0/M1/M2 remain in progress; M3–M6 remain pending. Native tasks now have bounded
+> execution, progress, durable outcomes, and explicitly unverified acceptance.
+> External runtime migration, resident local operation, experiment execution,
+> activation, and rollback still require implementation. User `.claude/` and `.context/` are preserved and now
 > ignored by main's `.gitignore`. The file/hash inventory below is the historical
 > pre-reboot snapshot, not instructions to restore those versions.
+
+## Historical pre-reboot inventory
 
 **Saved:** 2026-09-06. Work paused at the user's request to restart the machine.
 **Workspace:** `/home/fearsidhe/projects/harness`

@@ -11,6 +11,8 @@ require a binary upgrade, new event types must not break old readers.
 from dataclasses import dataclass, field
 
 from harness.events import (
+    AgentRunFinished,
+    AgentRunStarted,
     CompactionApplied,
     DispatchResolved,
     Envelope,
@@ -28,6 +30,7 @@ from harness.events import (
     UserMessage,
 )
 from harness.messages import Message
+from harness.agent import AgentResult
 from harness.types import CallId
 
 
@@ -37,6 +40,8 @@ class FoldedState:
     # call_id -> seq of the proposing event; an intent with no terminal fact
     open_intents: dict[CallId, int] = field(default_factory=dict)
     open_model_intents: dict[CallId, int] = field(default_factory=dict)
+    open_agent_runs: dict[str, AgentRunStarted] = field(default_factory=dict)
+    agent_runs: dict[str, AgentResult] = field(default_factory=dict)
     last_seq: int = 0
     # seq -> index range bookkeeping for compaction
     _msg_seqs: list[int] = field(default_factory=list)
@@ -64,6 +69,11 @@ def fold(envelopes: list[Envelope]) -> FoldedState:
             state._append(env.seq, Message.user_text(ev.text))
         elif isinstance(ev, ModelCallProposed):
             state.open_model_intents[ev.call_id] = env.seq
+        elif isinstance(ev, AgentRunStarted):
+            state.open_agent_runs[ev.run_id] = ev
+        elif isinstance(ev, AgentRunFinished):
+            state.open_agent_runs.pop(ev.result.run_id, None)
+            state.agent_runs[ev.result.run_id] = ev.result
         elif isinstance(ev, ModelCallCompleted):
             state.open_model_intents.pop(ev.call_id, None)
             if ev.purpose == "conversation":
@@ -128,4 +138,11 @@ def resume_repairs(state: FoldedState) -> list[Event]:
         (seq, ModelCallAborted(call_id=call_id, reason="dangling intent at resume (crash?)"))
         for call_id, seq in state.open_model_intents.items()
     ]
-    return [event for _, event in sorted(repairs, key=lambda pair: pair[0])]
+    return [event for _, event in sorted(repairs, key=lambda pair: pair[0])] + [
+        AgentRunFinished(result=AgentResult(
+            task_id=run.task_id, run_id=run.run_id, status="aborted",
+            reason="interrupted run at resume; side effects require reconciliation",
+            remaining_criteria=run.acceptance_criteria,
+        ))
+        for run in reversed(tuple(state.open_agent_runs.values()))
+    ]

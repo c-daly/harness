@@ -4,8 +4,10 @@ Implementation branch: `feat/core-agency`, based on `main` at `ce722b4`.
 
 Committed checkpoints: `0351b75` (roadmap, lifecycle, and storage/result integrity),
 `a2e565e` (controller/UI, delegated scope and limits, catalog, authenticated MCP),
-and `7c5fa95` (merge current main, including terminal math and experiment-plugin docs).
+`7c5fa95` (merge current main, including terminal math and experiment-plugin docs),
+and `9965b60` (bounded inference and core improvement records).
 Draft PR: https://github.com/c-daly/harness/pull/9.
+Implementation continues on this branch while the draft PR is unmerged.
 
 **Resumed after machine restart.** All 26 files in the
 [restart handoff](../../../HANDOFF.md) matched their saved hashes before new
@@ -21,7 +23,7 @@ qualification. Milestone completion requires its roadmap gates, not just code.
 |---|---|---|
 | M0 baseline and feasibility | In progress | Baseline: 885 passed, 7 skipped. CI, build and fresh wheel installation checked locally. Two restart inference probes remain too slow for synchronous UI use. Hardware/profile selection and cold startup remain. |
 | M1 correctness and interaction | In progress | 931 passed, 7 skipped after storage, delegation, controller/UI and MCP capability changes. Context budgets, broader enforcement/redaction and fault qualification remain. |
-| M2 inference / agent contracts | In progress | Bounded inference, explicit execution kinds, nullable usage, and core improvement records implemented. Distinct agent task/progress/results and capability qualification remain. |
+| M2 inference / agent contracts | In progress | Bounded inference, native task/progress/results, explicit execution kinds, nullable usage, and core improvement records implemented. External runtime migration and capability qualification remain. |
 | M3 local core assistant | Pending | Readiness, runtime ownership, normal memory access, and offline task journey. |
 | M4 bounded semantic agency | Pending | Typed functions, evaluation, scheduling, capability-aware fallback, and operational self-improvement lifecycle. |
 | M5 heterogeneous work / plugins | Pending | Supervision, plugin reconciliation, portable continuation, isolated improvement patches and rollback. |
@@ -190,8 +192,50 @@ controls must stay independent of inference completion.
   Initial fresh offline installation lacked cached math dependencies from main;
   after provisioning versions constrained by `uv.lock`, another fresh installation
   succeeded offline with 83 packages. This verifies package provisioning, not
-  local-model/offline-readiness qualification. Hosted CI for the new checkpoint
-  is pending its push. See [contract details](../../core-inference-and-improvement.md).
+  local-model/offline-readiness qualification. All four hosted CI jobs at
+  `9965b60` passed on Python 3.12/3.13, including builds and fresh wheel installs.
+  See [contract details](../../core-inference-and-improvement.md).
+
+## Native task outcomes and recovery
+
+- Added core `AgentTask`, `TaskLimits`, `AgentRuntime`, progress, and `AgentResult`
+  contracts. Native loop execution records its task/run identities, parent-run
+  lineage, limits, terminal outcome, and verified output blob. Model facts link
+  to the owning task/run. A task does not grant authority beyond its dispatcher
+  binding, and simultaneous tasks on the same loop are refused before execution.
+- Native tasks retain stop reasons. Token cutoff, missing tool calls, and
+  exhausted iterations cannot become successful completion. Truncated tool
+  proposals are paired with cancellation results without executing them. Failure
+  and cancellation propagate after cleanup and terminal recording. Resume closes
+  interrupted runs as `aborted` without replay or self-certified acceptance.
+- Acceptance criteria reach the model context but remain explicitly unverified
+  in every execution result. Returning prose, including a claim that checks pass,
+  cannot clear criteria. This provides task-level evidence for the improvement
+  journal without making the candidate its own evaluator.
+- The shared controller and both frontends consume results. An incomplete task
+  pauses follow-ups; TUI output shows the reason and preserves the queue/draft;
+  headless CLI prints partial output and exits nonzero. Native child outcomes
+  retain `incomplete`, and successful string delivery cannot overwrite that
+  status in the activity panel. Output caps cannot strip the child error prefix.
+- Native tasks have bounded steps, a task deadline, and per-step inference
+  bounds. Shared cumulative token/cost budgets, persistence of those budgets,
+  typed coordination results, and capability-qualified external task execution
+  are still pending. External CLI aliases retain the legacy conversation bridge;
+  this checkpoint does not certify their process cleanup or native tool authority.
+- Focused recovery/controller/subagent/UI checks: **59 passed in 15.78s**.
+  Tests include final terminal-compositor output, interrupted-run repair,
+  parent-run lineage, single terminal publication on write failure, and rejection
+  of overlapping tasks. The first full run reported **1 failed, 998 passed,
+  7 skipped, 5 warnings in 266.21s**: the new CLI test replaced the interactive
+  echo provider instead of the headless fake provider. Correcting that test's
+  injection produced **1 passed, 33 deselected in 0.40s**.
+- Final full integration: **999 passed, 7 skipped, 5 warnings in 265.69s**,
+  using `UV_CACHE_DIR=/tmp/uv-cache uv run --offline pytest -q -ra` with
+  localhost/process access. Ruff and whitespace checks passed. Sdist/wheel built;
+  a fresh offline Python 3.13 wheel installation with 83 cached dependencies
+  executed an incomplete native task and replayed its output/acceptance from
+  verified blobs and events. Hosted checks for this new checkpoint are pending
+  its push; this is not live provider or offline-model qualification.
 
 ## Validation policy
 

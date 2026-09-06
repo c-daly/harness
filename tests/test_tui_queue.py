@@ -5,7 +5,7 @@ import asyncio
 from textual.widgets import Input
 
 from harness.log import read_session
-from harness.provider import text_turn, tool_call_turn
+from harness.provider import StreamStop, TextDelta, text_turn, tool_call_turn
 from harness.tools import ToolSpec
 from harness.types import ModelId, ToolName
 from tests.test_tui import GatedProvider, MODELS_TOML_TWO_ALIASES, make_app
@@ -78,6 +78,36 @@ async def test_queue_edit_and_remove_do_not_fabricate_user_messages(tmp_path):
         await pilot.press(*"/queue remove 3", "enter")
         await pilot.pause(0.1)
         assert not app.controller.pending
+        events = read_session(tmp_path, app.kernel.session.id)
+        assert [e.event.text for e in events if e.event.type == "user_message"] == ["first"]
+
+
+async def test_incomplete_task_shows_outcome_and_preserves_followup_and_draft(tmp_path):
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    class Cutoff:
+        async def infer(self, request):
+            entered.set()
+            await release.wait()
+            yield TextDelta("partial answer")
+            yield StreamStop("max_tokens")
+
+    app = make_app(tmp_path, provider=Cutoff(), model=ModelId("fake"))
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.1)
+        await pilot.click("#prompt")
+        await pilot.press(*"first", "enter")
+        await asyncio.wait_for(entered.wait(), 2)
+        await pilot.press(*"follow up", "enter")
+        await pilot.press(*"unsent draft")
+        release.set()
+        await pilot.pause(0.3)
+        screen = screen_text(app)
+        assert "task incomplete: max_tokens; follow-ups paused" in screen
+        assert "Queue paused" in screen and "#2 follow up" in screen
+        assert "partial answer" in screen and "unsent draft" in screen
+        assert app.query_one("#prompt", Input).value == "unsent draft"
+        assert app.controller.last_result.status == "incomplete"
         events = read_session(tmp_path, app.kernel.session.id)
         assert [e.event.text for e in events if e.event.type == "user_message"] == ["first"]
 

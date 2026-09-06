@@ -446,12 +446,13 @@ async def test_repair_turn_returns_count_and_interrupt_delegates(tmp_path):
     with pytest.raises(asyncio.CancelledError):
         await task
 
-    # repair_turn closes the one dangling stall call and reports the count;
-    # it does NOT append UserInterrupt (interrupt_turn owns that).
+    # The task contract settles live history before publishing its terminal
+    # outcome. Explicit repair is now idempotent; interruption remains separate.
     repaired = loop.repair_turn()
-    assert repaired == 1
+    assert repaired == 0
     event_types = [e.event.type for e in _read_envelopes_for(tmp_path)]
     assert "tool_call_cancelled" in event_types
+    assert event_types.index("tool_call_cancelled") < event_types.index("agent_run_finished")
     assert "user_interrupt" not in event_types
 
     # idempotent: a second repair finds everything paired and repairs nothing.

@@ -80,6 +80,38 @@ def test_resumed_session_start_refused(tmp_path):
         session.close()
 
 
+def test_resume_closes_interrupted_agent_after_calls_without_replaying_or_verifying(tmp_path):
+    from harness.events import AgentRunStarted, ModelCallProposed
+    from harness.fold import fold
+    from harness.types import ModelId
+
+    sid = SessionId("interrupted-agent")
+    with Session(tmp_path, sid) as session:
+        session.start()
+        session.append(AgentRunStarted(task_id="task", run_id="run", runtime="harness",
+                                       acceptance_criteria=("tests pass",)))
+        session.append(UserMessage(text="work"))
+        session.append(ModelCallProposed(call_id=CallId("model"), model=ModelId("fake"),
+                                          task_id="task", agent_run_id="run"))
+    # Closing the writer simulates releasing the process lock after interruption;
+    # neither model nor agent has a terminal fact.
+    session, messages = resume_session(tmp_path, sid)
+    session.close()
+    events = read_session(tmp_path, sid)
+    state = fold(events)
+    result = state.agent_runs["run"]
+    assert result.status == "aborted" and result.acceptance == "unverified"
+    assert result.remaining_criteria == ("tests pass",) and result.output is None
+    assert "reconciliation" in result.reason
+    assert not state.open_agent_runs and not state.open_model_intents
+    assert [m.text() for m in messages] == ["work"]
+    types = [e.event.type for e in events]
+    assert types.index("model_call_aborted") < types.index("agent_run_finished")
+    session, _ = resume_session(tmp_path, sid)
+    session.close()
+    assert sum(e.event.type == "agent_run_finished" for e in read_session(tmp_path, sid)) == 1
+
+
 def test_resume_marks_the_run_boundary(tmp_path):
     from harness.events import SessionResumed
     with Session(tmp_path, SessionId("s1")) as s:

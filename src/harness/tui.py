@@ -27,6 +27,7 @@ from textual.worker import WorkerCancelled, WorkerFailed
 from textual_image.widget.sixel import Image as SixelImage, SixelOptions
 
 from harness.blobs import INLINE_THRESHOLD
+from harness.agent import AgentResult, AgentTask
 from harness.cli import Kernel, build_kernel
 from harness.frontmatter import CommandDef
 from harness.events import (
@@ -1310,14 +1311,14 @@ class HarnessApp(App[None]):
             self._drain_queue(), group="agent", exit_on_error=False
         )
 
-    async def _execute_prompt(self, prompt: PendingPrompt) -> None:
+    async def _execute_prompt(self, prompt: PendingPrompt) -> AgentResult:
         self._refresh_queue()
         self.say("> ", prompt.text)
         context = await self._inject_mentions(prompt.text) if prompt.expand_mentions else []
         self.kernel.loop.set_turn_context(context)
         self.controller.phase = "working"
         self._refresh_queue()
-        await self._run_turn(prompt.text)
+        return await self._run_turn(prompt.text)
 
     async def _drain_queue(self) -> None:
         try:
@@ -1386,10 +1387,13 @@ class HarnessApp(App[None]):
             )
         ]
 
-    async def _run_turn(self, prompt: str) -> None:
+    async def _run_turn(self, prompt: str) -> AgentResult:
         self._clear_live()
         try:
-            reply = await self.kernel.loop.run_turn(prompt)
+            result = await self.kernel.loop.run_task(AgentTask(
+                prompt=prompt, context=tuple(self.kernel.loop.turn_context),
+            ))
+            reply = result.read_text(self.kernel.session.blobs)
         except asyncio.CancelledError:
             raise  # _after_interrupt owns cleanup; keep _stream_buffer for it to preserve
         except Exception as exc:
@@ -1403,8 +1407,11 @@ class HarnessApp(App[None]):
             self.say("", self._thought_buffer, style="dim")
         self._clear_live()
         self.query_one("#transcript", RichLog).write(self._render_reply(reply))
+        if result.status != "completed":
+            self.say("! ", f"task {result.status}: {result.reason}; follow-ups paused")
         if self._panel is not None:
             self._panel.refresh_files_and_agents()
+        return result
 
     async def _run_compact(self) -> None:
         try:

@@ -4,6 +4,9 @@
 import asyncio
 from typing import Callable
 
+from harness.agent import (
+    AgentOutput, AgentProgress, AgentResult, AgentTask, add_usage, current_agent_run, execute_task,
+)
 from harness.dispatcher import Dispatcher, ToolOutcome
 from harness.execution import ExecutionScope
 from harness.events import (
@@ -16,8 +19,9 @@ from harness.events import (
 )
 from harness.hooks import Annotate, Emit, HookBus, Inject, LifecyclePoint, ProposedToolCall
 from harness.interaction import Resolver
+from harness.inference import InferenceRequest
 from harness.messages import Message, Role, ToolResultBlock
-from harness.provider import Chunk, ModelProvider
+from harness.provider import Chunk, ModelProvider, Usage
 from harness.redaction import StringRedactor, identity_redact
 from harness.session import Session
 from harness.tools import FilteredRegistry, ToolRegistry
@@ -66,6 +70,7 @@ class AgentLoop:
         )
         self.on_chunk: Callable[[Chunk], None] | None = None
         self._ended = False
+        self._task_active = False
         self._turn_outcomes: dict[CallId, ToolOutcome] = {}
 
     def set_turn_context(self, messages: list[Message]) -> None:
@@ -104,30 +109,86 @@ class AgentLoop:
         )
 
     async def run_turn(self, user_text: str) -> str:
+        result = await self.run_task(AgentTask(prompt=user_text, context=tuple(self.turn_context)))
+        return result.read_text(self.session.blobs)
+
+    async def run_task(
+        self, task: AgentTask, *, on_progress: Callable[[AgentProgress], None] | None = None,
+    ) -> AgentResult:
+        """Execute one bounded task; completion leaves acceptance unverified."""
+        task = AgentTask.model_validate(task.model_dump())
+        if self._task_active:
+            raise RuntimeError("an agent task is already running")
+        self._task_active = True
+        try:
+            return await execute_task(
+                self.session, task, runtime="harness", model=self.model,
+                execute=lambda: self._run_task_body(task, on_progress),
+            )
+        finally:
+            self._task_active = False
+            self.turn_context = []
+
+    async def _run_task_body(self, task: AgentTask, on_progress) -> AgentOutput:
+        user_text = task.prompt
         self.session.append(UserMessage(text=user_text))
         self.history.append(Message.user_text(user_text))
+        max_iterations = min(self.max_iterations, task.limits.max_iterations)
+        usage = Usage(0, 0, 0, 0)
+        active_run = current_agent_run.get()
+
+        def progress(phase, iteration, chunk=None):
+            if on_progress is not None:
+                try:
+                    on_progress(AgentProgress(task.id, active_run.run_id, phase, iteration, chunk))
+                except Exception:
+                    pass  # observers do not control execution
+
         try:
-            for _ in range(self.max_iterations):
+            for iteration in range(1, max_iterations + 1):
                 messages = [
                     Message.system_text(self.system_prompt),
-                    *self.turn_context,
+                    *task.context,
+                    *([Message.system_text("Task acceptance criteria:\n" +
+                                           "\n".join(f"- {c}" for c in task.acceptance_criteria))]
+                      if task.acceptance_criteria else []),
                     *self.history,
                 ]
-                assistant, _usage = await self.dispatcher.dispatch_model(
+                progress("inference", iteration)
+
+                def chunk_received(chunk):
+                    progress("stream", iteration, chunk)
+                    if self.on_chunk is not None:
+                        self.on_chunk(chunk)
+
+                response = await self.dispatcher.dispatch_response(
                     provider=self.provider,
-                    model=self.model,
-                    messages=messages,
-                    tools=self.registry.specs(),
+                    request=InferenceRequest(
+                        model=self.model, messages=tuple(messages), tools=self.registry.specs(),
+                        purpose="conversation", tool_choice="auto",
+                        max_input_bytes=task.limits.max_input_bytes,
+                        max_output_bytes=task.limits.max_response_bytes,
+                        max_output_tokens=task.limits.max_output_tokens,
+                        timeout_seconds=min(120, task.limits.timeout_seconds),
+                    ),
                     pricing=self.pricing,
                     pricing_for=self.pricing_for,
                     pinned=self.model_pinned,
-                    on_chunk=self.on_chunk,
+                    on_chunk=chunk_received,
                 )
+                assistant = response.message
+                usage = add_usage(usage, response.usage)
                 self.history.append(assistant)
+                if response.stop_reason not in ("end_turn", "tool_use"):
+                    self.repair_turn()
+                    return AgentOutput(assistant.text(), "incomplete", response.stop_reason, usage)
                 calls = assistant.tool_calls()
                 if not calls:
-                    return assistant.text()
+                    if response.stop_reason == "tool_use":
+                        return AgentOutput(assistant.text(), "incomplete", "missing_tool_call", usage)
+                    return AgentOutput(assistant.text(), usage=usage)
                 self._turn_outcomes.clear()
+                progress("tools", iteration)
 
                 async def _run_one(call):
                     outcome = await self.dispatcher.dispatch_tool(
@@ -166,9 +227,13 @@ class AgentLoop:
                         )
                     )
             self.session.append(
-                ErrorRaised(where="loop", message=f"max iterations ({self.max_iterations}) reached")
+                ErrorRaised(where="loop", message=f"max iterations ({max_iterations}) reached")
             )
-            return f"[stopped: max iterations ({self.max_iterations}) reached]"
+            return AgentOutput(f"[stopped: max iterations ({max_iterations}) reached]",
+                               "incomplete", "iteration_limit", usage)
+        except BaseException:
+            self.repair_turn()
+            raise
         finally:
             self.turn_context = []
 

@@ -3,6 +3,7 @@ import asyncio
 import pytest
 
 from harness.controller import InteractionController
+from harness.agent import AgentResult
 
 
 async def test_queue_acceptance_is_ordered_and_does_not_start_another_turn():
@@ -72,6 +73,22 @@ async def test_cancel_pauses_queue_and_preserves_active_prompt_for_inspection():
     assert controller.paused and controller.active is None
     assert controller.last_failed == first
     assert controller.pending == (second,)
+
+
+async def test_incomplete_result_pauses_followups_until_explicit_resume():
+    controller = InteractionController()
+    active = controller.submit("work")
+    followup = controller.submit("use the result")
+    result = AgentResult(task_id="task", run_id="run", status="incomplete", reason="max_tokens")
+
+    async def execute(prompt):
+        return result
+
+    assert await controller.run_next(execute)
+    assert controller.phase == "incomplete" and controller.paused
+    assert controller.last_result == result and controller.last_failed == active
+    assert controller.pending == (followup,)
+    assert not await controller.run_next(execute)
 
 
 def test_queue_capacity_and_edit_remove_are_explicit():

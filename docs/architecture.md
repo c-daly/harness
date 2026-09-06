@@ -9,7 +9,7 @@ For day-to-day contribution mechanics and the invariants you must preserve, see
 internals, see [plugin-authoring.md](plugin-authoring.md).
 
 The ongoing core-agency implementation adds
-[bounded inference and core improvement records](core-inference-and-improvement.md).
+[bounded inference, native tasks, and core improvement records](core-inference-and-improvement.md).
 That document identifies the implemented interfaces and remaining agent-runtime,
 activation, and local-readiness boundaries.
 
@@ -142,7 +142,8 @@ Nothing precedes `SessionStarted` in a log.
 
 ## The kernel loop
 
-`AgentLoop.run_turn()` is a small state machine:
+`AgentLoop.run_task()` is a small state machine (`run_turn()` remains a
+text-returning compatibility method):
 
 ```
 build context (fold the log)  →  model call  →  dispatch each tool call  →  repeat
@@ -157,6 +158,14 @@ exactly one `UserInterrupt` is recorded — then `repair_turn()` reconstructs a
 coherent state to continue from. This pairing discipline (every
 `ToolCallProposed` ends with a completion or cancellation) is what keeps fold
 and resume correct.
+
+The native task boundary records `AgentRunStarted` before execution and
+`AgentRunFinished` after cleanup. A task result distinguishes completion from
+iteration exhaustion, token cutoff, failure, cancellation, and interrupted-run
+recovery. Task/run identities connect model calls and nested agent runs;
+verified output blobs retain full answers. Acceptance criteria remain unverified
+by execution itself. On resume, open task runs become `aborted` after their
+model/tool intents are repaired, without repeating uncertain side effects.
 
 Blocking I/O (file reads, glob/grep walks, bash) is offloaded to threads via
 `asyncio.to_thread` so a slow tool doesn't stall the loop or its siblings.
@@ -244,7 +253,7 @@ filesystem containment.
 The first queue is bounded and in memory; it cannot survive a crash. Pending
 prompts are not conversation events until their turn starts. The TUI keeps drafts
 editable, shows queued work, supports `/queue` list/edit/remove/pause/resume/clear,
-and pauses pending work on failure or cancellation. Mention reads are part of
+and pauses pending work on incomplete results, failure, or cancellation. Mention reads are part of
 the active turn's preparation. Model switches apply between logical turns,
 including all tool iterations, and shutdown waits for cancelled workers.
 

@@ -629,6 +629,19 @@ def test_prompt_mode_unchanged(tmp_path, capsys):
     assert "echo: hello" in capsys.readouterr().out
 
 
+def test_prompt_mode_incomplete_result_prints_partial_output_and_exits_nonzero(tmp_path, monkeypatch, capsys):
+    import pytest
+    from harness.provider import StreamStop, TextDelta
+
+    monkeypatch.setattr("harness.cli.FakeProvider", lambda script: FakeProvider([
+        [TextDelta("partial answer"), StreamStop("max_tokens")],
+    ]))
+    with pytest.raises(SystemExit, match="task incomplete: max_tokens") as exc:
+        run_cli("-p", "solve", "--base-dir", str(tmp_path), "--no-plugins", "--no-mcp")
+    assert exc.value.code != 0
+    assert "partial answer" in capsys.readouterr().out
+
+
 def _make_demo_plugin(plugin_dir):
     """Create a minimal demo plugin with a skill in plugin_dir."""
     plugin_dir.mkdir(parents=True, exist_ok=True)
