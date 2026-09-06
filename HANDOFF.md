@@ -1,20 +1,24 @@
 # Core agency implementation — restart handoff
 
-> **Continuation update, September 6:** [PR #12](https://github.com/c-daly/harness/pull/12)
-> is merged into `main` at `63cfd04`. Its final checkpoint `ddfa908` passed
-> **1123 tests, 7 skipped**, lint, packaging, and wheel installation locally.
-> Implementation continues on `feat/semantic-evaluation`, created from that merge.
-> This slice adds [shadow semantic observations and paired prompt evaluation](docs/semantic-evaluation.md),
-> fixed grading, persisted experiment evidence, cancellation/crash recovery,
-> explicit CLI execution, and terminal inspection. The final suite passed
-> **1153 tests, 7 skipped**; all 30 new tests passed with networking disabled.
-> Ruff, packaging, and a fresh offline wheel install (58 modules) also passed.
-> It does not activate candidates.
+> **Continuation update, September 6:** [PR #13](https://github.com/c-daly/harness/pull/13)
+> is merged into `main` at `68936ae` after Python 3.12/3.13 CI and review passed.
+> Implementation continues on `feat/local-qualification`, created from that merge.
+> This slice adds optional local runtime `cwd` and a
+> [repeatable real 4B offline check](docs/local-model-qualification.md).
+> **The local model profile fails its complete smoke gate:** no-plugin file tasks
+> and terminal journeys passed 3/3 each; memory-assisted artifacts passed 0/3.
+> The final report records two wrong-artifact outcomes and one malformed JSON outcome.
+> Memory transport works; model task quality is not qualified. Source files,
+> private memory, and user services were preserved. Weights stay ignored under
+> `.local-runtime/`; no local server from the check remains running.
+> Full validation passed **1162 tests, 7 skipped**, Ruff, packaging, and a fresh
+> offline wheel install importing all 58 modules.
 > The user authorized commits, PR creation, and continued implementation. Read the
 > [implementation record](docs/superpowers/plans/2026-09-06-core-agency-progress.md)
 > for current validation. M0–M4 remain in progress; M5–M6 remain pending.
-> The current slice validates behavior with scripted providers. Actual local-model
-> quality/latency, the complete offline M3 journey, context/progress semantic
+> Next: inspect dependent tool batches and evaluate grounded task execution against
+> the unchanged artifact oracle before enabling automatic fallback. Broader model
+> quality, the complete offline M3 journey, context/progress semantic
 > functions, candidate generation, scheduling, fallback, and activation/rollback
 > remain outstanding. Memory and agent-swarm remain independent plugins.
 > User `.claude/` and `.context/` remain preserved and ignored. The inventory

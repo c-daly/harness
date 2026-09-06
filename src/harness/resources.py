@@ -25,6 +25,7 @@ from harness.errors import ProviderError
 class LocalProfile(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid", allow_inf_nan=False)
     command: tuple[str, ...] = Field(default=(), max_length=128)
+    cwd: Path | None = None
     env_names: tuple[str, ...] = Field(default=(), max_length=32)
     required_files: tuple[Path, ...] = ()
     auto_start: bool = False
@@ -261,6 +262,9 @@ class LocalResources:
         if (observation.status != "unreachable" or not resolved.local.auto_start or owned):
             return observation
         profile = resolved.local
+        if profile.cwd is not None and not profile.cwd.is_dir():
+            return self._record(resolved, "missing_configuration", "local_working_directory_missing", emit,
+                                evidence="configuration")
         if any(not path.is_file() for path in profile.required_files):
             return self._record(resolved, "missing_configuration", "local_assets_missing", emit,
                                 evidence="configuration")
@@ -274,7 +278,7 @@ class LocalResources:
         env.update(HF_HUB_OFFLINE="1", TRANSFORMERS_OFFLINE="1")
         launch = asyncio.create_task(asyncio.create_subprocess_exec(
                 *profile.command, stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.DEVNULL, env=env, start_new_session=True,
+                stderr=asyncio.subprocess.DEVNULL, env=env, cwd=profile.cwd, start_new_session=True,
         ))
         try:
             process = await asyncio.shield(launch)

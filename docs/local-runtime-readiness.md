@@ -70,6 +70,7 @@ api_base = "http://127.0.0.1:8080/v1"
 auto_start = true
 probe_kind = "llamacpp"
 command = ["/opt/llama/bin/llama-server", "-m", "/models/local.gguf", "--alias", "my-provisioned-model", "--host", "127.0.0.1", "--port", "8080"]
+cwd = "/opt/llama/bin"
 required_files = ["/models/local.gguf"]
 startup_seconds = 120
 probe_seconds = 2
@@ -78,6 +79,12 @@ ttl_seconds = 5
 
 The command is an argument vector, executed without a shell. It is trusted local
 configuration, not model-supplied input. Missing required files prevent launch.
+Optional `cwd` sets the child's working directory; use an absolute path for a
+profile that works across projects. A missing directory or a regular file reports
+`missing_configuration` before launch. When omitted, the child inherits Harness's
+working directory. Some runtimes load shared libraries relative to this directory;
+the pinned llama.cpp CUDA image used in the [real local smoke check](local-model-qualification.md)
+requires `/app`.
 The llama.cpp profile checks `/v1/health` before `/v1/models`: its inventory can
 list an ID during loading. The health shapes and command flags follow the
 [upstream server contract](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md).
@@ -145,7 +152,7 @@ The tests cover owned/external lifecycle, a native file-reading task over real
 local HTTP streaming, policy and budget denial, credential/configuration freshness,
 bounded probes, startup cancellation including a spawn race, process capacity,
 journal failure cleanup, and final terminal-compositor behavior. The scripted
-server is a protocol fixture. Actual local-model latency/quality, cold startup
-from provisioned model assets, offline normal-memory access, physical resource
-limits, crash-time orphan reconciliation, and the complete M3 journey remain
-unqualified.
+server is a protocol fixture. The separate [real local smoke check](local-model-qualification.md)
+records a provisioned 4B profile, offline file work and normal-memory access,
+resource ceilings, and terminal recovery. Broad local-model quality, crash-time
+orphan reconciliation, and the complete M3 product gate remain unqualified.

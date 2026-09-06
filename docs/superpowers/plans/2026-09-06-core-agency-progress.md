@@ -1,7 +1,7 @@
 # Core agency implementation record
 
-Current implementation branch: `feat/semantic-evaluation`, based on merged `main`
-at `63cfd04`. Previous branches: `feat/local-context`, `feat/local-readiness`, `feat/agent-runtimes`,
+Current implementation branch: `feat/local-qualification`, based on merged `main`
+at `68936ae`. Previous branches: `feat/semantic-evaluation`, `feat/local-context`, `feat/local-readiness`, `feat/agent-runtimes`,
 and `feat/core-agency`.
 
 Committed checkpoints: `0351b75` (roadmap, lifecycle, and storage/result integrity),
@@ -20,6 +20,9 @@ review findings. [PR #11](https://github.com/c-daly/harness/pull/11) merged at
 `80008be` added context profiles and the offline normal-memory check; `ddfa908`
 rejected blank subjects. [PR #12](https://github.com/c-daly/harness/pull/12)
 merged at `63cfd04` on September 6.
+`3c626af` added semantic observations and paired evaluation in
+[PR #13](https://github.com/c-daly/harness/pull/13), merged at `68936ae` on
+September 6 after Python 3.12/3.13 CI and automated review passed.
 
 **Resumed after machine restart.** All 26 files in the
 [restart handoff](../../../HANDOFF.md) matched their saved hashes before new
@@ -33,10 +36,10 @@ qualification. Milestone completion requires its roadmap gates, not just code.
 
 | Milestone | State | Evidence / remaining work |
 |---|---|---|
-| M0 baseline and feasibility | In progress | Baseline: 885 passed, 7 skipped. CI, build and fresh wheel installation checked locally. Two restart inference probes remain too slow for synchronous UI use. Hardware/profile selection and cold startup remain. |
+| M0 baseline and feasibility | In progress | A provisioned Qwen 4B CUDA profile supports fast offline inference and owned startup. Repeated normal-memory tasks produced wrong artifacts, so general fallback quality remains unqualified. Earlier 30B/35B probes remain too slow. |
 | M1 correctness and interaction | In progress | 931 passed, 7 skipped after storage, delegation, controller/UI and MCP capability changes. Context budgets, broader enforcement/redaction and fault qualification remain. |
 | M2 inference / agent contracts | In progress | Bounded inference, native tasks, Codex task binding, explicit execution kinds, nullable usage, and core improvement records implemented. Remaining adapters and live capability qualification remain. |
-| M3 local core assistant | In progress | Local readiness/ownership and bounded context/tool profiles implemented. Actual normal-memory listing and project tools checked offline with scripted inference. Real model/profile selection and the full model-driven offline journey remain. |
+| M3 local core assistant | In progress | Real 4B offline file work, normal-memory retrieval, and no-plugin terminal cancellation/resume measured with CPU/RAM caps. Memory-assisted artifact quality fails the exact oracle. Combined memory/TUI, human use, crash recovery, and full product qualification remain. |
 | M4 bounded semantic agency | In progress | Explicit shadow message interpretation and paired prompt evaluation implemented. Context/progress functions, real-model held-out qualification, scheduling, fallback, candidate generation, activation, and rollback remain. |
 | M5 heterogeneous work / plugins | Pending | Supervision, plugin reconciliation, portable continuation, isolated improvement patches and rollback. |
 | M6 daily-use qualification | Pending | Measured UI, live adapter boundaries, offline and human dogfood gates. |
@@ -461,6 +464,54 @@ controls must stay independent of inference completion.
   importing all **58 modules** passed. Real model quality/latency and the full
   M3 offline journey remain unqualified.
   See [contracts and examples](../../semantic-evaluation.md).
+
+## Small local profile and real offline evidence (September 6)
+
+- `feat/local-qualification` starts from merged PR #13 at `68936ae`. A real
+  core-owned launch exposed a missing runtime option: the installed llama.cpp
+  CUDA binary needs `/app` as its working directory to load its shared library.
+  Optional `LocalProfile.cwd` now sets that directory. Invalid directories fail
+  before launch with `missing_configuration`; existing profiles retain inherited
+  working-directory behavior. Three real-process regression tests cover launch,
+  cleanup, and missing/non-directory preflight failures.
+- Provisioned Qwen3-4B-Instruct-2507 Q4_K_M separately, pinned by revision and
+  SHA-256. Assets and scratch reports stay in ignored `.local-runtime/`. The
+  profile uses the already cached CUDA image, 8,192 context tokens, one slot,
+  and four CPU threads. It changes no installed model aliases or user services.
+- `scripts/qualify_local.py` runs real native tasks, public semantic examples,
+  and the terminal compositor inside a loopback-only Docker container with
+  four CPUs, 4 GiB RAM and no swap allowance. Normal memory uses the installed
+  plugin and read-only normal vault; private text stays in temporary sessions
+  removed on completion. GPU memory is not hard-capped by these settings.
+- The [final report](../../handoffs/2026-09-06-core-agency/local-qualification.json)
+  binds final driver/core hashes, pinned model/runtime profile and dependencies.
+  **The model profile fails the full smoke gate (exit 1).** Across three runs:
+  no-plugin artifact work passed 3/3, no-plugin terminal journeys passed 3/3,
+  memory-assisted artifacts passed 0/3 (two wrong objects, one malformed JSON).
+  Successful execution stays acceptance-unverified. The oracle was not weakened.
+- Stopped-server readiness took **2.07–2.47 seconds** for no-plugin tasks; those
+  tasks finished in **3.16–5.01 seconds**. All **45 observed public semantic
+  samples** matched their labels, taking **78–117 ms**. The malformed artifact
+  case stopped before semantic sampling. This is neither held-out quality nor a
+  statistical latency qualification. Host file cache was retained.
+- Terminal mount measured **140–142 ms** inside the already-running worker.
+  Real streamed cancellation settled in **63–105 ms**. Final compositor checks
+  covered file answers, draft retention, session-picker resume, another answer,
+  and usable failure recovery after a missing local asset. Combined terminal and
+  normal-memory use, Python/Docker startup time, and human dogfooding remain.
+- Both fully graded memory cases retrieved **13,802 bytes** of normal scoped
+  memory. The model's wrong artifacts were produced in two model calls while
+  dispatching three tools. Premature dependent tool batching is a hypothesis for
+  the next experiment, not a proven memory-contamination diagnosis. Preserve the
+  source-fact oracle and inspect batch boundaries before changing instructions
+  or selecting a fallback profile. No adoption, fallback, or activation added.
+- See [profile, reproduction and limitations](../../local-model-qualification.md).
+  The full repository suite passed **1162 tests, 7 skipped, 6 warnings in
+  292.42s** on Python 3.13, including all nine new regression/oracle tests.
+  Existing skips and MCP deprecation warnings are unchanged. Locked offline
+  dependency sync, Ruff, whitespace checks, sdist/wheel build, and a fresh
+  offline wheel installation importing all **58 modules** passed. These checks
+  validate the core fix and report logic; the real model-quality gate still fails.
 
 ## Validation policy
 
