@@ -357,8 +357,8 @@ controls must stay independent of inference completion.
   Anthropic/Ollama conformance recordings and the opt-in live Antigravity gate;
   warnings concern the deprecated MCP client helper. Locked dependency sync,
   Ruff, whitespace checks, sdist/wheel build, and a fresh offline wheel install
-  importing all **54 modules** passed on Python 3.13. Hosted CI remains pending
-  publication of this checkpoint.
+  importing all **54 modules** passed on Python 3.13. Hosted Python 3.12/3.13 CI
+  passed for `18c2e38` in [PR #11](https://github.com/c-daly/harness/pull/11).
 - A read-only live probe on September 6 returned `unreachable` /
   `probe_transport_failed` for `http://127.0.0.1:8080/v1`. The new CLI returned
   exit status 1 and a timestamped JSON observation. No inference was requested
@@ -369,6 +369,24 @@ controls must stay independent of inference completion.
   weights, normal memory-plugin/vault access, crash-time orphan reconciliation,
   and automatic capability-aware fallback remain outstanding. See
   [local contract and configuration](../../local-runtime-readiness.md).
+
+## PR #11 review fixes
+
+- A diagnostic check during active inference could cache a transient failure
+  and block subsequent requests until its TTL expired. Dispatch now rechecks
+  every non-ready observation, preserving the diagnostic evidence and continuing
+  to deny a request if the new probe fails. Only fresh ready observations skip
+  probing. Recovery works for an owned runtime without restarting its process.
+- TUI resource-cleanup errors now surface in the transcript while the session
+  ending lifecycle still runs in `finally`. Failure to write either the stop
+  intent or the final stopped observation cannot skip the session terminal.
+- Eight new regression cases reproduced the review findings before the fix.
+  The complete local-resource and TUI-resource suites then passed **43 tests in
+  15.26s**, including a real owned process and compositor checks. Final full
+  integration passed **1098 tests, 7 skipped, 6 warnings in 295.63s** on Python
+  3.13. The skips and MCP deprecation warnings are unchanged. Locked dependency
+  sync, Ruff, whitespace checks, sdist/wheel build, and a fresh offline wheel
+  install importing all **54 modules** also passed.
 
 ## Validation policy
 

@@ -1960,13 +1960,19 @@ class HarnessApp(App[None]):
                 await worker.wait()
             except (WorkerCancelled, WorkerFailed):
                 pass
-        await self.kernel.resources.close(emit=self.kernel.session.append)
         try:
-            await self.kernel.loop.end()
-        except RuntimeError:
-            pass  # already ended elsewhere
+            await self.kernel.resources.close(emit=self.kernel.session.append)
         except Exception as exc:
-            self.say("! ", f"end failed: {exc}")
+            self.say("! ", f"local resource cleanup failed: {exc}")
+        finally:
+            # Resource cleanup may have succeeded but failed to journal its
+            # observations. Still end the session and allow ordinary teardown.
+            try:
+                await self.kernel.loop.end()
+            except RuntimeError:
+                pass  # already ended elsewhere
+            except Exception as exc:
+                self.say("! ", f"end failed: {exc}")
 
     async def on_unmount(self) -> None:
         try:

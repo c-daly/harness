@@ -253,7 +253,10 @@ class LocalResources:
             await self._terminate(resolved.alias, emit)
             return self._record(resolved, "failed", "owned_process_exited", emit, evidence="local_process")
         observation = self.snapshot(resolved, activity=False)
-        if observation.stale:
+        # Negative diagnostics describe their probe, not a cooldown for future
+        # inference. Recheck them even within the TTL; only fresh ready evidence
+        # can skip a probe. This also preserves denial if the endpoint still fails.
+        if observation.stale or observation.status != "ready":
             observation = await self._probe(resolved, emit)
         if (observation.status != "unreachable" or not resolved.local.auto_start or owned):
             return observation

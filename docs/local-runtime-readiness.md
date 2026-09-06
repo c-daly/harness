@@ -101,8 +101,9 @@ An owned server remains available between turns and across session rebuilds.
 Cancellation or failure during startup reaps the new process before returning;
 normal application shutdown settles active work, terminates owned process groups,
 and reaps its children, including when a worker ignores graceful termination.
-Failure to write a stop event does not abandon the child. Externally managed
-services are never adopted or killed. Direct embedding callers must settle their
+Failure to write a stop event does not abandon the child. The TUI reports resource
+cleanup errors and still attempts the session-ending lifecycle before teardown.
+Externally managed services are never adopted or killed. Direct embedding callers must settle their
 tasks and call `await kernel.resources.close(emit=kernel.session.append)` before
 closing the session; the supplied CLI/TUI perform this lifecycle themselves.
 
@@ -123,7 +124,10 @@ separate capability evidence exists.
 
 Successful observations expire. Configuration or credential changes invalidate
 cached readiness; interrupted/failed requests also require rechecking. Caches use
-monotonic time and are not restored from session logs. `ResourceObserved` events
+only fresh ready observations to skip a dispatch probe. A negative diagnostic
+remains visible but is rechecked on the next request even within its TTL, so a
+check during active inference cannot delay recovery for the rest of that TTL.
+Caches use monotonic time and are not restored from session logs. `ResourceObserved` events
 are historical evidence in the fold, not permission to reuse readiness after a
 restart. `LocalRuntimeRequested` records start/stop intent without replaying it.
 No recovery path guesses an old process's ownership from a PID or kills a process

@@ -7,7 +7,9 @@
 > adds explicit local profiles, bounded readiness checks, event-backed observations,
 > scoped process ownership, and responsive `/resources` controls. See
 > [local runtime readiness](docs/local-runtime-readiness.md) for configuration,
-> behavior, and qualification limits. Final local validation passed **1090 tests,
+> behavior, and qualification limits. PR #11 review fixes recheck negative
+> diagnostic results at dispatch and preserve TUI session termination after
+> resource-journal errors. Final local validation passed **1098 tests,
 > 7 skipped**, Ruff, packaging, and a fresh offline wheel install (54 modules).
 > The previous local endpoint on port 8080
 > was unreachable during this continuation; it was not started or stopped.

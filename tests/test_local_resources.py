@@ -89,6 +89,67 @@ async def test_checks_cancel_promptly_without_caching_ready():
     assert resources.snapshot(resolved).status == "unknown"
 
 
+@pytest.mark.parametrize("code, body, status", [
+    (429, {}, "busy"),
+    (401, {}, "authentication_failed"),
+    (403, {}, "denied"),
+    (503, {"error": {"type": "loading"}}, "loading"),
+    (200, {"data": []}, "missing_configuration"),
+])
+async def test_dispatch_rechecks_negative_diagnostics_before_ttl_expires(code, body, status):
+    from harness.errors import ProviderError
+
+    calls, events = [], []
+
+    async def respond(request):
+        calls.append(request)
+        if len(calls) in (2, 3):
+            return httpx.Response(code, json=body)
+        return httpx.Response(200, json={"data": [{"id": "test-model"}]})
+
+    resources = LocalResources(transport=httpx.MockTransport(respond))
+    resolved = catalog(ttl_seconds=60).resolve("local")
+    async with resources.use(resolved, emit=events.append):
+        check = await resources.check(resolved, emit=events.append)
+        assert check.status == status
+        assert resources.snapshot(resolved).status == "busy"
+    assert not resources.snapshot(resolved).stale
+    # A still-failing endpoint remains denied; a fresh probe must decide that.
+    with pytest.raises(ProviderError, match=status):
+        async with resources.use(resolved, emit=events.append):
+            pytest.fail("negative readiness permitted inference")
+    assert len(calls) == 3
+    # Recovery does not wait for the diagnostic TTL or trust the old ready value.
+    async with resources.use(resolved, emit=events.append) as recovered:
+        assert recovered.status == "ready"
+    assert len(calls) == 4
+
+
+async def test_owned_runtime_recovers_after_diagnostic_transport_failure(
+    tmp_path, unused_tcp_port, monkeypatch,
+):
+    resources, events = LocalResources(), []
+    resolved = owned_catalog(tmp_path, unused_tcp_port).resolve("local")
+
+    def unavailable(request):
+        raise httpx.ConnectError("temporary diagnostic failure", request=request)
+
+    try:
+        async with resources.use(resolved, emit=events.append):
+            pid = int((tmp_path / "runtime.pid").read_text())
+            with monkeypatch.context() as patch:
+                patch.setattr(resources, "_transport", httpx.MockTransport(unavailable))
+                result = await resources.check(resolved, emit=events.append)
+                assert result.status == "unreachable"
+        assert not resources.snapshot(resolved).stale
+        async with resources.use(resolved, emit=events.append) as recovered:
+            assert recovered.status == "ready" and recovered.ownership == "harness"
+            os.kill(pid, 0)
+        assert [e.action for e in events if e.type == "local_runtime_requested"] == ["start"]
+    finally:
+        await resources.close(emit=events.append)
+
+
 @pytest.mark.parametrize("url", ["https://example.com/v1", "http://127.0.0.1:8080/v1?token=secret",
                                 "http://user:secret@127.0.0.1:8080/v1", "file:///tmp/model"])
 def test_local_profiles_require_an_explicit_loopback_endpoint(url):
