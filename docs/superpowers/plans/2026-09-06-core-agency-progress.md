@@ -4,10 +4,12 @@ Implementation branch: `feat/core-agency`, based on `main` at `ce722b4`.
 
 Committed checkpoints: `0351b75` (roadmap, lifecycle, and storage/result integrity),
 `a2e565e` (controller/UI, delegated scope and limits, catalog, authenticated MCP),
-`7c5fa95` (merge current main, including terminal math and experiment-plugin docs),
-and `9965b60` (bounded inference and core improvement records).
-Draft PR: https://github.com/c-daly/harness/pull/9.
-Implementation continues on this branch while the draft PR is unmerged.
+`7c5fa95` (merge main, including terminal math and experiment-plugin docs),
+`9965b60` (bounded inference and core improvement records),
+`94301a7` (native task outcomes and queue recovery), and `c4cd1cc` (resolve
+CI/documentation conflicts with main at `88a9d42`).
+PR: https://github.com/c-daly/harness/pull/9.
+Implementation continues on this branch while the PR is unmerged.
 
 **Resumed after machine restart.** All 26 files in the
 [restart handoff](../../../HANDOFF.md) matched their saved hashes before new
@@ -234,8 +236,34 @@ controls must stay independent of inference completion.
   localhost/process access. Ruff and whitespace checks passed. Sdist/wheel built;
   a fresh offline Python 3.13 wheel installation with 83 cached dependencies
   executed an incomplete native task and replayed its output/acceptance from
-  verified blobs and events. Hosted checks for this new checkpoint are pending
-  its push; this is not live provider or offline-model qualification.
+  verified blobs and events. Hosted checks for `94301a7` passed on Python 3.12
+  and 3.13. The subsequent merge at `c4cd1cc` passed **1003 tests, 7 skipped**
+  locally, lint, build, all 52 wheel module imports, and both hosted CI jobs.
+  This is not live provider or offline-model qualification.
+
+## PR review: bounded external-agent response streams
+
+- The [external stream review](https://github.com/c-daly/harness/pull/9#discussion_r3944545662)
+  identified a real bypass: external
+  conversation agents used the unbounded collector and could publish oversized
+  completions before the native task's final result-size check.
+- Inference and external-agent response collection now share byte/frame bounds,
+  reported output-token checks, terminal validation, and a request deadline.
+  Rejected chunks do not reach observers or completion persistence. External
+  agents retain their execution kind and no-retry rule; internal inference
+  still cannot route to an agent. `TaskLimits.max_stream_chunks` is passed into
+  each model/agent response step.
+- Catalog forwarding explicitly closes Claude Code, Codex, and Antigravity
+  streams. Limit failures settle that cleanup before recording the failed model
+  call. Missing usage remains unknown. These are owned-response bounds, not
+  enforcement of raw subprocess output, scratch storage, or native tool effects.
+- Regression reproduction stopped after **6 failing cases in 0.72s** before
+  the fix. The initial focused integration passed **74 tests in 3.39s** after
+  implementation. Final integration: **1039 passed, 7 skipped, 5 warnings in
+  263.42s** with `UV_CACHE_DIR=/tmp/uv-cache uv run --offline --no-sync pytest -q -ra`
+  and localhost/process access. Ruff, whitespace checks, sdist/wheel build, and
+  the clean wheel smoke gate (all 52 module imports) passed. Hosted validation
+  for this review-fix commit follows its push; check PR #9 for that status.
 
 ## Validation policy
 

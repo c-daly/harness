@@ -16,7 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from harness.errors import ContextOverflow, MalformedStreamError, ProviderError
 from harness.messages import Message
-from harness.provider import Chunk, StreamStop, Usage, collect
+from harness.provider import Chunk, StreamStop, Usage, UsageReport, collect
 from harness.tools import ToolSpec, validate_schema
 from harness.types import ModelId
 
@@ -85,19 +85,19 @@ def check_input(request: InferenceRequest) -> None:
             raise ContextOverflow("inference input exceeds the configured byte limit")
 
 
-async def infer(
-    provider: InferenceProvider,
+async def collect_bounded(
+    source: AsyncIterator[Chunk],
     request: InferenceRequest,
     *,
     on_chunk: Callable[[Chunk], None] | None = None,
-) -> InferenceResult:
-    # Copy and revalidate nested mutable values and model_copy bypasses at entry.
-    request = InferenceRequest.model_validate(request.model_dump())
-    check_input(request)
-    method = getattr(provider, "infer", None)
-    if method is None:
-        raise ProviderError("provider has no bounded inference contract")
-    source = method(request)
+) -> tuple[Message, Usage, str]:
+    """Bound an owned response stream without changing its execution kind.
+
+    Callers validate the request before opening the source. Reject excess bytes,
+    frames, and reported tokens before observers or the collector see them, and
+    close the source before publishing any terminal outcome. Unknown usage stays
+    unknown; this cannot cap a CLI's generation before it reports token usage.
+    """
 
     async def bounded():
         size = count = 0
@@ -118,13 +118,16 @@ async def infer(
                     amount = len(json.dumps(asdict(chunk)).encode("utf-8"))
             size += amount
             if size > request.max_output_bytes or count > request.max_stream_chunks:
-                raise ProviderError("inference output exceeds the configured limit")
+                raise ProviderError("response stream exceeds the configured output limit")
+            if (isinstance(chunk, UsageReport) and chunk.usage.output_tokens is not None
+                    and chunk.usage.output_tokens > request.max_output_tokens):
+                raise ProviderError("response stream exceeds the requested token limit")
             if isinstance(chunk, StreamStop):
                 if terminal:
-                    raise MalformedStreamError("inference received multiple terminal markers")
+                    raise MalformedStreamError("response stream received multiple terminal markers")
                 terminal = True
             elif terminal and isinstance(chunk, (TextDelta, ThinkingDelta, ToolCallDelta)):
-                raise MalformedStreamError("inference received content after its terminal marker")
+                raise MalformedStreamError("response stream received content after its terminal marker")
             if on_chunk is not None:
                 on_chunk(chunk)
             yield chunk
@@ -137,9 +140,23 @@ async def infer(
             if close is not None:
                 await close()
     if stop == "unknown":
-        raise MalformedStreamError("inference ended without a terminal marker")
-    if usage.output_tokens is not None and usage.output_tokens > request.max_output_tokens:
-        raise ProviderError("inference output exceeds the requested token limit")
+        raise MalformedStreamError("response stream ended without a terminal marker")
+    return message, usage, stop
+
+
+async def infer(
+    provider: InferenceProvider,
+    request: InferenceRequest,
+    *,
+    on_chunk: Callable[[Chunk], None] | None = None,
+) -> InferenceResult:
+    # Copy and revalidate nested mutable values and model_copy bypasses at entry.
+    request = InferenceRequest.model_validate(request.model_dump())
+    check_input(request)
+    method = getattr(provider, "infer", None)
+    if method is None:
+        raise ProviderError("provider has no bounded inference contract")
+    message, usage, stop = await collect_bounded(method(request), request, on_chunk=on_chunk)
     if message.tool_calls() and request.tool_choice == "none":
         raise MalformedStreamError("inference proposed an unadvertised tool with tool_choice=none")
     # Native agents return bad names/arguments through ordinary tool dispatch,

@@ -69,6 +69,18 @@ enforced byte/frame/time bounds through `LegacyCompletionAdapter`; remote token
 limits, sampling, and structured output require an actual inference adapter.
 Legacy external-agent completion still has its existing lifecycle and containment
 limitations. It is classified as `agent` and is never retried automatically.
+Its response passes through the same bounded stream collector as inference:
+bytes, frames, reported output tokens, terminal markers, and the request deadline
+are checked before completion is persisted. Excess chunks never reach observers.
+Catalog forwarding closes the underlying CLI stream before a terminal failure
+is recorded. Sharing response collection does not make an external agent an
+inference provider or allow it to serve internal inference requests.
+
+For legacy CLI agents, token limits reject reported overruns as soon as usage
+arrives; they cannot constrain generation before a runtime reports usage. Unknown
+usage remains unknown. Response bounds cover owned chunks, not raw subprocess
+stdout/stderr, native tool side effects, or arbitrary scratch-file growth; those
+still require the planned external-runtime containment and capability gates.
 External runtimes still need migration to the task contract below.
 
 Catalog entries infer `execution_kind = "agent"` from an external CLI backend,
@@ -102,7 +114,7 @@ answer = result.read_text(kernel.session.blobs)
 ```
 
 Defaults are 20 iterations and a 600-second task deadline, with 4 MiB input,
-1 MiB response, and 4,096 output tokens per inference step. The final output is
+1 MiB response, 4,096 output tokens, and 65,536 stream chunks per step. The final output is
 also bounded to 1 MiB by default and stored as a verified blob. These per-run
 and per-step limits supplement existing shared call/child budgets; they are not
 a durable, cumulative token or cost budget. The loop's own iteration limit can

@@ -355,30 +355,33 @@ class CatalogProvider:
                 raise ProviderError(
                     f"model {model!r} needs the claude-code backend, which is not wired"
                 )
-            async for chunk in self.claude_code.complete(
+            async with aclosing(self.claude_code.complete(
                 model=resolved.route, messages=messages, tools=tools
-            ):
-                yield chunk
+            )) as source:
+                async for chunk in source:
+                    yield chunk
             return
         if resolved.backend == "codex":
             if self.codex is None:
                 raise ProviderError(
                     f"model {model!r} needs the codex backend, which is not wired"
                 )
-            async for chunk in self.codex.complete(
+            async with aclosing(self.codex.complete(
                 model=resolved.route, messages=messages, tools=tools
-            ):
-                yield chunk
+            )) as source:
+                async for chunk in source:
+                    yield chunk
             return
         if resolved.backend == "antigravity":
             if self.antigravity is None:
                 raise ProviderError(
                     f"model {model!r} needs the antigravity backend, which is not wired"
                 )
-            async for chunk in self.antigravity.complete(
+            async with aclosing(self.antigravity.complete(
                 model=resolved.route, messages=messages, tools=tools
-            ):
-                yield chunk
+            )) as source:
+                async for chunk in source:
+                    yield chunk
             return
         api_key = os.environ.get(resolved.api_key_env) if resolved.api_key_env else None
         if resolved.api_base and api_key is None:

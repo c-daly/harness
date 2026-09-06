@@ -5,7 +5,7 @@ import asyncio
 import time
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import AsyncGenerator, Callable
+from typing import Callable
 
 from harness.blobs import INLINE_THRESHOLD, BlobRef, BlobStore
 from harness.agent import current_agent_run
@@ -34,10 +34,10 @@ from harness.hooks import (
 from harness.execution import BudgetExceeded, ExecutionScope, current_scope
 from harness.interaction import PermissionRequest, Resolver
 from harness.inference import (
-    InferenceRequest, InferenceResult, LegacyCompletionAdapter, check_input, infer,
+    InferenceRequest, InferenceResult, LegacyCompletionAdapter, check_input, collect_bounded, infer,
 )
 from harness.messages import Message, materialize_tool_results
-from harness.provider import Chunk, ModelProvider, Usage, collect
+from harness.provider import Chunk, ModelProvider, Usage
 from harness.callctx import reset_current_call_id, set_current_call_id
 from harness.redaction import StringRedactor, identity_redact
 from harness.session import Session
@@ -69,17 +69,6 @@ class ToolOutcome:
                 raise RuntimeError("tool result requires its session blob store")
             return self._blobs.get(self.blob).decode("utf-8")
         return self.text if self.text is not None else ""
-
-
-async def _tee(
-    stream: AsyncGenerator[Chunk, None], on_chunk: Callable[[Chunk], None]
-) -> AsyncGenerator[Chunk, None]:
-    async for chunk in stream:
-        try:
-            on_chunk(chunk)
-        except Exception:
-            pass  # a broken frontend must never break dispatch
-        yield chunk
 
 
 class Dispatcher:
@@ -347,24 +336,22 @@ class Dispatcher:
                 while True:
                     try:
                         self.scope.budget.reserve_call("model")
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0:
+                            raise TimeoutError("generation deadline exceeded")
+                        attempt_request = request.model_copy(update={"timeout_seconds": remaining})
                         if execution_kind == "agent":
                             source = provider.complete(
                                 model=effective_model, messages=resolved_messages, tools=tools,
                             )
-                            try:
-                                message, usage, stop_reason = await collect(_tee(source, observed))
-                                result = InferenceResult(message, usage, stop_reason)
-                            finally:
-                                close = getattr(source, "aclose", None)
-                                if close is not None:
-                                    await close()
+                            message, usage, stop_reason = await collect_bounded(
+                                source, attempt_request, on_chunk=observed,
+                            )
+                            result = InferenceResult(message, usage, stop_reason)
                         else:
-                            remaining = deadline - time.monotonic()
-                            if remaining <= 0:
-                                raise TimeoutError("inference deadline exceeded")
                             bounded_provider = provider if hasattr(provider, "infer") else LegacyCompletionAdapter(provider)
                             result = await infer(
-                                bounded_provider, request.model_copy(update={"timeout_seconds": remaining}),
+                                bounded_provider, attempt_request,
                                 on_chunk=observed,
                             )
                             message, usage, stop_reason = result.message, result.usage, result.stop_reason

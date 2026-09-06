@@ -169,6 +169,7 @@ class AgentLoop:
                         max_input_bytes=task.limits.max_input_bytes,
                         max_output_bytes=task.limits.max_response_bytes,
                         max_output_tokens=task.limits.max_output_tokens,
+                        max_stream_chunks=task.limits.max_stream_chunks,
                         timeout_seconds=min(120, task.limits.timeout_seconds),
                     ),
                     pricing=self.pricing,

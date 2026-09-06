@@ -30,6 +30,7 @@ class TaskLimits(BaseModel):
     max_input_bytes: int = Field(default=4 * 1024 * 1024, gt=0, strict=True)
     max_response_bytes: int = Field(default=1024 * 1024, gt=0, strict=True)
     max_output_tokens: int = Field(default=4096, gt=0, strict=True)
+    max_stream_chunks: int = Field(default=65536, gt=0, strict=True)
 
 
 class AgentTask(BaseModel):
