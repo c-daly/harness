@@ -14,6 +14,7 @@ from harness.agent import AgentResult
 from harness.resources import ResourceObservation
 from harness.context import ContextPolicy
 from harness.improvement import ImprovementRecord
+from harness.semantics import SemanticObservation
 from harness.types import SCHEMA_VERSION, AgentId, CallId, ModelId, SessionId, ToolName
 
 
@@ -335,6 +336,27 @@ class TodoListUpdated(_Event):
     items: list[dict[str, Any]]
 
 
+class EvaluationRunStarted(_Event):
+    type: Literal["evaluation_run_started"] = "evaluation_run_started"
+    is_intent: ClassVar[bool] = True
+    run_id: str
+    plan_id: str
+    incumbent: BlobRef
+    configuration: BlobRef
+
+
+class EvaluationRunFinished(_Event):
+    type: Literal["evaluation_run_finished"] = "evaluation_run_finished"
+    run_id: str
+    status: Literal["completed", "cancelled", "timed_out", "failed", "aborted"]
+    result_id: str | None = None
+
+
+class SemanticObserved(_Event):
+    type: Literal["semantic_observed"] = "semantic_observed"
+    observation: SemanticObservation
+
+
 class ImprovementRecorded(_Event):
     """Core evidence/candidate/experiment fact. It never authorizes activation."""
 
@@ -387,6 +409,9 @@ Event = Annotated[
         CustomEvent,
         TodoListUpdated,
         ImprovementRecorded,
+        SemanticObserved,
+        EvaluationRunStarted,
+        EvaluationRunFinished,
         UnknownEvent,
     ],
     Field(discriminator="type"),

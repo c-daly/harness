@@ -18,7 +18,7 @@ from harness.errors import ContextOverflow, MalformedStreamError, ProviderError
 from harness.messages import Message
 from harness.provider import Chunk, StreamStop, Usage, UsageReport, collect
 from harness.tools import ToolSpec, validate_schema
-from harness.types import ModelId
+from harness.types import CallId, ModelId
 
 
 class InferenceRequest(BaseModel):
@@ -72,6 +72,8 @@ class InferenceResult:
     usage: Usage
     stop_reason: str
     structured: Any = None
+    model: ModelId | None = None
+    call_id: CallId | None = None
 
 
 def check_input(request: InferenceRequest) -> None:

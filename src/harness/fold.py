@@ -17,6 +17,9 @@ from harness.events import (
     DispatchResolved,
     Envelope,
     Event,
+    EvaluationRunStarted,
+    EvaluationRunFinished,
+    ImprovementRecorded,
     ModelCallAborted,
     ModelCallCancelled,
     ModelCallCompleted,
@@ -33,6 +36,7 @@ from harness.events import (
 )
 from harness.messages import Message
 from harness.context import ContextPolicy
+from harness.improvement import ExperimentResult
 from harness.agent import AgentResult
 from harness.types import CallId
 
@@ -48,6 +52,8 @@ class FoldedState:
     # Historical observations are evidence only; live readiness must recheck.
     resources: dict = field(default_factory=dict)
     context_policy: ContextPolicy | None = None
+    open_evaluations: dict[str, EvaluationRunStarted] = field(default_factory=dict)
+    evaluation_results: dict[str, ExperimentResult] = field(default_factory=dict)
     last_seq: int = 0
     # seq -> index range bookkeeping for compaction
     _msg_seqs: list[int] = field(default_factory=list)
@@ -81,6 +87,13 @@ def fold(envelopes: list[Envelope]) -> FoldedState:
             state.open_agent_runs[ev.run_id] = ev
         elif isinstance(ev, ContextPolicyConfigured):
             state.context_policy = ev.policy
+        elif isinstance(ev, EvaluationRunStarted):
+            state.open_evaluations[ev.run_id] = ev
+        elif isinstance(ev, EvaluationRunFinished):
+            state.open_evaluations.pop(ev.run_id, None)
+        elif isinstance(ev, ImprovementRecorded) and isinstance(ev.record, ExperimentResult):
+            if ev.record.run_id is not None:
+                state.evaluation_results[ev.record.run_id] = ev.record
         elif isinstance(ev, ResourceObserved):
             state.resources[ev.observation.alias] = ev.observation
         elif isinstance(ev, AgentRunFinished):
@@ -167,4 +180,9 @@ def resume_repairs(state: FoldedState) -> list[Event]:
             remaining_criteria=run.acceptance_criteria,
         ))
         for run in reversed(tuple(state.open_agent_runs.values()))
+    ] + [
+        EvaluationRunFinished(run_id=run_id,
+            status=state.evaluation_results[run_id].completion if run_id in state.evaluation_results else "aborted",
+            result_id=state.evaluation_results[run_id].id if run_id in state.evaluation_results else None)
+        for run_id in state.open_evaluations
     ]

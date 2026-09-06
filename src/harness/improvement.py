@@ -89,6 +89,8 @@ class ExperimentResult(_Record):
     evaluator_version: Digest
     observations: tuple[Measurement, ...]
     artifact: BlobRef  # preserved evaluator output/provenance
+    run_id: Identifier | None = None
+    completion: Literal["completed", "cancelled", "timed_out", "failed", "aborted"] = "completed"
 
 
 ImprovementRecord = Annotated[
@@ -108,7 +110,7 @@ def verdict(plan: EvaluationPlan, result: ExperimentResult) -> Literal["passed",
         raise ValueError("experiment must report each planned case exactly once")
     improved = 0
     incumbent_ms = candidate_ms = 0.0
-    incomplete = False
+    incomplete = result.completion != "completed"
     failed = False
     for case in plan.cases:
         value = observations[case.id]
@@ -160,6 +162,7 @@ class ImprovementState:
     candidates: dict[str, Candidate] = field(default_factory=dict)
     plans: dict[str, EvaluationPlan] = field(default_factory=dict)
     results: dict[str, ExperimentResult] = field(default_factory=dict)
+    runs: dict[str, str] = field(default_factory=dict)
 
     def apply(self, record: ImprovementRecord) -> None:
         # Snapshot mutable nested data and validate constructed/copied instances.

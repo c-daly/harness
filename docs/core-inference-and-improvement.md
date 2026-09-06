@@ -3,7 +3,11 @@
 This describes the implemented M2 foundation and subsequent core additions. The complete
 [core agency roadmap](superpowers/plans/2026-09-06-core-agency-roadmap.md) remains
 active. Native agent tasks now have distinct results; external runtime migration,
-live local-model qualification, experiment runners, activation, and rollback remain subsequent work.
+live local-model qualification, broader experiment runners, activation, and rollback remain subsequent work.
+
+[Semantic evaluation](semantic-evaluation.md) adds explicit shadow message
+interpretation and a bounded paired prompt evaluator with fixed grades and
+recoverable run records.
 
 [Context profiles](context-profiles.md) add persisted request and tool restrictions.
 Their preparation events provide input-size and omission evidence for later
@@ -229,11 +233,10 @@ an experiment. Replay reconstructs facts and never runs inference or experiments
 
 `adoption_decision` reports `refused`, `review_required`, or `eligible` against
 an explicit versioned `AdoptionPolicy`. The default has no automatic targets.
-Eligibility **does not activate changes**. These contracts do not yet launch
-evaluators, verify an evaluator process's authority, edit a running installation,
-or implement safe activation and rollback. Those remain required M4/M5 work;
-an eventual evaluator/activation service must prevent candidates from choosing
-their own grader or authorizing their own adoption.
+Eligibility **does not activate changes**. The message-prompt runner now executes
+paired inference with a core-owned fixed grader; candidates supply only prompt
+data. External evaluator authority, source experiments, safe activation, and
+rollback remain required M4/M5 work. No candidate authorizes its own adoption.
 
 Inspect the same records in either interface:
 
