@@ -94,6 +94,8 @@ preinstalled Python and a nonempty subject (default `harness`). It neither
 bootstraps dependencies nor stores retrieved memory in its report. Temporary
 session logs are removed on completion. Linux network namespaces are used by the
 command above; the script reports whether IPv4 routes are present.
+Empty or whitespace-only subjects fail before workspace setup or plugin access,
+including when the check is invoked directly from Python.
 
 The [observed result](handoffs/2026-09-06-core-agency/context-memory-offline.json)
 establishes offline file/MCP plumbing against the actual installed plugin. It

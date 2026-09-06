@@ -23,7 +23,13 @@ from harness.provider import FakeProvider, text_turn, tool_call_turn
 from harness.types import ModelId, ToolName
 
 
+def _validate_subject(subject: str) -> None:
+    if not subject.strip():
+        raise ValueError("subject must contain non-whitespace characters")
+
+
 async def check(root, memory_root, subject):
+    _validate_subject(subject)
     (root / "FACTS.txt").write_text("project-marker=local-context-check\n")
     rows = []
     for memory_enabled in (False, True):
@@ -83,6 +89,10 @@ def main():
     parser.add_argument("--subject", default="harness")
     parser.add_argument("--output", type=Path, help="Write the metadata-only report to this file.")
     args = parser.parse_args()
+    try:
+        _validate_subject(args.subject)
+    except ValueError as exc:
+        parser.error(f"--subject: {exc}")
     # No provisioning/bootstrap: these must already exist in the installed plugin.
     if not (args.memory_root / ".venv/bin/python").is_file():
         parser.error("memory plugin's preinstalled Python is unavailable")
