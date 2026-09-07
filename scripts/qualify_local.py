@@ -135,7 +135,8 @@ def start_latency(kernel, base):
     return ready[0] - starts[0] if ready and starts else None
 
 
-def make_kernel(base, workspace, models, memory_root=None, resume=None, *, parallel_tool_calls=None):
+def make_kernel(base, workspace, models, memory_root=None, resume=None, *, parallel_tool_calls=None,
+                tool_recovery_attempts=0):
     names = ("read_file", "write_file")
     specs = ()
     if memory_root:
@@ -155,7 +156,8 @@ def make_kernel(base, workspace, models, memory_root=None, resume=None, *, paral
         native_tools=True, workspace_root=workspace, permissions=permissions, mcp=specs,
         resume_session_id=resume,
         context_policy=None if resume else ContextPolicy(history_turns=1, tools=names,
-                                                         parallel_tool_calls=parallel_tool_calls))
+                                                         parallel_tool_calls=parallel_tool_calls,
+                                                         tool_recovery_attempts=tool_recovery_attempts))
 
 
 async def close(kernel):
@@ -173,11 +175,13 @@ async def close(kernel):
                 kernel.session.close()
 
 
-async def project_case(root, models, memory_root, *, parallel_tool_calls=None, facts=FACTS):
+async def project_case(root, models, memory_root, *, parallel_tool_calls=None, facts=FACTS,
+                       tool_recovery_attempts=0):
     workspace, base = root / "project", root / "sessions"
     workspace.mkdir(parents=True)
     (workspace / "FACTS.json").write_text(json.dumps(facts))
-    kernel = make_kernel(base, workspace, models, memory_root, parallel_tool_calls=parallel_tool_calls)
+    kernel = make_kernel(base, workspace, models, memory_root, parallel_tool_calls=parallel_tool_calls,
+                         tool_recovery_attempts=tool_recovery_attempts)
     row = {"mode": "normal-memory" if memory_root else "no-plugins", "checks": {}, "stage": "start"}
     checks = row["checks"]
     try:
@@ -252,6 +256,8 @@ async def project_case(root, models, memory_root, *, parallel_tool_calls=None, f
             checks["cleanup_succeeded"] = False
     checks["owned_runtime_stopped"] = any(e.type == "resource_observed"
         and e.observation.status == "stopped" for e in events(kernel, base))
+    row["correction_attempts"] = sum(e.type == "model_correction_requested" for e in events(kernel, base))
+    row["model_failures"] = [e.error_type for e in events(kernel, base) if e.type == "model_call_failed"]
     row["passed"] = row["stage"] == "complete" and all(checks.values())
     return row
 
@@ -262,7 +268,7 @@ async def until(predicate, seconds=45):
             await asyncio.sleep(0.02)
 
 
-async def tui_case(root, models, *, parallel_tool_calls=None):
+async def tui_case(root, models, memory_root=None, *, parallel_tool_calls=None, tool_recovery_attempts=0):
     from textual.widgets import Input
     from harness.tui import HarnessApp
 
@@ -270,9 +276,10 @@ async def tui_case(root, models, *, parallel_tool_calls=None):
     workspace, base = root / "project", root / "sessions"
     workspace.mkdir(parents=True)
     (workspace / "FACTS.json").write_text(json.dumps(FACTS))
-    kernel = make_kernel(base, workspace, models, parallel_tool_calls=parallel_tool_calls)
+    kernel = make_kernel(base, workspace, models, memory_root, parallel_tool_calls=parallel_tool_calls,
+                         tool_recovery_attempts=tool_recovery_attempts)
     app = HarnessApp(kernel, native_tools=True, workspace_root=workspace)
-    row = {"mode": "tui-no-plugins", "checks": {}, "stage": "mount"}
+    row = {"mode": "tui-normal-memory" if memory_root else "tui-no-plugins", "checks": {}, "stage": "mount"}
     checks = row["checks"]
 
     def screen():
@@ -282,6 +289,10 @@ async def tui_case(root, models, *, parallel_tool_calls=None):
     try:
         async with app.run_test(size=(140, 45)) as pilot:
             await pilot.pause(0.1)
+            if memory_root:
+                await until(lambda: type(app.screen).__name__ == "ServerChecklistScreen")
+                await pilot.press("enter")  # accept the configured normal-memory server
+                await until(lambda: app._bus_pump_worker is not None)
             composer = app.query_one("#prompt", Input)
             row["mount_seconds"] = time.monotonic() - started
             checks["composer_before_runtime_start"] = (not composer.disabled and not any(
@@ -294,7 +305,12 @@ async def tui_case(root, models, *, parallel_tool_calls=None):
                 await pilot.press("enter")
 
             row["stage"] = "project-answer"
-            await submit("Read FACTS.json and tell me the project name and retry limit.")
+            prompt = "Read FACTS.json and tell me the project name and retry limit."
+            if memory_root:
+                prompt = ("Read FACTS.json and write RESULT.json as a JSON object containing only the "
+                          "project and retry_limit values from that file. Then briefly confirm the values. "
+                          "Also call mcp__memory__memory_list with subject exactly 'harness'.")
+            await submit(prompt)
             await until(lambda: any(e.type == "agent_run_finished" for e in events(app.kernel, base)))
             await until(lambda: app.controller.active is None)
             await pilot.pause(0.2)
@@ -306,6 +322,20 @@ async def tui_case(root, models, *, parallel_tool_calls=None):
                 "harbor" in screen() and "3" in screen())
             checks["real_read_succeeded"] = any(e["tool"] == "read_file" and not e["is_error"]
                                                 for e in tool_outcomes(app.kernel, base))
+            if memory_root:
+                outcomes = tool_outcomes(app.kernel, base)
+                try:
+                    artifact = json.loads((workspace / "RESULT.json").read_text())
+                except (OSError, ValueError):
+                    artifact = None
+                checks.update(project_checks(answer, outcomes, artifact))
+                row["artifact"] = artifact_metadata(artifact)
+                memory = [e for e in outcomes if e["tool"] == "mcp__memory__memory_list" and not e["is_error"]]
+                checks["normal_memory_used"] = bool(memory and memory[-1]["text"].startswith("- type:"))
+                text = memory[-1]["text"] if memory else ""
+                row["memory_bytes"] = len(text.encode())
+                row["memory_sha256"] = hashlib.sha256(text.encode()).hexdigest()
+                memory_count = len(memory)
             row["stage"] = "cancel-stream"
             streamed = asyncio.Event()
             previous = app.kernel.loop.on_chunk
@@ -355,7 +385,10 @@ async def tui_case(root, models, *, parallel_tool_calls=None):
             checks["resume_history"] = any(m.text().startswith("Read FACTS.json")
                                             for m in app.kernel.loop.history)
             before = sum(e.type == "agent_run_finished" for e in events(app.kernel, base))
-            await submit("Read FACTS.json again and tell me the project name and retry limit.")
+            prompt = "Read FACTS.json again and tell me the project name and retry limit."
+            if memory_root:
+                prompt += " Also call mcp__memory__memory_list with subject exactly 'harness'."
+            await submit(prompt)
             await until(lambda: sum(e.type == "agent_run_finished"
                 for e in events(app.kernel, base)) > before)
             await until(lambda: app.controller.active is None)
@@ -364,6 +397,11 @@ async def tui_case(root, models, *, parallel_tool_calls=None):
             checks["resume_answer"] = (last.result.status == "completed" and
                 "harbor" in last.result.read_text(app.kernel.session.blobs) and "harbor" in screen())
             checks["resume_settled"] = settled(app.kernel, base)
+            if memory_root:
+                checks["resume_normal_memory_used"] = sum(e["tool"] == "mcp__memory__memory_list"
+                    and not e["is_error"] for e in tool_outcomes(app.kernel, base)) > memory_count
+            row["correction_attempts"] = sum(e.type == "model_correction_requested"
+                                              for e in events(app.kernel, base))
             row["stage"] = "unavailable-runtime"
             await submit("/resources stop local-small")
             models.entries["local-small"]["local"]["required_files"].append(
@@ -387,24 +425,34 @@ async def tui_case(root, models, *, parallel_tool_calls=None):
         row["error_type"] = type(exc).__name__
     finally:
         try:
+            # run_test/on_unmount already ends the loop. Mirror run_tui's
+            # remaining MCP teardown without trying to end the same loop twice.
+            if app.kernel.mcp:
+                await app.kernel.mcp.stop()
+                app.kernel.mcp.flush_events()
             await app.kernel.resources.close(emit=app.kernel.session.append)
             checks["cleanup_succeeded"] = True
         except Exception as exc:
             row["cleanup_error_type"] = type(exc).__name__
             checks["cleanup_succeeded"] = False
         finally:
+            if app._mcp_errlog is not None:
+                app._mcp_errlog.close()
             app.kernel.session.close()
     row["passed"] = row["stage"] == "complete" and all(checks.values())
     return row
 
 
-async def run(root, models, memory_root, *, parallel_tool_calls=None):
+async def run(root, models, memory_root, *, parallel_tool_calls=None, tool_recovery_attempts=0):
+    policy = {"parallel_tool_calls": parallel_tool_calls, "tool_recovery_attempts": tool_recovery_attempts}
     rows = [await project_case(root / "no-plugins", models, None,
-                               parallel_tool_calls=parallel_tool_calls)]
+                               **policy)]
     if memory_root:
         rows.append(await project_case(root / "memory", models, memory_root,
-                                       parallel_tool_calls=parallel_tool_calls))
-    rows.append(await tui_case(root / "tui", models, parallel_tool_calls=parallel_tool_calls))
+                                       **policy))
+    rows.append(await tui_case(root / "tui", models, **policy))
+    if memory_root:
+        rows.append(await tui_case(root / "tui-memory", models, memory_root, **policy))
     return rows
 
 
@@ -415,8 +463,11 @@ def main():
     parser.add_argument("--runs", type=int, choices=range(1, 11), default=3)
     parser.add_argument("--single-tool", action="store_true",
                         help="Opt in to one tool proposal per response through the context profile.")
+    parser.add_argument("--tool-recovery-attempts", type=int, choices=range(3), default=0)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
+    if args.tool_recovery_attempts and not args.single_tool:
+        parser.error("tool recovery requires --single-tool")
     # Use installed SDK metadata; no import-time remote price-map request.
     os.environ["LITELLM_LOCAL_MODEL_COST_MAP"] = "True"
     caps = isolation()
@@ -443,11 +494,13 @@ def main():
         text=True, timeout=10).strip()
     report["runs"] = args.runs
     report["parallel_tool_calls"] = False if args.single_tool else None
+    report["tool_recovery_attempts"] = args.tool_recovery_attempts
     report["cases"] = []
     for repeat in range(args.runs):
         with tempfile.TemporaryDirectory(prefix="harness-real-local-") as temp:
             rows = asyncio.run(run(Path(temp), models, args.memory_root,
-                                   parallel_tool_calls=report["parallel_tool_calls"]))
+                                   parallel_tool_calls=report["parallel_tool_calls"],
+                                   tool_recovery_attempts=args.tool_recovery_attempts))
         report["cases"].extend({"repeat": repeat, **row} for row in rows)
     report["memory_peak_bytes"] = int(Path("/sys/fs/cgroup/memory.peak").read_text())
     report["passed"] = all(row["passed"] for row in report["cases"])

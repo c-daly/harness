@@ -11,6 +11,8 @@ alias; it does not install defaults or implement automatic provider fallback.
 The subsequent [tool-planning slice](local-tool-planning.md) adds an opt-in
 single-response limit and a core-journal context experiment. The original report
 below binds the driver/core at PR #14's `20c36ad`; it remains historical evidence.
+The later [bounded correction slice](local-tool-recovery.md) extends the driver
+with explicit correction attempts and the combined normal-memory TUI journey.
 
 **September 6 result: this profile fails the complete smoke gate.** The
 [final three-run report](handoffs/2026-09-06-core-agency/local-qualification.json)

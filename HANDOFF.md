@@ -1,30 +1,35 @@
 # Core agency implementation — restart handoff
 
-> **Continuation update, September 6:** [PR #14](https://github.com/c-daly/harness/pull/14)
-> is merged into `main` at `e3ea2c0` after Python 3.12/3.13 CI and review passed.
-> Implementation continues on `feat/local-tool-planning`, created from that merge.
-> This slice adds an opt-in single-tool-response bound and a
-> [real context-policy improvement experiment](docs/local-tool-planning.md).
-> Dependent read/write batching was confirmed; prompt-only instructions also
-> failed. The response limit is enforced before dispatch and refuses external
-> agents it cannot constrain. Candidate evaluation uses the core improvement
-> journal and adoption gate. It does not activate the candidate or local fallback.
-> Final experiment: baseline **4/8**, candidate **2/8**; verdict `failed`, adoption
-> `refused`. Four candidate memory cases exceeded the response tool limit;
-> two no-plugin cases omitted or malformed the artifact. The exact report and
-> metadata-only core audit session are linked in the implementation record.
-> The original local model profile remains unqualified for memory-assisted tasks.
-> Private memory and user services were preserved; assets stay in `.local-runtime/`.
-> Final validation passed **1180 tests, 7 skipped**, Ruff, packaging and a fresh
-> wheel install importing all 58 modules. Task-owned runtime containers exited.
-> The user authorized commits, PR creation, and continued implementation. Read the
-> [implementation record](docs/superpowers/plans/2026-09-06-core-agency-progress.md)
-> for current validation. M0–M4 remain in progress; M5–M6 remain pending.
-> Next: use the failed candidate evidence to test a suitable model/runtime profile
-> and grounded task execution against the unchanged artifact oracle. Broader model
-> quality, the complete offline M3 journey, context/progress semantic
-> functions, candidate generation, scheduling, fallback, and activation/rollback
-> remain outstanding. Memory and agent-swarm remain independent plugins.
+> **Continuation update, September 6:** [PR #15](https://github.com/c-daly/harness/pull/15)
+> merged into `main` at `0a45d43` after Python 3.12/3.13 CI and review passed.
+> Implementation continues on `feat/local-tool-recovery`, created from that merge.
+> This slice adds opt-in `tool_recovery_attempts` (0–2, default 0) to the
+> single-tool context policy. Fully rejected inference batches can receive fixed,
+> durable feedback within the original task/call limits. Tool permissions still
+> apply; external agents and ambiguous failures remain outside recovery.
+> The TUI announces correction and synchronously clears rejected streamed text.
+> The [experiment contract](docs/local-tool-recovery.md) records the paired
+> evaluation and expanded offline TUI journey with the actual normal memory plugin.
+> Initial paired result: baseline **4/8**, candidate **8/8**, review required.
+> Final repeat: baseline **4/8**, candidate **6/8**, verdict **failed**, adoption
+> **refused**. Missing/malformed artifacts remain; an occasional pass is not a
+> qualified fallback. No candidate or automatic routing was activated.
+> Private memory and user services were preserved; assets and earlier reports stay
+> in `.local-runtime/`. Core audit sessions remain in `reports/recovery-audit` there.
+> Read the [implementation record](docs/superpowers/plans/2026-09-06-core-agency-progress.md)
+> for final journey and integration validation. The final journey passed **9/12**;
+> memory-enabled resumed answers still failed visibility. A diagnostic found both
+> facts in a **14 KB** answer, with the project outside the final viewport.
+> Full integration passed **1201 tests, 7 skipped**, with 6 existing MCP warnings.
+> Locked sync, Ruff, packaging and the fresh wheel smoke (58 modules) passed.
+> M0–M4 remain in progress;
+> M5–M6 remain pending. The user authorized commits, PRs, and continued implementation.
+> Next: compare an explicit sampling/runtime profile and a suitable tool-capable
+> model and bounded answer verbosity against these same artifact and final-viewport
+> checks, including repeated normal
+> memory use. Broader model quality, full M3 qualification, semantic context/progress
+> functions, candidate generation, scheduling, fallback, activation and rollback
+> remain outstanding. Memory and agent-swarm stay independent plugins.
 > User `.claude/` and `.context/` remain preserved and ignored. The inventory
 > below is the historical pre-reboot snapshot, not a restoration instruction.
 

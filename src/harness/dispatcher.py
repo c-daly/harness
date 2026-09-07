@@ -9,7 +9,7 @@ from typing import Callable
 
 from harness.blobs import INLINE_THRESHOLD, BlobRef, BlobStore
 from harness.agent import current_agent_run
-from harness.errors import ProviderError
+from harness.errors import ProviderError, ToolCallLimitExceeded
 from harness.events import (
     DispatchResolved,
     HookDecided,
@@ -425,6 +425,8 @@ class Dispatcher:
                     duration_ms=elapsed(),
                 )
             )
+            if isinstance(exc, ToolCallLimitExceeded):
+                exc.call_id = call.call_id
             raise
         # Outside the exception scope: a failing log write cannot emit a second terminal fact.
         self.session.append(

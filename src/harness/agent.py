@@ -64,7 +64,7 @@ class AgentResult(BaseModel):
 class AgentProgress:
     task_id: str
     run_id: str
-    phase: Literal["inference", "execution", "tools", "stream"]
+    phase: Literal["inference", "execution", "tools", "stream", "correction"]
     iteration: int
     chunk: Chunk | None = None
 
