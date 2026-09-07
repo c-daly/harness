@@ -278,6 +278,11 @@ mirror every row of the contract table.
 
 ### M3 — Deliver the first useful local core assistant
 
+**Candidate list update:** retain [larger models and tooling options](../../local-model-candidates.md)
+for later capacity experiments, including Qwen3-14B, Unsloth quantizations and
+Hugging Face sourcing. This does not change the current cleanup/task-evidence
+priority or qualify a fallback.
+
 **NEW — the first product milestone.** Implement core-managed local readiness
 and capability snapshots. Distinguish missing configuration, loading, ready,
 busy, authentication failure, unreachable resource, denied capability, and

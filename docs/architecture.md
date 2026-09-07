@@ -25,6 +25,9 @@ optional native-agent recovery after an inference batch was rejected before exec
 [Response profiles](response-profiles.md) persist conversation generation bounds,
 sampling and answer guidance while keeping semantic requests separate.
 
+[Inference-client ownership](inference-client-lifecycle.md) scopes explicit
+OpenAI-compatible endpoint clients to individual requests, including cancellation.
+
 [Semantic evaluation](semantic-evaluation.md) adds shadow observations and paired
 prompt experiments through the same dispatcher, with fixed grading and recovery.
 

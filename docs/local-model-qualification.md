@@ -17,6 +17,11 @@ with explicit correction attempts and the combined normal-memory TUI journey.
 settings and a separately provisioned, pinned 8B comparison fixture. The original
 4B remains the driver's default, and earlier reports remain historical evidence.
 
+The separate [client-lifecycle probe](inference-client-lifecycle.md) checks HTTP
+transport cleanup; model-process and MCP checks alone cannot establish it.
+[Larger model candidates](local-model-candidates.md) remain available for future
+evaluation without changing the current cleanup/task-evidence priority.
+
 **September 6 result: this profile fails the complete smoke gate.** The
 [final three-run report](handoffs/2026-09-06-core-agency/local-qualification.json)
 records 3/3 successful no-plugin file tasks and 3/3 successful terminal journeys,
