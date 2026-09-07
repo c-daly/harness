@@ -1,7 +1,7 @@
 # Core agency implementation record
 
-Current implementation branch: `feat/local-tool-recovery`, based on merged `main`
-at `0a45d43`. Previous branches: `feat/local-tool-planning`, `feat/local-qualification`, `feat/semantic-evaluation`, `feat/local-context`, `feat/local-readiness`, `feat/agent-runtimes`,
+Current implementation branch: `feat/local-response-profiles`, based on merged `main`
+at `fb07139`. Previous branches: `feat/local-tool-recovery`, `feat/local-tool-planning`, `feat/local-qualification`, `feat/semantic-evaluation`, `feat/local-context`, `feat/local-readiness`, `feat/agent-runtimes`,
 and `feat/core-agency`.
 
 Committed checkpoints: `0351b75` (roadmap, lifecycle, and storage/result integrity),
@@ -29,6 +29,9 @@ September 6 after both CI versions and automated review passed.
 `adcdc7c` added the single-tool response bound and a rejected context experiment in
 [PR #15](https://github.com/c-daly/harness/pull/15), merged at `0a45d43` on
 September 6 after both CI versions and automated review passed.
+`e3cbfde` added bounded correction and repeated offline evidence in
+[PR #16](https://github.com/c-daly/harness/pull/16), merged at `fb07139` after
+Python 3.12/3.13 CI and automated review passed (September 6 local time).
 
 **Resumed after machine restart.** All 26 files in the
 [restart handoff](../../../HANDOFF.md) matched their saved hashes before new
@@ -42,11 +45,11 @@ qualification. Milestone completion requires its roadmap gates, not just code.
 
 | Milestone | State | Evidence / remaining work |
 |---|---|---|
-| M0 baseline and feasibility | In progress | A provisioned Qwen 4B CUDA profile supports fast offline inference and owned startup. Bounded correction improves normal-memory tasks but repeated artifacts still fail, so fallback quality remains unqualified. Earlier 30B/35B probes remain too slow. |
+| M0 baseline and feasibility | In progress | A provisioned Qwen 4B CUDA profile supports fast offline inference and owned startup. Bounded correction improves normal-memory tasks but repeated artifacts still fail, so fallback quality remains unqualified. An additional pinned 8B feasibility probe also failed the complete journey. Earlier 30B/35B probes remain too slow. |
 | M1 correctness and interaction | In progress | 931 passed, 7 skipped after storage, delegation, controller/UI and MCP capability changes. Context budgets, broader enforcement/redaction and fault qualification remain. |
 | M2 inference / agent contracts | In progress | Bounded inference, native tasks, Codex task binding, explicit execution kinds, nullable usage, and core improvement records implemented. Remaining adapters and live capability qualification remain. |
-| M3 local core assistant | In progress | Real 4B offline file work, normal-memory retrieval, and combined memory/TUI journeys now measured with CPU/RAM caps. Bounded tool correction helps but repeated artifact and resume-answer checks still fail. Human use, crash recovery, and full product qualification remain. |
-| M4 bounded semantic agency | In progress | Shadow message interpretation, paired prompt evaluation, and real context-policy/correction experiments use core improvement records. Repeated correction evaluation refused adoption despite an earlier small-suite pass. Context/progress functions, broader held-out qualification, scheduling, fallback, candidate generation, activation, and rollback remain. |
+| M3 local core assistant | In progress | Real 4B offline file work, normal-memory retrieval, and combined memory/TUI journeys now measured with CPU/RAM caps. Bounded tool correction helps but repeated artifact and resume-answer checks still fail; the response-profile candidate regressed from 14/18 to 9/18. Human use, crash recovery, and full product qualification remain. |
+| M4 bounded semantic agency | In progress | Shadow message interpretation, paired prompt evaluation, and real context-policy/correction experiments use core improvement records. Repeated correction and response-profile evaluations refused adoption; the larger response plan now includes real TUI journeys. Context/progress functions, broader held-out qualification, scheduling, fallback, candidate generation, activation, and rollback remain. |
 | M5 heterogeneous work / plugins | Pending | Supervision, plugin reconciliation, portable continuation, isolated improvement patches and rollback. |
 | M6 daily-use qualification | Pending | Measured UI, live adapter boundaries, offline and human dogfood gates. |
 
@@ -623,6 +626,66 @@ controls must stay independent of inference completion.
   unchanged. Next: qualify explicit sampling/runtime/model choices and useful
   bounded answers, retaining the artifact and final-viewport checks. M3 is still
   incomplete; an occasional small-suite pass must not become automatic fallback.
+
+## Response profiles and repeated artifact/UI evaluation (September 6)
+
+- `feat/local-response-profiles` starts from merged PR #16 at `fb07139`.
+  Core `ResponsePolicy` adds optional sampling, output-token/byte limits and
+  answer guidance to persisted context profiles. Defaults preserve existing
+  behavior. Task and dispatch bounds take the narrower configured value;
+  temperature applies only to conversation/agent-task inference. Semantic and
+  compaction requests retain their settings. External agents reject explicit
+  sampling rather than silently ignoring it; guidance and local bounds still work.
+- Guidance is pinned context and consumes the input budget, without modifying
+  canonical history or duplicating on resume. Token exhaustion stays incomplete;
+  malformed or oversized output fails, and acceptance stays unverified. `/context`
+  displays the settings. Memory and agent-swarm remain plugins.
+- The [response contract](../../response-profiles.md) records three failed,
+  four-journey pilots: greedy 4B (1/4), official non-thinking Qwen3 8B (1/4), and
+  conservative unchanged-sampling 4B (2/4). The separately provisioned 8B asset
+  was size/hash verified and ran under the same offline CPU/RAM limits. These
+  probes establish feasibility observations, not a qualified model or minimum
+  hardware requirement. Their metadata and failed checks are preserved in the
+  [pilot report](../../handoffs/2026-09-06-core-agency/local-response-pilots.json).
+- The fixed response experiment uses 18 paired cases: 12 file cases across
+  original harbor/3 and reserved maple-ν/23 facts, with/without normal memory,
+  repeated three times; six real TUI journeys cover both plugin configurations.
+  It keeps the artifact, memory-refresh, compositor, cancellation, resume and
+  failure checks. The candidate adds short guidance and 512-token/4096-byte
+  limits to bounded tool recovery; runtime sampling stays unchanged in both arms.
+- Final paired result: **incumbent 14/18, candidate 9/18**, six regressions and
+  one improvement, core verdict **failed**, adoption **refused**. File cases fell
+  from 10/12 to 5/12; both sides passed 4/6 UI journeys. Some short answers were
+  useful, but missing/wrong/malformed artifacts and a memory-resume failure
+  prevent adoption. The [result](../../handoffs/2026-09-06-core-agency/local-response-evaluation.json)
+  binds the measured source and all observations; the journal is
+  `b5324774b0e84388be1bf8ba9b79f70e` under `.local-runtime/reports/response-audit`.
+- All model-process and MCP teardown checks passed, but the longer run emitted
+  unclosed aiohttp client-session warnings. SDK transport ownership remains an
+  explicit gap: stream closure and process cleanup are not full client cleanup.
+  Installed LiteLLM client caching includes request timeouts, while dispatch uses
+  varying remaining deadlines. A focused reproduction, bounded ownership and
+  concurrent/cancelled-call tests are the next lifecycle work; avoid globally
+  closing clients that other tasks may still use.
+- Validation setup initially used `uv sync --dev`, but this repository declares
+  development tools as the `dev` extra. That removed the test runner from the
+  project environment and collection failed before any tests ran. Corrected to
+  `uv sync --locked --offline --extra dev`, restoring the locked tools. This setup
+  failure is separate from integration results. The saved evaluation's script
+  and core hashes match the final measured implementation, and journal replay
+  confirms the failed verdict and refused adoption.
+- Full integration passed **1222 tests, 7 skipped, 6 warnings in 315.76s** on
+  Python 3.13, including 21 new profile/evaluation cases. Ruff, whitespace checks,
+  sdist/wheel build and the fresh offline wheel smoke importing all **58 modules**
+  passed. The wheel smoke resolves cached compatible dependencies independently
+  of the development lock; it verifies packaging/imports, not live model quality.
+  All task-owned experiment containers exited.
+- More tuning alone has not made local work reliable. Next core work should
+  check task requirements against recorded execution/artifact evidence and expose
+  unmet requirements in the interface. Semantic self-assessment stays advisory;
+  it cannot certify completion. M3, automatic fallback and activation remain
+  unqualified. No user model configuration, plugin internals or private memory
+  were changed.
 
 ## Validation policy
 

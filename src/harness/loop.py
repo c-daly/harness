@@ -126,9 +126,13 @@ class AgentLoop:
         task = AgentTask.model_validate(task.model_dump())
         policy = self.dispatcher.scope.context_policy
         if policy is not None:
-            task = task.model_copy(update={"limits": task.limits.model_copy(update={
-                "max_input_bytes": min(task.limits.max_input_bytes, policy.max_input_bytes),
-            })})
+            limits = {"max_input_bytes": min(task.limits.max_input_bytes, policy.max_input_bytes)}
+            if policy.response is not None:
+                if policy.response.max_output_tokens is not None:
+                    limits["max_output_tokens"] = min(task.limits.max_output_tokens, policy.response.max_output_tokens)
+                if policy.response.max_output_bytes is not None:
+                    limits["max_response_bytes"] = min(task.limits.max_response_bytes, policy.response.max_output_bytes)
+            task = task.model_copy(update={"limits": task.limits.model_copy(update=limits)})
         if self._task_active:
             raise RuntimeError("an agent task is already running")
         self._task_active = True
@@ -168,6 +172,8 @@ class AgentLoop:
                 ]
                 policy = self.dispatcher.scope.context_policy
                 if policy is not None:
+                    if policy.response is not None and policy.response.instructions is not None:
+                        prefix.append(Message.system_text("Response instructions:\n" + policy.response.instructions))
                     from harness.context import prepare_context
                     prepared = prepare_context(prefix, self.history, self.registry.specs(), policy,
                                                max_input_bytes=task.limits.max_input_bytes,

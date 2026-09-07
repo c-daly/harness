@@ -1,0 +1,4356 @@
+{
+  "schema_version": 1,
+  "configuration": {
+    "isolation": {
+      "interfaces": [
+        "lo"
+      ],
+      "memory_max_bytes": 4294967296,
+      "swap_max_bytes": 0,
+      "cpu_max": [
+        "400000",
+        "100000"
+      ]
+    },
+    "image": "sha256:841b199aed2649a748875b043b32fed2e8c2d4d87e1d563556817fb7fa44b72b",
+    "weights_sha256": "3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597",
+    "model_profile": "qwen3-4b-instruct",
+    "model_pin": {
+      "repo": "unsloth/Qwen3-4B-Instruct-2507-GGUF",
+      "filename": "Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
+      "revision": "a06e946bb6b655725eafa393f4a9745d460374c9",
+      "bytes": 2497281120,
+      "sha256": "3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597",
+      "runtime_args": []
+    },
+    "experiment": "bounded-concise-responses",
+    "response": {
+      "temperature": null,
+      "max_output_tokens": 512,
+      "max_output_bytes": 4096,
+      "instructions": "In the final answer, give the requested facts briefly. Do not quote retrieved memory unless its contents were explicitly requested."
+    },
+    "catalog": {
+      "local-small": {
+        "route": "openai/local-small",
+        "api_base": "http://127.0.0.1:8080/v1",
+        "max_input_tokens": 8192,
+        "verified": false,
+        "local": {
+          "auto_start": true,
+          "cwd": "/app",
+          "probe_kind": "llamacpp",
+          "startup_seconds": 30,
+          "probe_seconds": 2,
+          "required_files": [
+            "/app/llama-server",
+            "/models/local.gguf"
+          ],
+          "env_names": [
+            "LD_LIBRARY_PATH"
+          ],
+          "command": [
+            "/app/llama-server",
+            "--model",
+            "/models/local.gguf",
+            "--alias",
+            "local-small",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            "8080",
+            "--n-gpu-layers",
+            "99",
+            "--ctx-size",
+            "8192",
+            "--parallel",
+            "1",
+            "--threads",
+            "4",
+            "--threads-batch",
+            "4",
+            "--flash-attn",
+            "on",
+            "--jinja",
+            "--cache-ram",
+            "0",
+            "--fit",
+            "off"
+          ]
+        }
+      }
+    },
+    "deadline_seconds": 600,
+    "scripts": {
+      "evaluate_local_planning.py": "bae92f8d510ec97f2c4f8bac66a635d11cbe7cb2a9c2be6f210c394ca06be262",
+      "qualify_local.py": "dc30375c9455b5869811c56bb226f25db1f915850dcafb05d400f833cf53b92c"
+    },
+    "core_source": {
+      "src/harness/__init__.py": "1cb99da2ab5f68f4005bd5a26681ed7a4e012de8384db1dcd8dc80d0c242c2a2",
+      "src/harness/agent.py": "d92af9a08b8df1d7f269c1eae1bbf40a5a2f607e30ca5f703cc9862dba0d7b97",
+      "src/harness/agent_runtime.py": "05a297d6ee4c6a935627e13c186848b687fb11e7f05ea0768d105a45ec6659c4",
+      "src/harness/blobs.py": "8b3ffa9d422f89961ebe83fcb78fcb27e10f1703c8ded75b2888321ce9900efc",
+      "src/harness/callctx.py": "70e7979654b262ccc715c0f2d34f4171968d5d1f8b282cab21bb916d7131e782",
+      "src/harness/catalog.py": "b23d0707550a32c70c1b3988e5a3e62bacf63b7ccc775aa5d3eaadef574741fa",
+      "src/harness/cc_import.py": "bd2c9bdb5acd194da6fd1bca1edc11643af94f94826cdc384e62091988d69b99",
+      "src/harness/cli.py": "047eaab0e34b058872073b3a0cd7093c1b71f7c4a3b0a37247ce49413059c196",
+      "src/harness/context.py": "b5aa2c017c678cdb5514fb74602404edbc380cf2cfb1028b3c64ae680369170b",
+      "src/harness/controller.py": "a47f1da827d1c95ea63f18d71d41a786f5d741ed966adb5d5dc5d33d8d1e8958",
+      "src/harness/dispatcher.py": "0be9a3688f294136831e1ee540135cc84559d98c4cb33de19f1698b238036111",
+      "src/harness/errors.py": "dae25a8ec0d5d1b8d31090692df4c374d11790dd650ca5fbe1d00a8f7152fdc8",
+      "src/harness/events.py": "1ce4a0b70a7b572b115a15ca6db2f1399fbfe62e43297db2d6b1fb740ba836a3",
+      "src/harness/execution.py": "bca517298697ab1d722f7e4e11ab468a834bef6910dbf63594013e9615a4fa0f",
+      "src/harness/fold.py": "46e889eb1622d5c37772859f16c58a6066887286ab0aa0229a0f4f7405b714ec",
+      "src/harness/frontmatter.py": "e797b1317937599259ec23c7bea7fee1417b83a7e75f8d3d1e423da9b34157a5",
+      "src/harness/hooks.py": "45d1bd793cdc79b58afea81ec50b36721ae3b8e2ea8d0397d06fa51d2a0b6aa7",
+      "src/harness/improvement.py": "25ab065a237c6c19f0c834db683ae3b12ad3a2fec4113410cec604cdce583744",
+      "src/harness/improvement_journal.py": "c0de6d310ec0f99810e44d9dce63f1342258e9ead9e8cd0cabe6c8072437e243",
+      "src/harness/inference.py": "a8be6895f56c503eb4cc18588e204cc53aaeefe5aa361b63012f0333f16a5cba",
+      "src/harness/interaction.py": "4a6c198a67567d39c8fa32f882de20b5d49207100ed474881b246735caa85c4d",
+      "src/harness/log.py": "dfca73b52f98ba6a07f43e87ac1c40c61ff3ab0555377add6eb71042ce7408c7",
+      "src/harness/loop.py": "0a97c2d44a4024fcca07b1452105ba159d72c41aadee0af33c07527116ccefa3",
+      "src/harness/math_markdown.py": "e2422337fb675a51124da68e406518496a8a3465fde330d34fcf2e1175b2f0f5",
+      "src/harness/mcp_config.py": "832432ed48f5b6f95215ec4e21d0e4199a72c58f788326ee3c8ff3de408fbc7b",
+      "src/harness/mcp_host.py": "a2b2266034fd2fd5740130295d2635ccb516bf8ace9aa923593f031e67fc6061",
+      "src/harness/mcp_import.py": "7c42a53f0ff5b5e6f7ddbad6f5a4eb3cbedca81403d2f8efc0363fba01950a1e",
+      "src/harness/mcp_serve.py": "34c0712d8286b8f6d6293625e786d8000ca5b83a80d39bef5933f0241662f6b2",
+      "src/harness/messages.py": "f43d61286b9880513d6cc68ca61e5af94ea746fdf1663e4dad1e972c6397de21",
+      "src/harness/mixture.py": "a11cea5ea07eb29dccc11e19109af8c7844b105b044b3dc2c70291b4756fbbe3",
+      "src/harness/native_tools.py": "a07215a3062ad2ae8db2bb4dc85c785628731c240c672c7699b985db5e1c75d4",
+      "src/harness/parity.py": "0e67f7b7d020677397c6f82e5406df335035ef84365d8304ae8213d098b514b2",
+      "src/harness/permissions.py": "1e2bd05ac58db657bdd5f5dfaeea1b0366d3bd0a7d4f21985281492cc929ec22",
+      "src/harness/persistence.py": "ede33d47e5a116e5ad5a05021caa89c0397c92ad21f64051119754cec0e3e5a9",
+      "src/harness/plugins.py": "72908a91dc95aee2ef0f491db9cb9c49671e4249f50d546afed9dfc989887557",
+      "src/harness/provider.py": "c4a82a66d23d9ea6f7668f19a021f5084c3b8e327645e38b6b2403daea6f9ba6",
+      "src/harness/provider_antigravity.py": "6f06e065de74aba6d23ab9a1bd1990e9a9bfc8a9afea64222d06f0ec7221ecae",
+      "src/harness/provider_claude_code.py": "22aa513571a5ad5e1af7b14e104a4e16397868c5e56a83eac4af31832a69f302",
+      "src/harness/provider_codex.py": "1e5fe88cc8fb31ef18967028d045972cf4a870c1bd5d3142e40cad0a009dc557",
+      "src/harness/provider_litellm.py": "48a82d5b7d41cd42d1dbe912deb388e4f9bdfda5b176c82b70bae513e18e1411",
+      "src/harness/redaction.py": "f0c5bd0d095d1423a3e5b01c184074c518c00e021304e807c0b3900b81d530aa",
+      "src/harness/resources.py": "bb4c7c414493f48bf50270d6fd1a96131f67c52e466394dd064e3c858b1f2b8f",
+      "src/harness/resume.py": "93760d15b5fe1bd7e5219c6635dbac36a07635b4a6078f6456eab4e6fd1239c0",
+      "src/harness/routing.py": "2c9d7d9e79360c2d339ba7192a47283ddf5b634cb1bd70115bad43d8718e3e2e",
+      "src/harness/semantic_cli.py": "e341067defa55495152ee52cbb3f4e8ec1fa87af4741284fd74b42aad822bac8",
+      "src/harness/semantic_evaluation.py": "31968168b78108f849c1e82c4e3d3837ef987c47aa0bfbe4cfa2683c07f86bab",
+      "src/harness/semantics.py": "e61bb266e7f16651838d83a9588ce2a84b4954c7db20247f5f953f6015810440",
+      "src/harness/session.py": "7f9da4e58cedd3db9a31119c9ee0d9837a6fef49b45363bc314e35a3380db380",
+      "src/harness/sessions.py": "bbdfc914a5ca7fe33ff6a9e30410a562404d4e9c1de184f773ba2c5c32fe40f8",
+      "src/harness/skills.py": "1e73e256391ed277e34431217f6c7c1c97f5cfb54fdc84b2f2a0f2f0085fca41",
+      "src/harness/subagent.py": "5fcdde351039b678ff11547d3e81d465754d4e526979c0d2e10131e4bf5e80be",
+      "src/harness/telemetry.py": "27a6d937bafc85f749277932577b5d0f81e6d74c3daef7edc33ad2d3f6676639",
+      "src/harness/todo.py": "667002b8fc7ece3b33c0a046584b52f580164b68c808368c0f998461d8c2726a",
+      "src/harness/tools.py": "1e62c2f914ab5ea714b276de08a02f865fceb8cced6461a6db3128bdbaed3f84",
+      "src/harness/tui.py": "bfc7ffe7e4925e378160d2d975e9c22f177be594127854314dd33f4db640fedc",
+      "src/harness/tui_panel.py": "967afd8462a2a25470f5685a8865886fb381ac48f3d8852dd5d943a743d862f9",
+      "src/harness/tui_support.py": "2a3ea77081365ce9b73431660bd60115d4d4af4f33165eadf074437523100e04",
+      "src/harness/types.py": "b2681a5fa2529153497b19e7477084969ea06c3a7897a61f1b580f5560e9ff56",
+      "src/harness/workspace.py": "e53219ad294ae38e09e5aa603eb69eea0f74c1df41c2fcea62e75310bbfe5357"
+    },
+    "dependencies": {
+      "litellm": "1.88.1",
+      "mcp": "1.27.2",
+      "httpx": "0.28.1",
+      "pydantic": "2.13.4"
+    },
+    "runtime_version": "version: 9603 (ba1df050f)\nbuilt with GNU 14.2.0 for Linux x86_64",
+    "memory_server_sha256": "263c0c214a2a7f9110a7a38df29b4ff6cf624c66c282cd8981bf775fee9873d7"
+  },
+  "cases": [
+    {
+      "id": "project-harbor-False-0",
+      "journey": "project",
+      "memory": false,
+      "facts": {
+        "project": "harbor",
+        "retry_limit": 3
+      },
+      "critical": true,
+      "partition": "regression"
+    },
+    {
+      "id": "project-harbor-False-1",
+      "journey": "project",
+      "memory": false,
+      "facts": {
+        "project": "harbor",
+        "retry_limit": 3
+      },
+      "critical": true,
+      "partition": "regression"
+    },
+    {
+      "id": "project-harbor-False-2",
+      "journey": "project",
+      "memory": false,
+      "facts": {
+        "project": "harbor",
+        "retry_limit": 3
+      },
+      "critical": true,
+      "partition": "regression"
+    },
+    {
+      "id": "project-harbor-True-0",
+      "journey": "project",
+      "memory": true,
+      "facts": {
+        "project": "harbor",
+        "retry_limit": 3
+      },
+      "critical": true,
+      "partition": "regression"
+    },
+    {
+      "id": "project-harbor-True-1",
+      "journey": "project",
+      "memory": true,
+      "facts": {
+        "project": "harbor",
+        "retry_limit": 3
+      },
+      "critical": true,
+      "partition": "regression"
+    },
+    {
+      "id": "project-harbor-True-2",
+      "journey": "project",
+      "memory": true,
+      "facts": {
+        "project": "harbor",
+        "retry_limit": 3
+      },
+      "critical": true,
+      "partition": "regression"
+    },
+    {
+      "id": "project-maple-False-0",
+      "journey": "project",
+      "memory": false,
+      "facts": {
+        "project": "maple-\u03bd",
+        "retry_limit": 23
+      },
+      "critical": true,
+      "partition": "held_out"
+    },
+    {
+      "id": "project-maple-False-1",
+      "journey": "project",
+      "memory": false,
+      "facts": {
+        "project": "maple-\u03bd",
+        "retry_limit": 23
+      },
+      "critical": true,
+      "partition": "held_out"
+    },
+    {
+      "id": "project-maple-False-2",
+      "journey": "project",
+      "memory": false,
+      "facts": {
+        "project": "maple-\u03bd",
+        "retry_limit": 23
+      },
+      "critical": true,
+      "partition": "held_out"
+    },
+    {
+      "id": "project-maple-True-0",
+      "journey": "project",
+      "memory": true,
+      "facts": {
+        "project": "maple-\u03bd",
+        "retry_limit": 23
+      },
+      "critical": true,
+      "partition": "held_out"
+    },
+    {
+      "id": "project-maple-True-1",
+      "journey": "project",
+      "memory": true,
+      "facts": {
+        "project": "maple-\u03bd",
+        "retry_limit": 23
+      },
+      "critical": true,
+      "partition": "held_out"
+    },
+    {
+      "id": "project-maple-True-2",
+      "journey": "project",
+      "memory": true,
+      "facts": {
+        "project": "maple-\u03bd",
+        "retry_limit": 23
+      },
+      "critical": true,
+      "partition": "held_out"
+    },
+    {
+      "id": "tui-harbor-False-0",
+      "journey": "tui",
+      "memory": false,
+      "partition": "regression",
+      "critical": true
+    },
+    {
+      "id": "tui-harbor-False-1",
+      "journey": "tui",
+      "memory": false,
+      "partition": "regression",
+      "critical": true
+    },
+    {
+      "id": "tui-harbor-False-2",
+      "journey": "tui",
+      "memory": false,
+      "partition": "regression",
+      "critical": true
+    },
+    {
+      "id": "tui-harbor-True-0",
+      "journey": "tui",
+      "memory": true,
+      "partition": "regression",
+      "critical": true
+    },
+    {
+      "id": "tui-harbor-True-1",
+      "journey": "tui",
+      "memory": true,
+      "partition": "regression",
+      "critical": true
+    },
+    {
+      "id": "tui-harbor-True-2",
+      "journey": "tui",
+      "memory": true,
+      "partition": "regression",
+      "critical": true
+    }
+  ],
+  "rows": {
+    "project-harbor-False-0": {
+      "incumbent": {
+        "mode": "no-plugins",
+        "checks": {
+          "artifact_is_json": true,
+          "execution_completed": true,
+          "acceptance_remains_unverified": true,
+          "read_succeeded": true,
+          "write_succeeded": true,
+          "artifact_exact": true,
+          "project_deadline": true,
+          "owned_cold_start": true,
+          "public_semantic_examples": true,
+          "warm_semantic_deadline": true,
+          "settled_before_close": true,
+          "cleanup_succeeded": true,
+          "owned_runtime_stopped": true
+        },
+        "stage": "complete",
+        "project_seconds": 8.028755059000105,
+        "tool_sequence": [
+          "read_file",
+          "write_file"
+        ],
+        "project_model_calls": 3,
+        "tool_batches": [
+          [
+            "read_file"
+          ],
+          [
+            "write_file"
+          ],
+          []
+        ],
+        "artifact": {
+          "object": true,
+          "keys_exact": true,
+          "project_matches": true,
+          "retry_limit_matches": true,
+          "retry_limit_type": "int",
+          "sha256": "ebb67ffa17fe3ee913b027a5f253f80c30e773a60133397aaf87f39f56127340"
+        },
+        "owned_start_to_ready_seconds": 3.1661176681518555,
+        "semantic_samples": [
+          {
+            "repeat": 0,
+            "expected": "question",
+            "observed": "question",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 166.46317183040082
+          },
+          {
+            "repeat": 0,
+            "expected": "stop_request",
+            "observed": "stop_request",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 148.796594934538
+          },
+          {
+            "repeat": 0,
+            "expected": "pause",
+            "observed": "pause",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 148.58386805281043
+          },
+          {
+            "repeat": 1,
+            "expected": "question",
+            "observed": "question",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 133.7272748351097
+          },
+          {
+            "repeat": 1,
+            "expected": "stop_request",
+            "observed": "stop_request",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 137.23334507085383
+          },
+          {
+            "repeat": 1,
+            "expected": "pause",
+            "observed": "pause",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 128.53310001082718
+          },
+          {
+            "repeat": 2,
+            "expected": "question",
+            "observed": "question",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 128.65871493704617
+          },
+          {
+            "repeat": 2,
+            "expected": "stop_request",
+            "observed": "stop_request",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 144.93540907278657
+          },
+          {
+            "repeat": 2,
+            "expected": "pause",
+            "observed": "pause",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 130.2745270077139
+          }
+        ],
+        "correction_attempts": 0,
+        "model_failures": [],
+        "passed": true,
+        "elapsed_ms_including_checks": 9610.450658015907
+      },
+      "candidate": {
+        "mode": "no-plugins",
+        "checks": {
+          "artifact_is_json": true,
+          "execution_completed": true,
+          "acceptance_remains_unverified": true,
+          "read_succeeded": true,
+          "write_succeeded": true,
+          "artifact_exact": true,
+          "project_deadline": true,
+          "owned_cold_start": true,
+          "public_semantic_examples": true,
+          "warm_semantic_deadline": true,
+          "settled_before_close": true,
+          "cleanup_succeeded": true,
+          "owned_runtime_stopped": true
+        },
+        "stage": "complete",
+        "project_seconds": 4.419327424140647,
+        "tool_sequence": [
+          "read_file",
+          "write_file"
+        ],
+        "project_model_calls": 3,
+        "tool_batches": [
+          [
+            "read_file"
+          ],
+          [
+            "write_file"
+          ],
+          []
+        ],
+        "artifact": {
+          "object": true,
+          "keys_exact": true,
+          "project_matches": true,
+          "retry_limit_matches": true,
+          "retry_limit_type": "int",
+          "sha256": "ebb67ffa17fe3ee913b027a5f253f80c30e773a60133397aaf87f39f56127340"
+        },
+        "owned_start_to_ready_seconds": 3.0418484210968018,
+        "semantic_samples": [
+          {
+            "repeat": 0,
+            "expected": "question",
+            "observed": "question",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 171.0436048451811
+          },
+          {
+            "repeat": 0,
+            "expected": "stop_request",
+            "observed": "stop_request",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 144.81315715238452
+          },
+          {
+            "repeat": 0,
+            "expected": "pause",
+            "observed": "pause",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 138.23991594836116
+          },
+          {
+            "repeat": 1,
+            "expected": "question",
+            "observed": "question",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 130.06612891331315
+          },
+          {
+            "repeat": 1,
+            "expected": "stop_request",
+            "observed": "stop_request",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 146.7846049927175
+          },
+          {
+            "repeat": 1,
+            "expected": "pause",
+            "observed": "pause",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 128.68924904614687
+          },
+          {
+            "repeat": 2,
+            "expected": "question",
+            "observed": "question",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 125.36171404644847
+          },
+          {
+            "repeat": 2,
+            "expected": "stop_request",
+            "observed": "stop_request",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 138.28876102343202
+          },
+          {
+            "repeat": 2,
+            "expected": "pause",
+            "observed": "pause",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 137.83638388849795
+          }
+        ],
+        "correction_attempts": 0,
+        "model_failures": [],
+        "passed": true,
+        "elapsed_ms_including_checks": 5977.92089311406
+      }
+    },
+    "project-harbor-False-1": {
+      "candidate": {
+        "mode": "no-plugins",
+        "checks": {
+          "artifact_is_json": true,
+          "execution_completed": true,
+          "acceptance_remains_unverified": true,
+          "read_succeeded": true,
+          "write_succeeded": true,
+          "artifact_exact": true,
+          "project_deadline": true,
+          "owned_cold_start": true,
+          "public_semantic_examples": true,
+          "warm_semantic_deadline": true,
+          "settled_before_close": true,
+          "cleanup_succeeded": true,
+          "owned_runtime_stopped": true
+        },
+        "stage": "complete",
+        "project_seconds": 4.499480664962903,
+        "tool_sequence": [
+          "read_file",
+          "write_file"
+        ],
+        "project_model_calls": 3,
+        "tool_batches": [
+          [
+            "read_file"
+          ],
+          [
+            "write_file"
+          ],
+          []
+        ],
+        "artifact": {
+          "object": true,
+          "keys_exact": true,
+          "project_matches": true,
+          "retry_limit_matches": true,
+          "retry_limit_type": "int",
+          "sha256": "ebb67ffa17fe3ee913b027a5f253f80c30e773a60133397aaf87f39f56127340"
+        },
+        "owned_start_to_ready_seconds": 3.1753225326538086,
+        "semantic_samples": [
+          {
+            "repeat": 0,
+            "expected": "question",
+            "observed": "question",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 160.1477030199021
+          },
+          {
+            "repeat": 0,
+            "expected": "stop_request",
+            "observed": "stop_request",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 147.050746018067
+          },
+          {
+            "repeat": 0,
+            "expected": "pause",
+            "observed": "pause",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 136.25686801970005
+          },
+          {
+            "repeat": 1,
+            "expected": "question",
+            "observed": "question",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 125.85857603698969
+          },
+          {
+            "repeat": 1,
+            "expected": "stop_request",
+            "observed": "stop_request",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 137.35133805312216
+          },
+          {
+            "repeat": 1,
+            "expected": "pause",
+            "observed": "pause",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 131.5627871081233
+          },
+          {
+            "repeat": 2,
+            "expected": "question",
+            "observed": "question",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 126.36784487403929
+          },
+          {
+            "repeat": 2,
+            "expected": "stop_request",
+            "observed": "stop_request",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 140.87118580937386
+          },
+          {
+            "repeat": 2,
+            "expected": "pause",
+            "observed": "pause",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 129.09123999997973
+          }
+        ],
+        "correction_attempts": 0,
+        "model_failures": [],
+        "passed": true,
+        "elapsed_ms_including_checks": 6048.028752906248
+      },
+      "incumbent": {
+        "mode": "no-plugins",
+        "checks": {
+          "artifact_is_json": true,
+          "execution_completed": true,
+          "acceptance_remains_unverified": true,
+          "read_succeeded": true,
+          "write_succeeded": true,
+          "artifact_exact": true,
+          "project_deadline": true,
+          "owned_cold_start": true,
+          "public_semantic_examples": true,
+          "warm_semantic_deadline": true,
+          "settled_before_close": true,
+          "cleanup_succeeded": true,
+          "owned_runtime_stopped": true
+        },
+        "stage": "complete",
+        "project_seconds": 4.364367787959054,
+        "tool_sequence": [
+          "read_file",
+          "write_file"
+        ],
+        "project_model_calls": 3,
+        "tool_batches": [
+          [
+            "read_file"
+          ],
+          [
+            "write_file"
+          ],
+          []
+        ],
+        "artifact": {
+          "object": true,
+          "keys_exact": true,
+          "project_matches": true,
+          "retry_limit_matches": true,
+          "retry_limit_type": "int",
+          "sha256": "ebb67ffa17fe3ee913b027a5f253f80c30e773a60133397aaf87f39f56127340"
+        },
+        "owned_start_to_ready_seconds": 2.8493945598602295,
+        "semantic_samples": [
+          {
+            "repeat": 0,
+            "expected": "question",
+            "observed": "question",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 177.80290101654828
+          },
+          {
+            "repeat": 0,
+            "expected": "stop_request",
+            "observed": "stop_request",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 166.1265129223466
+          },
+          {
+            "repeat": 0,
+            "expected": "pause",
+            "observed": "pause",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 141.7269150260836
+          },
+          {
+            "repeat": 1,
+            "expected": "question",
+            "observed": "question",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 126.266062958166
+          },
+          {
+            "repeat": 1,
+            "expected": "stop_request",
+            "observed": "stop_request",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 147.82153209671378
+          },
+          {
+            "repeat": 1,
+            "expected": "pause",
+            "observed": "pause",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 134.84175712801516
+          },
+          {
+            "repeat": 2,
+            "expected": "question",
+            "observed": "question",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 125.47917198389769
+          },
+          {
+            "repeat": 2,
+            "expected": "stop_request",
+            "observed": "stop_request",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 138.1779839284718
+          },
+          {
+            "repeat": 2,
+            "expected": "pause",
+            "observed": "pause",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 134.79223102331161
+          }
+        ],
+        "correction_attempts": 0,
+        "model_failures": [],
+        "passed": true,
+        "elapsed_ms_including_checks": 5973.539750091732
+      }
+    },
+    "project-harbor-False-2": {
+      "incumbent": {
+        "mode": "no-plugins",
+        "checks": {
+          "artifact_is_json": true,
+          "execution_completed": true,
+          "acceptance_remains_unverified": true,
+          "read_succeeded": true,
+          "write_succeeded": true,
+          "artifact_exact": true,
+          "project_deadline": true,
+          "owned_cold_start": true,
+          "public_semantic_examples": true,
+          "warm_semantic_deadline": true,
+          "settled_before_close": true,
+          "cleanup_succeeded": true,
+          "owned_runtime_stopped": true
+        },
+        "stage": "complete",
+        "project_seconds": 4.34772497205995,
+        "tool_sequence": [
+          "read_file",
+          "write_file"
+        ],
+        "project_model_calls": 3,
+        "tool_batches": [
+          [
+            "read_file"
+          ],
+          [
+            "write_file"
+          ],
+          []
+        ],
+        "artifact": {
+          "object": true,
+          "keys_exact": true,
+          "project_matches": true,
+          "retry_limit_matches": true,
+          "retry_limit_type": "int",
+          "sha256": "ebb67ffa17fe3ee913b027a5f253f80c30e773a60133397aaf87f39f56127340"
+        },
+        "owned_start_to_ready_seconds": 2.8571219444274902,
+        "semantic_samples": [
+          {
+            "repeat": 0,
+            "expected": "question",
+            "observed": "question",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 161.04965610429645
+          },
+          {
+            "repeat": 0,
+            "expected": "stop_request",
+            "observed": "stop_request",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 144.2397648934275
+          },
+          {
+            "repeat": 0,
+            "expected": "pause",
+            "observed": "pause",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 128.43407201580703
+          },
+          {
+            "repeat": 1,
+            "expected": "question",
+            "observed": "question",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 128.01797804422677
+          },
+          {
+            "repeat": 1,
+            "expected": "stop_request",
+            "observed": "stop_request",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 135.8990289736539
+          },
+          {
+            "repeat": 1,
+            "expected": "pause",
+            "observed": "pause",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 128.22345807217062
+          },
+          {
+            "repeat": 2,
+            "expected": "question",
+            "observed": "question",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 126.28115597181022
+          },
+          {
+            "repeat": 2,
+            "expected": "stop_request",
+            "observed": "stop_request",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 138.57205002568662
+          },
+          {
+            "repeat": 2,
+            "expected": "pause",
+            "observed": "pause",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 134.37291188165545
+          }
+        ],
+        "correction_attempts": 0,
+        "model_failures": [],
+        "passed": true,
+        "elapsed_ms_including_checks": 5881.406890926883
+      },
+      "candidate": {
+        "mode": "no-plugins",
+        "checks": {
+          "artifact_is_json": false,
+          "execution_completed": true,
+          "acceptance_remains_unverified": true,
+          "read_succeeded": true,
+          "write_succeeded": true,
+          "artifact_exact": false,
+          "project_deadline": true,
+          "owned_cold_start": true,
+          "public_semantic_examples": true,
+          "warm_semantic_deadline": true,
+          "settled_before_close": true,
+          "cleanup_succeeded": true,
+          "owned_runtime_stopped": true
+        },
+        "stage": "complete",
+        "project_seconds": 5.8981883260421455,
+        "tool_sequence": [
+          "read_file",
+          "write_file"
+        ],
+        "project_model_calls": 3,
+        "tool_batches": [
+          [
+            "read_file"
+          ],
+          [
+            "write_file"
+          ],
+          []
+        ],
+        "artifact_error_type": "JSONDecodeError",
+        "artifact": {
+          "object": false,
+          "keys_exact": false,
+          "project_matches": false,
+          "retry_limit_matches": false,
+          "retry_limit_type": "NoneType",
+          "sha256": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b"
+        },
+        "owned_start_to_ready_seconds": 2.8841588497161865,
+        "semantic_samples": [
+          {
+            "repeat": 0,
+            "expected": "question",
+            "observed": "question",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 165.56264110840857
+          },
+          {
+            "repeat": 0,
+            "expected": "stop_request",
+            "observed": "stop_request",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 148.80400290712714
+          },
+          {
+            "repeat": 0,
+            "expected": "pause",
+            "observed": "pause",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 135.2055510506034
+          },
+          {
+            "repeat": 1,
+            "expected": "question",
+            "observed": "question",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 119.6297979913652
+          },
+          {
+            "repeat": 1,
+            "expected": "stop_request",
+            "observed": "stop_request",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 134.61335096508265
+          },
+          {
+            "repeat": 1,
+            "expected": "pause",
+            "observed": "pause",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 131.28909398801625
+          },
+          {
+            "repeat": 2,
+            "expected": "question",
+            "observed": "question",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 125.00385288149118
+          },
+          {
+            "repeat": 2,
+            "expected": "stop_request",
+            "observed": "stop_request",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 138.65347090177238
+          },
+          {
+            "repeat": 2,
+            "expected": "pause",
+            "observed": "pause",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 127.77985609136522
+          }
+        ],
+        "correction_attempts": 1,
+        "model_failures": [
+          "ToolCallLimitExceeded"
+        ],
+        "passed": false,
+        "elapsed_ms_including_checks": 7435.610942076892
+      }
+    },
+    "project-harbor-True-0": {
+      "candidate": {
+        "mode": "normal-memory",
+        "checks": {
+          "artifact_is_json": false,
+          "execution_completed": true,
+          "acceptance_remains_unverified": true,
+          "read_succeeded": true,
+          "write_succeeded": false,
+          "artifact_exact": false,
+          "project_deadline": true,
+          "owned_cold_start": true,
+          "normal_memory_used": true,
+          "public_semantic_examples": true,
+          "warm_semantic_deadline": true,
+          "settled_before_close": true,
+          "cleanup_succeeded": true,
+          "owned_runtime_stopped": true
+        },
+        "stage": "complete",
+        "project_seconds": 6.612944283988327,
+        "tool_sequence": [
+          "read_file",
+          "mcp__memory__memory_list"
+        ],
+        "project_model_calls": 3,
+        "tool_batches": [
+          [
+            "read_file"
+          ],
+          [
+            "mcp__memory__memory_list"
+          ],
+          []
+        ],
+        "artifact_error_type": "FileNotFoundError",
+        "artifact": {
+          "object": false,
+          "keys_exact": false,
+          "project_matches": false,
+          "retry_limit_matches": false,
+          "retry_limit_type": "NoneType",
+          "sha256": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b"
+        },
+        "owned_start_to_ready_seconds": 2.872539520263672,
+        "memory_bytes": 13802,
+        "memory_sha256": "55482a75decc8659985fae320d2712ec1d006bc6f46947b82422d96b1921f1f6",
+        "semantic_samples": [
+          {
+            "repeat": 0,
+            "expected": "question",
+            "observed": "question",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 166.46207706071436
+          },
+          {
+            "repeat": 0,
+            "expected": "stop_request",
+            "observed": "stop_request",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 154.03658198192716
+          },
+          {
+            "repeat": 0,
+            "expected": "pause",
+            "observed": "pause",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 131.22781203128397
+          },
+          {
+            "repeat": 1,
+            "expected": "question",
+            "observed": "question",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 121.55325710773468
+          },
+          {
+            "repeat": 1,
+            "expected": "stop_request",
+            "observed": "stop_request",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 140.46359504573047
+          },
+          {
+            "repeat": 1,
+            "expected": "pause",
+            "observed": "pause",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 136.5489298477769
+          },
+          {
+            "repeat": 2,
+            "expected": "question",
+            "observed": "question",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 135.48942585475743
+          },
+          {
+            "repeat": 2,
+            "expected": "stop_request",
+            "observed": "stop_request",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 138.12713301740587
+          },
+          {
+            "repeat": 2,
+            "expected": "pause",
+            "observed": "pause",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 126.86559488065541
+          }
+        ],
+        "correction_attempts": 1,
+        "model_failures": [
+          "ToolCallLimitExceeded"
+        ],
+        "passed": false,
+        "elapsed_ms_including_checks": 9072.445342084393
+      },
+      "incumbent": {
+        "mode": "normal-memory",
+        "checks": {
+          "artifact_is_json": true,
+          "execution_completed": true,
+          "acceptance_remains_unverified": true,
+          "read_succeeded": true,
+          "write_succeeded": true,
+          "artifact_exact": true,
+          "project_deadline": true,
+          "owned_cold_start": true,
+          "normal_memory_used": true,
+          "public_semantic_examples": true,
+          "warm_semantic_deadline": true,
+          "settled_before_close": true,
+          "cleanup_succeeded": true,
+          "owned_runtime_stopped": true
+        },
+        "stage": "complete",
+        "project_seconds": 7.101694701006636,
+        "tool_sequence": [
+          "read_file",
+          "write_file",
+          "mcp__memory__memory_list"
+        ],
+        "project_model_calls": 4,
+        "tool_batches": [
+          [
+            "read_file"
+          ],
+          [
+            "write_file"
+          ],
+          [
+            "mcp__memory__memory_list"
+          ],
+          []
+        ],
+        "artifact": {
+          "object": true,
+          "keys_exact": true,
+          "project_matches": true,
+          "retry_limit_matches": true,
+          "retry_limit_type": "int",
+          "sha256": "ebb67ffa17fe3ee913b027a5f253f80c30e773a60133397aaf87f39f56127340"
+        },
+        "owned_start_to_ready_seconds": 2.861553192138672,
+        "memory_bytes": 13802,
+        "memory_sha256": "55482a75decc8659985fae320d2712ec1d006bc6f46947b82422d96b1921f1f6",
+        "semantic_samples": [
+          {
+            "repeat": 0,
+            "expected": "question",
+            "observed": "question",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 165.1987920049578
+          },
+          {
+            "repeat": 0,
+            "expected": "stop_request",
+            "observed": "stop_request",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 149.3130149319768
+          },
+          {
+            "repeat": 0,
+            "expected": "pause",
+            "observed": "pause",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 136.67871709913015
+          },
+          {
+            "repeat": 1,
+            "expected": "question",
+            "observed": "question",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 128.38762300089002
+          },
+          {
+            "repeat": 1,
+            "expected": "stop_request",
+            "observed": "stop_request",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 146.6908601578325
+          },
+          {
+            "repeat": 1,
+            "expected": "pause",
+            "observed": "pause",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 125.13586110435426
+          },
+          {
+            "repeat": 2,
+            "expected": "question",
+            "observed": "question",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 129.84623201191425
+          },
+          {
+            "repeat": 2,
+            "expected": "stop_request",
+            "observed": "stop_request",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 137.89298804476857
+          },
+          {
+            "repeat": 2,
+            "expected": "pause",
+            "observed": "pause",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 134.62700811214745
+          }
+        ],
+        "correction_attempts": 1,
+        "model_failures": [
+          "ToolCallLimitExceeded"
+        ],
+        "passed": true,
+        "elapsed_ms_including_checks": 9545.170160010457
+      }
+    },
+    "project-harbor-True-1": {
+      "incumbent": {
+        "mode": "normal-memory",
+        "checks": {
+          "artifact_is_json": true,
+          "execution_completed": true,
+          "acceptance_remains_unverified": true,
+          "read_succeeded": true,
+          "write_succeeded": true,
+          "artifact_exact": true,
+          "project_deadline": true,
+          "owned_cold_start": true,
+          "normal_memory_used": true,
+          "public_semantic_examples": true,
+          "warm_semantic_deadline": true,
+          "settled_before_close": true,
+          "cleanup_succeeded": true,
+          "owned_runtime_stopped": true
+        },
+        "stage": "complete",
+        "project_seconds": 6.905785294016823,
+        "tool_sequence": [
+          "read_file",
+          "write_file",
+          "mcp__memory__memory_list"
+        ],
+        "project_model_calls": 4,
+        "tool_batches": [
+          [
+            "read_file"
+          ],
+          [
+            "write_file"
+          ],
+          [
+            "mcp__memory__memory_list"
+          ],
+          []
+        ],
+        "artifact": {
+          "object": true,
+          "keys_exact": true,
+          "project_matches": true,
+          "retry_limit_matches": true,
+          "retry_limit_type": "int",
+          "sha256": "ebb67ffa17fe3ee913b027a5f253f80c30e773a60133397aaf87f39f56127340"
+        },
+        "owned_start_to_ready_seconds": 2.9681026935577393,
+        "memory_bytes": 13802,
+        "memory_sha256": "55482a75decc8659985fae320d2712ec1d006bc6f46947b82422d96b1921f1f6",
+        "semantic_samples": [
+          {
+            "repeat": 0,
+            "expected": "question",
+            "observed": "question",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 171.09203385189176
+          },
+          {
+            "repeat": 0,
+            "expected": "stop_request",
+            "observed": "stop_request",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 154.90997396409512
+          },
+          {
+            "repeat": 0,
+            "expected": "pause",
+            "observed": "pause",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 138.12071410939097
+          },
+          {
+            "repeat": 1,
+            "expected": "question",
+            "observed": "question",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 128.25722503475845
+          },
+          {
+            "repeat": 1,
+            "expected": "stop_request",
+            "observed": "stop_request",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 145.99461085163057
+          },
+          {
+            "repeat": 1,
+            "expected": "pause",
+            "observed": "pause",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 138.9286769554019
+          },
+          {
+            "repeat": 2,
+            "expected": "question",
+            "observed": "question",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 133.7409419938922
+          },
+          {
+            "repeat": 2,
+            "expected": "stop_request",
+            "observed": "stop_request",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 140.04944800399244
+          },
+          {
+            "repeat": 2,
+            "expected": "pause",
+            "observed": "pause",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 138.91256507486105
+          }
+        ],
+        "correction_attempts": 1,
+        "model_failures": [
+          "ToolCallLimitExceeded"
+        ],
+        "passed": true,
+        "elapsed_ms_including_checks": 9278.651888016611
+      },
+      "candidate": {
+        "mode": "normal-memory",
+        "checks": {
+          "cleanup_succeeded": true,
+          "owned_runtime_stopped": true
+        },
+        "stage": "project-task",
+        "error_type": "MalformedStreamError",
+        "failure_reason": "invalid_tool_arguments",
+        "correction_attempts": 1,
+        "model_failures": [
+          "ToolCallLimitExceeded",
+          "MalformedStreamError"
+        ],
+        "passed": false,
+        "elapsed_ms_including_checks": 11144.911921117455
+      }
+    },
+    "project-harbor-True-2": {
+      "candidate": {
+        "mode": "normal-memory",
+        "checks": {
+          "artifact_is_json": true,
+          "execution_completed": true,
+          "acceptance_remains_unverified": true,
+          "read_succeeded": true,
+          "write_succeeded": true,
+          "artifact_exact": true,
+          "project_deadline": true,
+          "owned_cold_start": true,
+          "normal_memory_used": true,
+          "public_semantic_examples": true,
+          "warm_semantic_deadline": true,
+          "settled_before_close": true,
+          "cleanup_succeeded": true,
+          "owned_runtime_stopped": true
+        },
+        "stage": "complete",
+        "project_seconds": 7.4465790768153965,
+        "tool_sequence": [
+          "read_file",
+          "write_file",
+          "mcp__memory__memory_list"
+        ],
+        "project_model_calls": 4,
+        "tool_batches": [
+          [
+            "read_file"
+          ],
+          [
+            "write_file"
+          ],
+          [
+            "mcp__memory__memory_list"
+          ],
+          []
+        ],
+        "artifact": {
+          "object": true,
+          "keys_exact": true,
+          "project_matches": true,
+          "retry_limit_matches": true,
+          "retry_limit_type": "int",
+          "sha256": "ebb67ffa17fe3ee913b027a5f253f80c30e773a60133397aaf87f39f56127340"
+        },
+        "owned_start_to_ready_seconds": 3.083538770675659,
+        "memory_bytes": 13802,
+        "memory_sha256": "55482a75decc8659985fae320d2712ec1d006bc6f46947b82422d96b1921f1f6",
+        "semantic_samples": [
+          {
+            "repeat": 0,
+            "expected": "question",
+            "observed": "question",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 167.11607901379466
+          },
+          {
+            "repeat": 0,
+            "expected": "stop_request",
+            "observed": "stop_request",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 157.05626411363482
+          },
+          {
+            "repeat": 0,
+            "expected": "pause",
+            "observed": "pause",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 165.96909402869642
+          },
+          {
+            "repeat": 1,
+            "expected": "question",
+            "observed": "question",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 142.88722607307136
+          },
+          {
+            "repeat": 1,
+            "expected": "stop_request",
+            "observed": "stop_request",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 161.53048002161086
+          },
+          {
+            "repeat": 1,
+            "expected": "pause",
+            "observed": "pause",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 370.52098382264376
+          },
+          {
+            "repeat": 2,
+            "expected": "question",
+            "observed": "question",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 154.61261593736708
+          },
+          {
+            "repeat": 2,
+            "expected": "stop_request",
+            "observed": "stop_request",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 154.06821691431105
+          },
+          {
+            "repeat": 2,
+            "expected": "pause",
+            "observed": "pause",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 151.10224299132824
+          }
+        ],
+        "correction_attempts": 1,
+        "model_failures": [
+          "ToolCallLimitExceeded"
+        ],
+        "passed": true,
+        "elapsed_ms_including_checks": 10278.73255009763
+      },
+      "incumbent": {
+        "mode": "normal-memory",
+        "checks": {
+          "artifact_is_json": true,
+          "execution_completed": true,
+          "acceptance_remains_unverified": true,
+          "read_succeeded": true,
+          "write_succeeded": true,
+          "artifact_exact": true,
+          "project_deadline": true,
+          "owned_cold_start": true,
+          "normal_memory_used": true,
+          "public_semantic_examples": true,
+          "warm_semantic_deadline": true,
+          "settled_before_close": true,
+          "cleanup_succeeded": true,
+          "owned_runtime_stopped": true
+        },
+        "stage": "complete",
+        "project_seconds": 7.947410295018926,
+        "tool_sequence": [
+          "read_file",
+          "write_file",
+          "mcp__memory__memory_list"
+        ],
+        "project_model_calls": 4,
+        "tool_batches": [
+          [
+            "read_file"
+          ],
+          [
+            "write_file"
+          ],
+          [
+            "mcp__memory__memory_list"
+          ],
+          []
+        ],
+        "artifact": {
+          "object": true,
+          "keys_exact": true,
+          "project_matches": true,
+          "retry_limit_matches": true,
+          "retry_limit_type": "int",
+          "sha256": "ebb67ffa17fe3ee913b027a5f253f80c30e773a60133397aaf87f39f56127340"
+        },
+        "owned_start_to_ready_seconds": 3.3054561614990234,
+        "memory_bytes": 13802,
+        "memory_sha256": "55482a75decc8659985fae320d2712ec1d006bc6f46947b82422d96b1921f1f6",
+        "semantic_samples": [
+          {
+            "repeat": 0,
+            "expected": "question",
+            "observed": "question",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 240.14160688966513
+          },
+          {
+            "repeat": 0,
+            "expected": "stop_request",
+            "observed": "stop_request",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 241.42239009961486
+          },
+          {
+            "repeat": 0,
+            "expected": "pause",
+            "observed": "pause",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 249.6295990422368
+          },
+          {
+            "repeat": 1,
+            "expected": "question",
+            "observed": "question",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 211.17959707044065
+          },
+          {
+            "repeat": 1,
+            "expected": "stop_request",
+            "observed": "stop_request",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 196.00412691943347
+          },
+          {
+            "repeat": 1,
+            "expected": "pause",
+            "observed": "pause",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 172.93965397402644
+          },
+          {
+            "repeat": 2,
+            "expected": "question",
+            "observed": "question",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 191.21722411364317
+          },
+          {
+            "repeat": 2,
+            "expected": "stop_request",
+            "observed": "stop_request",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 206.53655705973506
+          },
+          {
+            "repeat": 2,
+            "expected": "pause",
+            "observed": "pause",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 242.7987060509622
+          }
+        ],
+        "correction_attempts": 1,
+        "model_failures": [
+          "ToolCallLimitExceeded"
+        ],
+        "passed": true,
+        "elapsed_ms_including_checks": 11729.01978599839
+      }
+    },
+    "project-maple-False-0": {
+      "incumbent": {
+        "mode": "no-plugins",
+        "checks": {
+          "artifact_is_json": true,
+          "execution_completed": true,
+          "acceptance_remains_unverified": true,
+          "read_succeeded": true,
+          "write_succeeded": true,
+          "artifact_exact": false,
+          "project_deadline": true,
+          "owned_cold_start": true,
+          "public_semantic_examples": true,
+          "warm_semantic_deadline": true,
+          "settled_before_close": true,
+          "cleanup_succeeded": true,
+          "owned_runtime_stopped": true
+        },
+        "stage": "complete",
+        "project_seconds": 4.891713025979698,
+        "tool_sequence": [
+          "read_file",
+          "write_file"
+        ],
+        "project_model_calls": 3,
+        "tool_batches": [
+          [
+            "read_file"
+          ],
+          [
+            "write_file"
+          ],
+          []
+        ],
+        "artifact": {
+          "object": true,
+          "keys_exact": true,
+          "project_matches": false,
+          "retry_limit_matches": true,
+          "retry_limit_type": "int",
+          "sha256": "c0341ee8282234dc4d730d6e88f01bbecb22477a0b38e9cdc79af419749ff57f"
+        },
+        "owned_start_to_ready_seconds": 3.245389223098755,
+        "semantic_samples": [
+          {
+            "repeat": 0,
+            "expected": "question",
+            "observed": "question",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 190.03154314123094
+          },
+          {
+            "repeat": 0,
+            "expected": "stop_request",
+            "observed": "stop_request",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 228.02646295167506
+          },
+          {
+            "repeat": 0,
+            "expected": "pause",
+            "observed": "pause",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 155.89268691837788
+          },
+          {
+            "repeat": 1,
+            "expected": "question",
+            "observed": "question",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 148.7741821911186
+          },
+          {
+            "repeat": 1,
+            "expected": "stop_request",
+            "observed": "stop_request",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 165.29717505909503
+          },
+          {
+            "repeat": 1,
+            "expected": "pause",
+            "observed": "pause",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 186.2161981407553
+          },
+          {
+            "repeat": 2,
+            "expected": "question",
+            "observed": "question",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 157.5465949717909
+          },
+          {
+            "repeat": 2,
+            "expected": "stop_request",
+            "observed": "stop_request",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 153.9337181020528
+          },
+          {
+            "repeat": 2,
+            "expected": "pause",
+            "observed": "pause",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 203.5757889971137
+          }
+        ],
+        "correction_attempts": 0,
+        "model_failures": [],
+        "passed": false,
+        "elapsed_ms_including_checks": 7021.375007927418
+      },
+      "candidate": {
+        "mode": "no-plugins",
+        "checks": {
+          "artifact_is_json": true,
+          "execution_completed": true,
+          "acceptance_remains_unverified": true,
+          "read_succeeded": true,
+          "write_succeeded": true,
+          "artifact_exact": false,
+          "project_deadline": true,
+          "owned_cold_start": true,
+          "public_semantic_examples": true,
+          "warm_semantic_deadline": true,
+          "settled_before_close": true,
+          "cleanup_succeeded": true,
+          "owned_runtime_stopped": true
+        },
+        "stage": "complete",
+        "project_seconds": 5.844100275076926,
+        "tool_sequence": [
+          "read_file",
+          "write_file"
+        ],
+        "project_model_calls": 3,
+        "tool_batches": [
+          [
+            "read_file"
+          ],
+          [
+            "write_file"
+          ],
+          []
+        ],
+        "artifact": {
+          "object": true,
+          "keys_exact": true,
+          "project_matches": false,
+          "retry_limit_matches": true,
+          "retry_limit_type": "int",
+          "sha256": "c0341ee8282234dc4d730d6e88f01bbecb22477a0b38e9cdc79af419749ff57f"
+        },
+        "owned_start_to_ready_seconds": 4.4974822998046875,
+        "semantic_samples": [
+          {
+            "repeat": 0,
+            "expected": "question",
+            "observed": "question",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 182.89844505488873
+          },
+          {
+            "repeat": 0,
+            "expected": "stop_request",
+            "observed": "stop_request",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 164.21373700723052
+          },
+          {
+            "repeat": 0,
+            "expected": "pause",
+            "observed": "pause",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 160.28277412988245
+          },
+          {
+            "repeat": 1,
+            "expected": "question",
+            "observed": "question",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 166.15585214458406
+          },
+          {
+            "repeat": 1,
+            "expected": "stop_request",
+            "observed": "stop_request",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 180.04449713043869
+          },
+          {
+            "repeat": 1,
+            "expected": "pause",
+            "observed": "pause",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 172.49362403526902
+          },
+          {
+            "repeat": 2,
+            "expected": "question",
+            "observed": "question",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 170.9173119161278
+          },
+          {
+            "repeat": 2,
+            "expected": "stop_request",
+            "observed": "stop_request",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 208.13670894131064
+          },
+          {
+            "repeat": 2,
+            "expected": "pause",
+            "observed": "pause",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 304.23427908681333
+          }
+        ],
+        "correction_attempts": 0,
+        "model_failures": [],
+        "passed": false,
+        "elapsed_ms_including_checks": 8215.824301121756
+      }
+    },
+    "project-maple-False-1": {
+      "candidate": {
+        "mode": "no-plugins",
+        "checks": {
+          "artifact_is_json": true,
+          "execution_completed": true,
+          "acceptance_remains_unverified": true,
+          "read_succeeded": true,
+          "write_succeeded": true,
+          "artifact_exact": false,
+          "project_deadline": true,
+          "owned_cold_start": true,
+          "public_semantic_examples": true,
+          "warm_semantic_deadline": true,
+          "settled_before_close": true,
+          "cleanup_succeeded": true,
+          "owned_runtime_stopped": true
+        },
+        "stage": "complete",
+        "project_seconds": 6.085823261877522,
+        "tool_sequence": [
+          "read_file",
+          "write_file"
+        ],
+        "project_model_calls": 3,
+        "tool_batches": [
+          [
+            "read_file"
+          ],
+          [
+            "write_file"
+          ],
+          []
+        ],
+        "artifact": {
+          "object": true,
+          "keys_exact": true,
+          "project_matches": false,
+          "retry_limit_matches": true,
+          "retry_limit_type": "int",
+          "sha256": "c0341ee8282234dc4d730d6e88f01bbecb22477a0b38e9cdc79af419749ff57f"
+        },
+        "owned_start_to_ready_seconds": 3.928144693374634,
+        "semantic_samples": [
+          {
+            "repeat": 0,
+            "expected": "question",
+            "observed": "question",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 335.1203100755811
+          },
+          {
+            "repeat": 0,
+            "expected": "stop_request",
+            "observed": "stop_request",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 248.5046898946166
+          },
+          {
+            "repeat": 0,
+            "expected": "pause",
+            "observed": "pause",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 152.65486296266317
+          },
+          {
+            "repeat": 1,
+            "expected": "question",
+            "observed": "question",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 135.9874028712511
+          },
+          {
+            "repeat": 1,
+            "expected": "stop_request",
+            "observed": "stop_request",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 166.16791300475597
+          },
+          {
+            "repeat": 1,
+            "expected": "pause",
+            "observed": "pause",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 164.8603188805282
+          },
+          {
+            "repeat": 2,
+            "expected": "question",
+            "observed": "question",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 145.3446859959513
+          },
+          {
+            "repeat": 2,
+            "expected": "stop_request",
+            "observed": "stop_request",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 154.57462496124208
+          },
+          {
+            "repeat": 2,
+            "expected": "pause",
+            "observed": "pause",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 154.6576959080994
+          }
+        ],
+        "correction_attempts": 0,
+        "model_failures": [],
+        "passed": false,
+        "elapsed_ms_including_checks": 8229.344665072858
+      },
+      "incumbent": {
+        "mode": "no-plugins",
+        "checks": {
+          "artifact_is_json": true,
+          "execution_completed": true,
+          "acceptance_remains_unverified": true,
+          "read_succeeded": true,
+          "write_succeeded": true,
+          "artifact_exact": true,
+          "project_deadline": true,
+          "owned_cold_start": true,
+          "public_semantic_examples": true,
+          "warm_semantic_deadline": true,
+          "settled_before_close": true,
+          "cleanup_succeeded": true,
+          "owned_runtime_stopped": true
+        },
+        "stage": "complete",
+        "project_seconds": 5.207917539868504,
+        "tool_sequence": [
+          "read_file",
+          "write_file"
+        ],
+        "project_model_calls": 3,
+        "tool_batches": [
+          [
+            "read_file"
+          ],
+          [
+            "write_file"
+          ],
+          []
+        ],
+        "artifact": {
+          "object": true,
+          "keys_exact": true,
+          "project_matches": true,
+          "retry_limit_matches": true,
+          "retry_limit_type": "int",
+          "sha256": "30d2774c5a7f3f834610401352e75f84f139ad8c8ae13c86c2feb821dea883eb"
+        },
+        "owned_start_to_ready_seconds": 3.7264564037323,
+        "semantic_samples": [
+          {
+            "repeat": 0,
+            "expected": "question",
+            "observed": "question",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 161.85340913943946
+          },
+          {
+            "repeat": 0,
+            "expected": "stop_request",
+            "observed": "stop_request",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 149.06100695952773
+          },
+          {
+            "repeat": 0,
+            "expected": "pause",
+            "observed": "pause",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 139.75683506578207
+          },
+          {
+            "repeat": 1,
+            "expected": "question",
+            "observed": "question",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 125.47361198812723
+          },
+          {
+            "repeat": 1,
+            "expected": "stop_request",
+            "observed": "stop_request",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 147.89520506747067
+          },
+          {
+            "repeat": 1,
+            "expected": "pause",
+            "observed": "pause",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 135.28477400541306
+          },
+          {
+            "repeat": 2,
+            "expected": "question",
+            "observed": "question",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 129.44748299196362
+          },
+          {
+            "repeat": 2,
+            "expected": "stop_request",
+            "observed": "stop_request",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 146.67082717642188
+          },
+          {
+            "repeat": 2,
+            "expected": "pause",
+            "observed": "pause",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 138.37005710229278
+          }
+        ],
+        "correction_attempts": 0,
+        "model_failures": [],
+        "passed": true,
+        "elapsed_ms_including_checks": 6822.4734489340335
+      }
+    },
+    "project-maple-False-2": {
+      "incumbent": {
+        "mode": "no-plugins",
+        "checks": {
+          "artifact_is_json": true,
+          "execution_completed": true,
+          "acceptance_remains_unverified": true,
+          "read_succeeded": true,
+          "write_succeeded": true,
+          "artifact_exact": true,
+          "project_deadline": true,
+          "owned_cold_start": true,
+          "public_semantic_examples": true,
+          "warm_semantic_deadline": true,
+          "settled_before_close": true,
+          "cleanup_succeeded": true,
+          "owned_runtime_stopped": true
+        },
+        "stage": "complete",
+        "project_seconds": 4.434163335943595,
+        "tool_sequence": [
+          "read_file",
+          "write_file"
+        ],
+        "project_model_calls": 3,
+        "tool_batches": [
+          [
+            "read_file"
+          ],
+          [
+            "write_file"
+          ],
+          []
+        ],
+        "artifact": {
+          "object": true,
+          "keys_exact": true,
+          "project_matches": true,
+          "retry_limit_matches": true,
+          "retry_limit_type": "int",
+          "sha256": "30d2774c5a7f3f834610401352e75f84f139ad8c8ae13c86c2feb821dea883eb"
+        },
+        "owned_start_to_ready_seconds": 2.8788986206054688,
+        "semantic_samples": [
+          {
+            "repeat": 0,
+            "expected": "question",
+            "observed": "question",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 171.61378590390086
+          },
+          {
+            "repeat": 0,
+            "expected": "stop_request",
+            "observed": "stop_request",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 148.61014299094677
+          },
+          {
+            "repeat": 0,
+            "expected": "pause",
+            "observed": "pause",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 130.66821289248765
+          },
+          {
+            "repeat": 1,
+            "expected": "question",
+            "observed": "question",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 157.91386901400983
+          },
+          {
+            "repeat": 1,
+            "expected": "stop_request",
+            "observed": "stop_request",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 149.02662904933095
+          },
+          {
+            "repeat": 1,
+            "expected": "pause",
+            "observed": "pause",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 140.6470809597522
+          },
+          {
+            "repeat": 2,
+            "expected": "question",
+            "observed": "question",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 132.10346782580018
+          },
+          {
+            "repeat": 2,
+            "expected": "stop_request",
+            "observed": "stop_request",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 155.1725729368627
+          },
+          {
+            "repeat": 2,
+            "expected": "pause",
+            "observed": "pause",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 146.86303702183068
+          }
+        ],
+        "correction_attempts": 0,
+        "model_failures": [],
+        "passed": true,
+        "elapsed_ms_including_checks": 6193.582615815103
+      },
+      "candidate": {
+        "mode": "no-plugins",
+        "checks": {
+          "artifact_is_json": false,
+          "execution_completed": true,
+          "acceptance_remains_unverified": true,
+          "read_succeeded": true,
+          "write_succeeded": false,
+          "artifact_exact": false,
+          "project_deadline": true,
+          "owned_cold_start": true,
+          "public_semantic_examples": true,
+          "warm_semantic_deadline": true,
+          "settled_before_close": true,
+          "cleanup_succeeded": true,
+          "owned_runtime_stopped": true
+        },
+        "stage": "complete",
+        "project_seconds": 5.301315038930625,
+        "tool_sequence": [
+          "read_file",
+          "read_file"
+        ],
+        "project_model_calls": 3,
+        "tool_batches": [
+          [
+            "read_file"
+          ],
+          [
+            "read_file"
+          ],
+          []
+        ],
+        "artifact_error_type": "FileNotFoundError",
+        "artifact": {
+          "object": false,
+          "keys_exact": false,
+          "project_matches": false,
+          "retry_limit_matches": false,
+          "retry_limit_type": "NoneType",
+          "sha256": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b"
+        },
+        "owned_start_to_ready_seconds": 2.9827165603637695,
+        "semantic_samples": [
+          {
+            "repeat": 0,
+            "expected": "question",
+            "observed": "question",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 176.39674292877316
+          },
+          {
+            "repeat": 0,
+            "expected": "stop_request",
+            "observed": "stop_request",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 151.01348608732224
+          },
+          {
+            "repeat": 0,
+            "expected": "pause",
+            "observed": "pause",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 138.40983202680945
+          },
+          {
+            "repeat": 1,
+            "expected": "question",
+            "observed": "question",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 153.47593603655696
+          },
+          {
+            "repeat": 1,
+            "expected": "stop_request",
+            "observed": "stop_request",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 157.41065400652587
+          },
+          {
+            "repeat": 1,
+            "expected": "pause",
+            "observed": "pause",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 138.63290683366358
+          },
+          {
+            "repeat": 2,
+            "expected": "question",
+            "observed": "question",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 131.05519604869187
+          },
+          {
+            "repeat": 2,
+            "expected": "stop_request",
+            "observed": "stop_request",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 145.2996958978474
+          },
+          {
+            "repeat": 2,
+            "expected": "pause",
+            "observed": "pause",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 143.38309806771576
+          }
+        ],
+        "correction_attempts": 1,
+        "model_failures": [
+          "ToolCallLimitExceeded"
+        ],
+        "passed": false,
+        "elapsed_ms_including_checks": 7052.677685860544
+      }
+    },
+    "project-maple-True-0": {
+      "candidate": {
+        "mode": "normal-memory",
+        "checks": {
+          "artifact_is_json": true,
+          "execution_completed": true,
+          "acceptance_remains_unverified": true,
+          "read_succeeded": true,
+          "write_succeeded": true,
+          "artifact_exact": true,
+          "project_deadline": true,
+          "owned_cold_start": true,
+          "normal_memory_used": true,
+          "public_semantic_examples": true,
+          "warm_semantic_deadline": true,
+          "settled_before_close": true,
+          "cleanup_succeeded": true,
+          "owned_runtime_stopped": true
+        },
+        "stage": "complete",
+        "project_seconds": 7.623301337938756,
+        "tool_sequence": [
+          "read_file",
+          "write_file",
+          "mcp__memory__memory_list"
+        ],
+        "project_model_calls": 4,
+        "tool_batches": [
+          [
+            "read_file"
+          ],
+          [
+            "write_file"
+          ],
+          [
+            "mcp__memory__memory_list"
+          ],
+          []
+        ],
+        "artifact": {
+          "object": true,
+          "keys_exact": true,
+          "project_matches": true,
+          "retry_limit_matches": true,
+          "retry_limit_type": "int",
+          "sha256": "30d2774c5a7f3f834610401352e75f84f139ad8c8ae13c86c2feb821dea883eb"
+        },
+        "owned_start_to_ready_seconds": 2.9936957359313965,
+        "memory_bytes": 13802,
+        "memory_sha256": "55482a75decc8659985fae320d2712ec1d006bc6f46947b82422d96b1921f1f6",
+        "semantic_samples": [
+          {
+            "repeat": 0,
+            "expected": "question",
+            "observed": "question",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 175.18699006177485
+          },
+          {
+            "repeat": 0,
+            "expected": "stop_request",
+            "observed": "stop_request",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 150.19960817880929
+          },
+          {
+            "repeat": 0,
+            "expected": "pause",
+            "observed": "pause",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 138.37408483959734
+          },
+          {
+            "repeat": 1,
+            "expected": "question",
+            "observed": "question",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 135.68010507151484
+          },
+          {
+            "repeat": 1,
+            "expected": "stop_request",
+            "observed": "stop_request",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 155.49268503673375
+          },
+          {
+            "repeat": 1,
+            "expected": "pause",
+            "observed": "pause",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 137.04920304007828
+          },
+          {
+            "repeat": 2,
+            "expected": "question",
+            "observed": "question",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 129.77282889187336
+          },
+          {
+            "repeat": 2,
+            "expected": "stop_request",
+            "observed": "stop_request",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 147.6429959293455
+          },
+          {
+            "repeat": 2,
+            "expected": "pause",
+            "observed": "pause",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 135.15174482017756
+          }
+        ],
+        "correction_attempts": 1,
+        "model_failures": [
+          "ToolCallLimitExceeded"
+        ],
+        "passed": true,
+        "elapsed_ms_including_checks": 10136.385146062821
+      },
+      "incumbent": {
+        "mode": "normal-memory",
+        "checks": {
+          "artifact_is_json": true,
+          "execution_completed": true,
+          "acceptance_remains_unverified": true,
+          "read_succeeded": true,
+          "write_succeeded": true,
+          "artifact_exact": true,
+          "project_deadline": true,
+          "owned_cold_start": true,
+          "normal_memory_used": true,
+          "public_semantic_examples": true,
+          "warm_semantic_deadline": true,
+          "settled_before_close": true,
+          "cleanup_succeeded": true,
+          "owned_runtime_stopped": true
+        },
+        "stage": "complete",
+        "project_seconds": 6.854943129932508,
+        "tool_sequence": [
+          "read_file",
+          "write_file",
+          "mcp__memory__memory_list"
+        ],
+        "project_model_calls": 4,
+        "tool_batches": [
+          [
+            "read_file"
+          ],
+          [
+            "write_file"
+          ],
+          [
+            "mcp__memory__memory_list"
+          ],
+          []
+        ],
+        "artifact": {
+          "object": true,
+          "keys_exact": true,
+          "project_matches": true,
+          "retry_limit_matches": true,
+          "retry_limit_type": "int",
+          "sha256": "30d2774c5a7f3f834610401352e75f84f139ad8c8ae13c86c2feb821dea883eb"
+        },
+        "owned_start_to_ready_seconds": 3.3950095176696777,
+        "memory_bytes": 13802,
+        "memory_sha256": "55482a75decc8659985fae320d2712ec1d006bc6f46947b82422d96b1921f1f6",
+        "semantic_samples": [
+          {
+            "repeat": 0,
+            "expected": "question",
+            "observed": "question",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 121.22031394392252
+          },
+          {
+            "repeat": 0,
+            "expected": "stop_request",
+            "observed": "stop_request",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 119.41327387467027
+          },
+          {
+            "repeat": 0,
+            "expected": "pause",
+            "observed": "pause",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 105.12012313120067
+          },
+          {
+            "repeat": 1,
+            "expected": "question",
+            "observed": "question",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 99.6699829120189
+          },
+          {
+            "repeat": 1,
+            "expected": "stop_request",
+            "observed": "stop_request",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 114.04427792876959
+          },
+          {
+            "repeat": 1,
+            "expected": "pause",
+            "observed": "pause",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 106.23295605182648
+          },
+          {
+            "repeat": 2,
+            "expected": "question",
+            "observed": "question",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 96.46573103964329
+          },
+          {
+            "repeat": 2,
+            "expected": "stop_request",
+            "observed": "stop_request",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 111.48111405782402
+          },
+          {
+            "repeat": 2,
+            "expected": "pause",
+            "observed": "pause",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 104.71214191056788
+          }
+        ],
+        "correction_attempts": 1,
+        "model_failures": [
+          "ToolCallLimitExceeded"
+        ],
+        "passed": true,
+        "elapsed_ms_including_checks": 8868.212039815262
+      }
+    },
+    "project-maple-True-1": {
+      "incumbent": {
+        "mode": "normal-memory",
+        "checks": {
+          "artifact_is_json": true,
+          "execution_completed": true,
+          "acceptance_remains_unverified": true,
+          "read_succeeded": true,
+          "write_succeeded": true,
+          "artifact_exact": true,
+          "project_deadline": true,
+          "owned_cold_start": true,
+          "normal_memory_used": true,
+          "public_semantic_examples": true,
+          "warm_semantic_deadline": true,
+          "settled_before_close": true,
+          "cleanup_succeeded": true,
+          "owned_runtime_stopped": true
+        },
+        "stage": "complete",
+        "project_seconds": 5.867394112050533,
+        "tool_sequence": [
+          "read_file",
+          "write_file",
+          "mcp__memory__memory_list"
+        ],
+        "project_model_calls": 4,
+        "tool_batches": [
+          [
+            "read_file"
+          ],
+          [
+            "write_file"
+          ],
+          [
+            "mcp__memory__memory_list"
+          ],
+          []
+        ],
+        "artifact": {
+          "object": true,
+          "keys_exact": true,
+          "project_matches": true,
+          "retry_limit_matches": true,
+          "retry_limit_type": "int",
+          "sha256": "30d2774c5a7f3f834610401352e75f84f139ad8c8ae13c86c2feb821dea883eb"
+        },
+        "owned_start_to_ready_seconds": 2.6445930004119873,
+        "memory_bytes": 13802,
+        "memory_sha256": "55482a75decc8659985fae320d2712ec1d006bc6f46947b82422d96b1921f1f6",
+        "semantic_samples": [
+          {
+            "repeat": 0,
+            "expected": "question",
+            "observed": "question",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 127.65487306751311
+          },
+          {
+            "repeat": 0,
+            "expected": "stop_request",
+            "observed": "stop_request",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 121.00588995963335
+          },
+          {
+            "repeat": 0,
+            "expected": "pause",
+            "observed": "pause",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 106.49117408320308
+          },
+          {
+            "repeat": 1,
+            "expected": "question",
+            "observed": "question",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 97.57342003285885
+          },
+          {
+            "repeat": 1,
+            "expected": "stop_request",
+            "observed": "stop_request",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 111.2545111682266
+          },
+          {
+            "repeat": 1,
+            "expected": "pause",
+            "observed": "pause",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 108.46329899504781
+          },
+          {
+            "repeat": 2,
+            "expected": "question",
+            "observed": "question",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 94.64314393699169
+          },
+          {
+            "repeat": 2,
+            "expected": "stop_request",
+            "observed": "stop_request",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 109.49586890637875
+          },
+          {
+            "repeat": 2,
+            "expected": "pause",
+            "observed": "pause",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 106.30022105760872
+          }
+        ],
+        "correction_attempts": 1,
+        "model_failures": [
+          "ToolCallLimitExceeded"
+        ],
+        "passed": true,
+        "elapsed_ms_including_checks": 7782.254089135677
+      },
+      "candidate": {
+        "mode": "normal-memory",
+        "checks": {
+          "artifact_is_json": true,
+          "execution_completed": true,
+          "acceptance_remains_unverified": true,
+          "read_succeeded": true,
+          "write_succeeded": true,
+          "artifact_exact": true,
+          "project_deadline": true,
+          "owned_cold_start": true,
+          "normal_memory_used": true,
+          "public_semantic_examples": true,
+          "warm_semantic_deadline": true,
+          "settled_before_close": true,
+          "cleanup_succeeded": true,
+          "owned_runtime_stopped": true
+        },
+        "stage": "complete",
+        "project_seconds": 6.048172166803852,
+        "tool_sequence": [
+          "read_file",
+          "write_file",
+          "mcp__memory__memory_list"
+        ],
+        "project_model_calls": 4,
+        "tool_batches": [
+          [
+            "read_file"
+          ],
+          [
+            "write_file"
+          ],
+          [
+            "mcp__memory__memory_list"
+          ],
+          []
+        ],
+        "artifact": {
+          "object": true,
+          "keys_exact": true,
+          "project_matches": true,
+          "retry_limit_matches": true,
+          "retry_limit_type": "int",
+          "sha256": "30d2774c5a7f3f834610401352e75f84f139ad8c8ae13c86c2feb821dea883eb"
+        },
+        "owned_start_to_ready_seconds": 2.4956181049346924,
+        "memory_bytes": 13802,
+        "memory_sha256": "55482a75decc8659985fae320d2712ec1d006bc6f46947b82422d96b1921f1f6",
+        "semantic_samples": [
+          {
+            "repeat": 0,
+            "expected": "question",
+            "observed": "question",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 133.47587012685835
+          },
+          {
+            "repeat": 0,
+            "expected": "stop_request",
+            "observed": "stop_request",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 121.36820307932794
+          },
+          {
+            "repeat": 0,
+            "expected": "pause",
+            "observed": "pause",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 106.68724589049816
+          },
+          {
+            "repeat": 1,
+            "expected": "question",
+            "observed": "question",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 99.65171292424202
+          },
+          {
+            "repeat": 1,
+            "expected": "stop_request",
+            "observed": "stop_request",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 114.18653395958245
+          },
+          {
+            "repeat": 1,
+            "expected": "pause",
+            "observed": "pause",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 108.84524206630886
+          },
+          {
+            "repeat": 2,
+            "expected": "question",
+            "observed": "question",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 103.46444509923458
+          },
+          {
+            "repeat": 2,
+            "expected": "stop_request",
+            "observed": "stop_request",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 113.82806114852428
+          },
+          {
+            "repeat": 2,
+            "expected": "pause",
+            "observed": "pause",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 104.79455208405852
+          }
+        ],
+        "correction_attempts": 1,
+        "model_failures": [
+          "ToolCallLimitExceeded"
+        ],
+        "passed": true,
+        "elapsed_ms_including_checks": 8015.278325183317
+      }
+    },
+    "project-maple-True-2": {
+      "candidate": {
+        "mode": "normal-memory",
+        "checks": {
+          "artifact_is_json": false,
+          "execution_completed": true,
+          "acceptance_remains_unverified": true,
+          "read_succeeded": true,
+          "write_succeeded": false,
+          "artifact_exact": false,
+          "project_deadline": true,
+          "owned_cold_start": true,
+          "normal_memory_used": true,
+          "public_semantic_examples": true,
+          "warm_semantic_deadline": true,
+          "settled_before_close": true,
+          "cleanup_succeeded": true,
+          "owned_runtime_stopped": true
+        },
+        "stage": "complete",
+        "project_seconds": 5.370785071048886,
+        "tool_sequence": [
+          "read_file",
+          "mcp__memory__memory_list"
+        ],
+        "project_model_calls": 3,
+        "tool_batches": [
+          [
+            "read_file"
+          ],
+          [
+            "mcp__memory__memory_list"
+          ],
+          []
+        ],
+        "artifact_error_type": "FileNotFoundError",
+        "artifact": {
+          "object": false,
+          "keys_exact": false,
+          "project_matches": false,
+          "retry_limit_matches": false,
+          "retry_limit_type": "NoneType",
+          "sha256": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b"
+        },
+        "owned_start_to_ready_seconds": 2.6242268085479736,
+        "memory_bytes": 13802,
+        "memory_sha256": "55482a75decc8659985fae320d2712ec1d006bc6f46947b82422d96b1921f1f6",
+        "semantic_samples": [
+          {
+            "repeat": 0,
+            "expected": "question",
+            "observed": "question",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 143.4777940157801
+          },
+          {
+            "repeat": 0,
+            "expected": "stop_request",
+            "observed": "stop_request",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 133.6048401426524
+          },
+          {
+            "repeat": 0,
+            "expected": "pause",
+            "observed": "pause",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 107.35465702600777
+          },
+          {
+            "repeat": 1,
+            "expected": "question",
+            "observed": "question",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 102.10050805471838
+          },
+          {
+            "repeat": 1,
+            "expected": "stop_request",
+            "observed": "stop_request",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 115.38037890568376
+          },
+          {
+            "repeat": 1,
+            "expected": "pause",
+            "observed": "pause",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 107.6682829298079
+          },
+          {
+            "repeat": 2,
+            "expected": "question",
+            "observed": "question",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 98.40477700345218
+          },
+          {
+            "repeat": 2,
+            "expected": "stop_request",
+            "observed": "stop_request",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 108.65744482725859
+          },
+          {
+            "repeat": 2,
+            "expected": "pause",
+            "observed": "pause",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 101.87450097873807
+          }
+        ],
+        "correction_attempts": 1,
+        "model_failures": [
+          "ToolCallLimitExceeded"
+        ],
+        "passed": false,
+        "elapsed_ms_including_checks": 7358.649458037689
+      },
+      "incumbent": {
+        "mode": "normal-memory",
+        "checks": {
+          "artifact_is_json": false,
+          "execution_completed": true,
+          "acceptance_remains_unverified": true,
+          "read_succeeded": true,
+          "write_succeeded": false,
+          "artifact_exact": false,
+          "project_deadline": true,
+          "owned_cold_start": true,
+          "normal_memory_used": true,
+          "public_semantic_examples": true,
+          "warm_semantic_deadline": true,
+          "settled_before_close": true,
+          "cleanup_succeeded": true,
+          "owned_runtime_stopped": true
+        },
+        "stage": "complete",
+        "project_seconds": 5.230755415046588,
+        "tool_sequence": [
+          "read_file",
+          "mcp__memory__memory_list"
+        ],
+        "project_model_calls": 3,
+        "tool_batches": [
+          [
+            "read_file"
+          ],
+          [
+            "mcp__memory__memory_list"
+          ],
+          []
+        ],
+        "artifact_error_type": "FileNotFoundError",
+        "artifact": {
+          "object": false,
+          "keys_exact": false,
+          "project_matches": false,
+          "retry_limit_matches": false,
+          "retry_limit_type": "NoneType",
+          "sha256": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b"
+        },
+        "owned_start_to_ready_seconds": 2.787808418273926,
+        "memory_bytes": 13802,
+        "memory_sha256": "55482a75decc8659985fae320d2712ec1d006bc6f46947b82422d96b1921f1f6",
+        "semantic_samples": [
+          {
+            "repeat": 0,
+            "expected": "question",
+            "observed": "question",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 128.97068890742958
+          },
+          {
+            "repeat": 0,
+            "expected": "stop_request",
+            "observed": "stop_request",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 116.16243701428175
+          },
+          {
+            "repeat": 0,
+            "expected": "pause",
+            "observed": "pause",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 105.24445306509733
+          },
+          {
+            "repeat": 1,
+            "expected": "question",
+            "observed": "question",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 98.8409121055156
+          },
+          {
+            "repeat": 1,
+            "expected": "stop_request",
+            "observed": "stop_request",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 117.39497003145516
+          },
+          {
+            "repeat": 1,
+            "expected": "pause",
+            "observed": "pause",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 106.90837702713907
+          },
+          {
+            "repeat": 2,
+            "expected": "question",
+            "observed": "question",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 105.26537499390543
+          },
+          {
+            "repeat": 2,
+            "expected": "stop_request",
+            "observed": "stop_request",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 114.23674412071705
+          },
+          {
+            "repeat": 2,
+            "expected": "pause",
+            "observed": "pause",
+            "status": "ok",
+            "reason": "classified",
+            "duration_ms": 108.20467513985932
+          }
+        ],
+        "correction_attempts": 1,
+        "model_failures": [
+          "ToolCallLimitExceeded"
+        ],
+        "passed": false,
+        "elapsed_ms_including_checks": 7237.215920118615
+      }
+    },
+    "tui-harbor-False-0": {
+      "incumbent": {
+        "mode": "tui-no-plugins",
+        "checks": {
+          "composer_before_runtime_start": true,
+          "mount_deadline": true,
+          "project_answer_visible": true,
+          "real_read_succeeded": true,
+          "cancelled_real_stream": true,
+          "draft_preserved": true,
+          "cancel_settled": true,
+          "resume_same_session": true,
+          "resume_profile": true,
+          "resume_history": true,
+          "resume_answer": true,
+          "resume_settled": true,
+          "missing_runtime_reported": true,
+          "failure_recoverable": true,
+          "cleanup_succeeded": true
+        },
+        "stage": "complete",
+        "mount_seconds": 0.18126487894915044,
+        "active_at_cancel": true,
+        "cancel_seconds": 0.12311228387989104,
+        "cancel_outcomes": [
+          "completed",
+          "cancelled"
+        ],
+        "resume_answer": {
+          "status": "completed",
+          "bytes": 54,
+          "contains_project": true,
+          "project_visible": true,
+          "sha256": "02588b5a8d9bc8179f31d6c19444022453485818591b8b018f67a3339b1690fe"
+        },
+        "correction_attempts": 0,
+        "passed": true,
+        "elapsed_ms_including_checks": 6848.392804153264
+      },
+      "candidate": {
+        "mode": "tui-no-plugins",
+        "checks": {
+          "composer_before_runtime_start": true,
+          "mount_deadline": true,
+          "project_answer_visible": true,
+          "real_read_succeeded": true,
+          "cancelled_real_stream": true,
+          "draft_preserved": true,
+          "cancel_settled": true,
+          "resume_same_session": true,
+          "resume_profile": true,
+          "resume_history": true,
+          "resume_answer": true,
+          "resume_settled": true,
+          "missing_runtime_reported": true,
+          "failure_recoverable": true,
+          "cleanup_succeeded": true
+        },
+        "stage": "complete",
+        "mount_seconds": 0.16677701310254633,
+        "active_at_cancel": true,
+        "cancel_seconds": 0.0833300759550184,
+        "cancel_outcomes": [
+          "completed",
+          "cancelled"
+        ],
+        "resume_answer": {
+          "status": "completed",
+          "bytes": 54,
+          "contains_project": true,
+          "project_visible": true,
+          "sha256": "02588b5a8d9bc8179f31d6c19444022453485818591b8b018f67a3339b1690fe"
+        },
+        "correction_attempts": 0,
+        "passed": true,
+        "elapsed_ms_including_checks": 6437.337395967916
+      }
+    },
+    "tui-harbor-False-1": {
+      "candidate": {
+        "mode": "tui-no-plugins",
+        "checks": {
+          "composer_before_runtime_start": true,
+          "mount_deadline": true,
+          "project_answer_visible": true,
+          "real_read_succeeded": true,
+          "cancelled_real_stream": true,
+          "draft_preserved": true,
+          "cancel_settled": true,
+          "resume_same_session": true,
+          "resume_profile": true,
+          "resume_history": true,
+          "resume_answer": false,
+          "resume_settled": true,
+          "missing_runtime_reported": true,
+          "failure_recoverable": true,
+          "cleanup_succeeded": true
+        },
+        "stage": "complete",
+        "mount_seconds": 0.16995619516819715,
+        "active_at_cancel": true,
+        "cancel_seconds": 0.08383831405080855,
+        "cancel_outcomes": [
+          "completed",
+          "cancelled"
+        ],
+        "resume_answer": {
+          "status": "completed",
+          "bytes": 158,
+          "contains_project": false,
+          "project_visible": true,
+          "sha256": "97aed9f4842bff034a793c293e259f6cd07fc12b05f3928fc6eab9c5819e8bf8"
+        },
+        "correction_attempts": 0,
+        "passed": false,
+        "elapsed_ms_including_checks": 5638.333413982764
+      },
+      "incumbent": {
+        "mode": "tui-no-plugins",
+        "checks": {
+          "composer_before_runtime_start": true,
+          "mount_deadline": true,
+          "project_answer_visible": true,
+          "real_read_succeeded": true,
+          "cancelled_real_stream": true,
+          "draft_preserved": true,
+          "cancel_settled": true,
+          "resume_same_session": true,
+          "resume_profile": true,
+          "resume_history": true,
+          "resume_answer": true,
+          "resume_settled": true,
+          "missing_runtime_reported": true,
+          "failure_recoverable": true,
+          "cleanup_succeeded": true
+        },
+        "stage": "complete",
+        "mount_seconds": 0.1659981869161129,
+        "active_at_cancel": true,
+        "cancel_seconds": 0.10515121999196708,
+        "cancel_outcomes": [
+          "completed",
+          "cancelled"
+        ],
+        "resume_answer": {
+          "status": "completed",
+          "bytes": 54,
+          "contains_project": true,
+          "project_visible": true,
+          "sha256": "02588b5a8d9bc8179f31d6c19444022453485818591b8b018f67a3339b1690fe"
+        },
+        "correction_attempts": 0,
+        "passed": true,
+        "elapsed_ms_including_checks": 6287.494934163988
+      }
+    },
+    "tui-harbor-False-2": {
+      "incumbent": {
+        "mode": "tui-no-plugins",
+        "checks": {
+          "composer_before_runtime_start": true,
+          "mount_deadline": true,
+          "project_answer_visible": true,
+          "real_read_succeeded": true,
+          "cancelled_real_stream": true,
+          "draft_preserved": true,
+          "cancel_settled": true,
+          "resume_same_session": true,
+          "resume_profile": true,
+          "resume_history": true,
+          "resume_answer": true,
+          "resume_settled": true,
+          "missing_runtime_reported": true,
+          "failure_recoverable": true,
+          "cleanup_succeeded": true
+        },
+        "stage": "complete",
+        "mount_seconds": 0.1880139270797372,
+        "active_at_cancel": true,
+        "cancel_seconds": 0.08415483310818672,
+        "cancel_outcomes": [
+          "completed",
+          "cancelled"
+        ],
+        "resume_answer": {
+          "status": "completed",
+          "bytes": 54,
+          "contains_project": true,
+          "project_visible": true,
+          "sha256": "02588b5a8d9bc8179f31d6c19444022453485818591b8b018f67a3339b1690fe"
+        },
+        "correction_attempts": 0,
+        "passed": true,
+        "elapsed_ms_including_checks": 5883.171984925866
+      },
+      "candidate": {
+        "mode": "tui-no-plugins",
+        "checks": {
+          "composer_before_runtime_start": true,
+          "mount_deadline": true,
+          "project_answer_visible": true,
+          "real_read_succeeded": true,
+          "cancelled_real_stream": true,
+          "draft_preserved": true,
+          "cancel_settled": true,
+          "resume_same_session": true,
+          "resume_profile": true,
+          "resume_history": true,
+          "resume_answer": true,
+          "resume_settled": true,
+          "missing_runtime_reported": true,
+          "failure_recoverable": true,
+          "cleanup_succeeded": true
+        },
+        "stage": "complete",
+        "mount_seconds": 0.5137914018705487,
+        "active_at_cancel": true,
+        "cancel_seconds": 0.09021846391260624,
+        "cancel_outcomes": [
+          "completed",
+          "cancelled"
+        ],
+        "resume_answer": {
+          "status": "completed",
+          "bytes": 54,
+          "contains_project": true,
+          "project_visible": true,
+          "sha256": "02588b5a8d9bc8179f31d6c19444022453485818591b8b018f67a3339b1690fe"
+        },
+        "correction_attempts": 0,
+        "passed": true,
+        "elapsed_ms_including_checks": 6151.188036892563
+      }
+    },
+    "tui-harbor-True-0": {
+      "candidate": {
+        "mode": "tui-normal-memory",
+        "checks": {
+          "composer_before_runtime_start": true,
+          "mount_deadline": true,
+          "project_answer_visible": true,
+          "real_read_succeeded": true,
+          "execution_completed": true,
+          "acceptance_remains_unverified": true,
+          "read_succeeded": true,
+          "write_succeeded": true,
+          "artifact_exact": true,
+          "normal_memory_used": true,
+          "cancelled_real_stream": true,
+          "draft_preserved": true,
+          "cancel_settled": true,
+          "resume_same_session": true,
+          "resume_profile": true,
+          "resume_history": true,
+          "resume_answer": true,
+          "resume_settled": true,
+          "resume_normal_memory_used": true,
+          "missing_runtime_reported": true,
+          "failure_recoverable": true,
+          "cleanup_succeeded": true
+        },
+        "stage": "complete",
+        "mount_seconds": 0.7532946469727904,
+        "artifact": {
+          "object": true,
+          "keys_exact": true,
+          "project_matches": true,
+          "retry_limit_matches": true,
+          "retry_limit_type": "int",
+          "sha256": "ebb67ffa17fe3ee913b027a5f253f80c30e773a60133397aaf87f39f56127340"
+        },
+        "memory_bytes": 13802,
+        "memory_sha256": "55482a75decc8659985fae320d2712ec1d006bc6f46947b82422d96b1921f1f6",
+        "active_at_cancel": true,
+        "cancel_seconds": 0.06298135593533516,
+        "cancel_outcomes": [
+          "completed",
+          "cancelled"
+        ],
+        "resume_answer": {
+          "status": "completed",
+          "bytes": 704,
+          "contains_project": true,
+          "project_visible": true,
+          "sha256": "8e4af1fbeb58d952f15f17c6ccb8b5dd3f18558f77a4d2b931ddf0adace4bab8"
+        },
+        "correction_attempts": 3,
+        "passed": true,
+        "elapsed_ms_including_checks": 14481.826985022053
+      },
+      "incumbent": {
+        "mode": "tui-normal-memory",
+        "checks": {
+          "composer_before_runtime_start": true,
+          "mount_deadline": true,
+          "project_answer_visible": true,
+          "real_read_succeeded": true,
+          "execution_completed": true,
+          "acceptance_remains_unverified": true,
+          "read_succeeded": true,
+          "write_succeeded": true,
+          "artifact_exact": true,
+          "normal_memory_used": true,
+          "cancelled_real_stream": true,
+          "draft_preserved": true,
+          "cancel_settled": true,
+          "resume_same_session": true,
+          "resume_profile": true,
+          "resume_history": true,
+          "resume_answer": false,
+          "resume_settled": true,
+          "resume_normal_memory_used": true,
+          "missing_runtime_reported": true,
+          "failure_recoverable": true,
+          "cleanup_succeeded": true
+        },
+        "stage": "complete",
+        "mount_seconds": 0.6398162278346717,
+        "artifact": {
+          "object": true,
+          "keys_exact": true,
+          "project_matches": true,
+          "retry_limit_matches": true,
+          "retry_limit_type": "int",
+          "sha256": "ebb67ffa17fe3ee913b027a5f253f80c30e773a60133397aaf87f39f56127340"
+        },
+        "memory_bytes": 13802,
+        "memory_sha256": "55482a75decc8659985fae320d2712ec1d006bc6f46947b82422d96b1921f1f6",
+        "active_at_cancel": true,
+        "cancel_seconds": 0.06725770304910839,
+        "cancel_outcomes": [
+          "completed",
+          "cancelled"
+        ],
+        "resume_answer": {
+          "status": "completed",
+          "bytes": 14189,
+          "contains_project": true,
+          "project_visible": false,
+          "sha256": "cc379bf9bb7d97b210ac6e89f9525511b274556dda9e1e163a6c00afd262198b"
+        },
+        "correction_attempts": 2,
+        "passed": false,
+        "elapsed_ms_including_checks": 48957.94416894205
+      }
+    },
+    "tui-harbor-True-1": {
+      "incumbent": {
+        "mode": "tui-normal-memory",
+        "checks": {
+          "composer_before_runtime_start": true,
+          "mount_deadline": true,
+          "project_answer_visible": true,
+          "real_read_succeeded": true,
+          "execution_completed": true,
+          "acceptance_remains_unverified": true,
+          "read_succeeded": true,
+          "write_succeeded": true,
+          "artifact_exact": true,
+          "normal_memory_used": true,
+          "cancelled_real_stream": true,
+          "draft_preserved": true,
+          "cancel_settled": true,
+          "resume_same_session": true,
+          "resume_profile": true,
+          "resume_history": true,
+          "resume_answer": false,
+          "resume_settled": true,
+          "resume_normal_memory_used": true,
+          "missing_runtime_reported": true,
+          "failure_recoverable": true,
+          "cleanup_succeeded": true
+        },
+        "stage": "complete",
+        "mount_seconds": 0.7633897620253265,
+        "artifact": {
+          "object": true,
+          "keys_exact": true,
+          "project_matches": true,
+          "retry_limit_matches": true,
+          "retry_limit_type": "int",
+          "sha256": "ebb67ffa17fe3ee913b027a5f253f80c30e773a60133397aaf87f39f56127340"
+        },
+        "memory_bytes": 13802,
+        "memory_sha256": "55482a75decc8659985fae320d2712ec1d006bc6f46947b82422d96b1921f1f6",
+        "active_at_cancel": true,
+        "cancel_seconds": 0.08423683792352676,
+        "cancel_outcomes": [
+          "completed",
+          "cancelled"
+        ],
+        "resume_answer": {
+          "status": "completed",
+          "bytes": 14038,
+          "contains_project": true,
+          "project_visible": false,
+          "sha256": "cdb321cd602576433b41bc09846af956892420395f07ed37f08794b4c4294dd6"
+        },
+        "correction_attempts": 2,
+        "passed": false,
+        "elapsed_ms_including_checks": 48070.76199306175
+      },
+      "candidate": {
+        "mode": "tui-normal-memory",
+        "checks": {
+          "composer_before_runtime_start": true,
+          "mount_deadline": true,
+          "project_answer_visible": true,
+          "real_read_succeeded": true,
+          "execution_completed": true,
+          "acceptance_remains_unverified": true,
+          "read_succeeded": true,
+          "write_succeeded": true,
+          "artifact_exact": true,
+          "normal_memory_used": true,
+          "cancelled_real_stream": true,
+          "draft_preserved": true,
+          "cancel_settled": true,
+          "resume_same_session": true,
+          "resume_profile": true,
+          "resume_history": true,
+          "resume_answer": false,
+          "resume_settled": true,
+          "resume_normal_memory_used": false,
+          "missing_runtime_reported": true,
+          "failure_recoverable": true,
+          "cleanup_succeeded": true
+        },
+        "stage": "complete",
+        "mount_seconds": 1.0736054389271885,
+        "artifact": {
+          "object": true,
+          "keys_exact": true,
+          "project_matches": true,
+          "retry_limit_matches": true,
+          "retry_limit_type": "int",
+          "sha256": "ebb67ffa17fe3ee913b027a5f253f80c30e773a60133397aaf87f39f56127340"
+        },
+        "memory_bytes": 13802,
+        "memory_sha256": "55482a75decc8659985fae320d2712ec1d006bc6f46947b82422d96b1921f1f6",
+        "active_at_cancel": true,
+        "cancel_seconds": 0.09375426918268204,
+        "cancel_outcomes": [
+          "completed",
+          "cancelled"
+        ],
+        "resume_answer": {
+          "status": "failed",
+          "bytes": 0,
+          "contains_project": false,
+          "project_visible": true,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "correction_attempts": 3,
+        "passed": false,
+        "elapsed_ms_including_checks": 12097.6037948858
+      }
+    },
+    "tui-harbor-True-2": {
+      "candidate": {
+        "mode": "tui-normal-memory",
+        "checks": {
+          "composer_before_runtime_start": true,
+          "mount_deadline": true,
+          "project_answer_visible": true,
+          "real_read_succeeded": true,
+          "execution_completed": true,
+          "acceptance_remains_unverified": true,
+          "read_succeeded": true,
+          "write_succeeded": true,
+          "artifact_exact": true,
+          "normal_memory_used": true,
+          "cancelled_real_stream": true,
+          "draft_preserved": true,
+          "cancel_settled": true,
+          "resume_same_session": true,
+          "resume_profile": true,
+          "resume_history": true,
+          "resume_answer": true,
+          "resume_settled": true,
+          "resume_normal_memory_used": true,
+          "missing_runtime_reported": true,
+          "failure_recoverable": true,
+          "cleanup_succeeded": true
+        },
+        "stage": "complete",
+        "mount_seconds": 0.9502091379836202,
+        "artifact": {
+          "object": true,
+          "keys_exact": true,
+          "project_matches": true,
+          "retry_limit_matches": true,
+          "retry_limit_type": "int",
+          "sha256": "ebb67ffa17fe3ee913b027a5f253f80c30e773a60133397aaf87f39f56127340"
+        },
+        "memory_bytes": 13802,
+        "memory_sha256": "55482a75decc8659985fae320d2712ec1d006bc6f46947b82422d96b1921f1f6",
+        "active_at_cancel": true,
+        "cancel_seconds": 0.1539407919626683,
+        "cancel_outcomes": [
+          "completed",
+          "cancelled"
+        ],
+        "resume_answer": {
+          "status": "completed",
+          "bytes": 725,
+          "contains_project": true,
+          "project_visible": true,
+          "sha256": "d8984e9892117f313b9688edb9695591a5e8ae80151ac58f22e9e57f21ff9f35"
+        },
+        "correction_attempts": 3,
+        "passed": true,
+        "elapsed_ms_including_checks": 14942.751908907667
+      },
+      "incumbent": {
+        "mode": "tui-normal-memory",
+        "checks": {
+          "composer_before_runtime_start": true,
+          "mount_deadline": true,
+          "project_answer_visible": true,
+          "real_read_succeeded": true,
+          "execution_completed": true,
+          "acceptance_remains_unverified": true,
+          "read_succeeded": true,
+          "write_succeeded": true,
+          "artifact_exact": true,
+          "normal_memory_used": true,
+          "cancelled_real_stream": true,
+          "draft_preserved": true,
+          "cancel_settled": true,
+          "resume_same_session": true,
+          "resume_profile": true,
+          "resume_history": true,
+          "resume_answer": true,
+          "resume_settled": true,
+          "resume_normal_memory_used": true,
+          "missing_runtime_reported": true,
+          "failure_recoverable": true,
+          "cleanup_succeeded": true
+        },
+        "stage": "complete",
+        "mount_seconds": 1.268919528927654,
+        "artifact": {
+          "object": true,
+          "keys_exact": true,
+          "project_matches": true,
+          "retry_limit_matches": true,
+          "retry_limit_type": "int",
+          "sha256": "ebb67ffa17fe3ee913b027a5f253f80c30e773a60133397aaf87f39f56127340"
+        },
+        "memory_bytes": 13802,
+        "memory_sha256": "55482a75decc8659985fae320d2712ec1d006bc6f46947b82422d96b1921f1f6",
+        "active_at_cancel": true,
+        "cancel_seconds": 0.08361838199198246,
+        "cancel_outcomes": [
+          "completed",
+          "cancelled"
+        ],
+        "resume_answer": {
+          "status": "completed",
+          "bytes": 373,
+          "contains_project": true,
+          "project_visible": true,
+          "sha256": "acce07e626ee1c8bd4c97541af3d0aaa7a8a89a37397825083374f5a09c9e190"
+        },
+        "correction_attempts": 2,
+        "passed": true,
+        "elapsed_ms_including_checks": 12897.116245003417
+      }
+    }
+  },
+  "session_id": "b5324774b0e84388be1bf8ba9b79f70e",
+  "run_id": "81fe19d243de49de9f8d9d63b64da5b0",
+  "completion": "completed",
+  "plan": {
+    "id": "local-responses-v1",
+    "kind": "evaluation_plan",
+    "candidate_id": "bounded-concise-responses",
+    "incumbent_version": "0c6d6889c1bb940c68642b0bf88957286b746b02327922e06b43f38ae38e12a6",
+    "candidate_version": "aa27438337c404ac9369f7990de171dbc7487097c69be33e3ee0319a616568e6",
+    "suite": {
+      "sha256": "4577a96fb8d2ae67b8800e1acc06a04e0d8915061d61f03036a3aa4d015ab542",
+      "size": 2682
+    },
+    "evaluator_version": "dc9e01eb712cd3e40582959264c85c693dc0f782e0c44048bb43b7aaa6a3b128",
+    "cases": [
+      {
+        "id": "project-harbor-False-0",
+        "partition": "regression",
+        "critical": true
+      },
+      {
+        "id": "project-harbor-False-1",
+        "partition": "regression",
+        "critical": true
+      },
+      {
+        "id": "project-harbor-False-2",
+        "partition": "regression",
+        "critical": true
+      },
+      {
+        "id": "project-harbor-True-0",
+        "partition": "regression",
+        "critical": true
+      },
+      {
+        "id": "project-harbor-True-1",
+        "partition": "regression",
+        "critical": true
+      },
+      {
+        "id": "project-harbor-True-2",
+        "partition": "regression",
+        "critical": true
+      },
+      {
+        "id": "project-maple-False-0",
+        "partition": "held_out",
+        "critical": true
+      },
+      {
+        "id": "project-maple-False-1",
+        "partition": "held_out",
+        "critical": true
+      },
+      {
+        "id": "project-maple-False-2",
+        "partition": "held_out",
+        "critical": true
+      },
+      {
+        "id": "project-maple-True-0",
+        "partition": "held_out",
+        "critical": true
+      },
+      {
+        "id": "project-maple-True-1",
+        "partition": "held_out",
+        "critical": true
+      },
+      {
+        "id": "project-maple-True-2",
+        "partition": "held_out",
+        "critical": true
+      },
+      {
+        "id": "tui-harbor-False-0",
+        "partition": "regression",
+        "critical": true
+      },
+      {
+        "id": "tui-harbor-False-1",
+        "partition": "regression",
+        "critical": true
+      },
+      {
+        "id": "tui-harbor-False-2",
+        "partition": "regression",
+        "critical": true
+      },
+      {
+        "id": "tui-harbor-True-0",
+        "partition": "regression",
+        "critical": true
+      },
+      {
+        "id": "tui-harbor-True-1",
+        "partition": "regression",
+        "critical": true
+      },
+      {
+        "id": "tui-harbor-True-2",
+        "partition": "regression",
+        "critical": true
+      }
+    ],
+    "min_improved_cases": 2,
+    "max_latency_ratio": 2.0,
+    "max_case_latency_ms": 60000.0
+  },
+  "result": {
+    "id": "result-81fe19d243de49de9f8d9d63b64da5b0",
+    "kind": "experiment_result",
+    "plan_id": "local-responses-v1",
+    "incumbent_version": "0c6d6889c1bb940c68642b0bf88957286b746b02327922e06b43f38ae38e12a6",
+    "candidate_version": "aa27438337c404ac9369f7990de171dbc7487097c69be33e3ee0319a616568e6",
+    "evaluator_version": "dc9e01eb712cd3e40582959264c85c693dc0f782e0c44048bb43b7aaa6a3b128",
+    "observations": [
+      {
+        "case_id": "project-harbor-False-0",
+        "incumbent_passed": true,
+        "candidate_passed": true,
+        "incumbent_latency_ms": 9610.450658015907,
+        "candidate_latency_ms": 5977.92089311406
+      },
+      {
+        "case_id": "project-harbor-False-1",
+        "incumbent_passed": true,
+        "candidate_passed": true,
+        "incumbent_latency_ms": 5973.539750091732,
+        "candidate_latency_ms": 6048.028752906248
+      },
+      {
+        "case_id": "project-harbor-False-2",
+        "incumbent_passed": true,
+        "candidate_passed": false,
+        "incumbent_latency_ms": 5881.406890926883,
+        "candidate_latency_ms": 7435.610942076892
+      },
+      {
+        "case_id": "project-harbor-True-0",
+        "incumbent_passed": true,
+        "candidate_passed": false,
+        "incumbent_latency_ms": 9545.170160010457,
+        "candidate_latency_ms": 9072.445342084393
+      },
+      {
+        "case_id": "project-harbor-True-1",
+        "incumbent_passed": true,
+        "candidate_passed": false,
+        "incumbent_latency_ms": 9278.651888016611,
+        "candidate_latency_ms": 11144.911921117455
+      },
+      {
+        "case_id": "project-harbor-True-2",
+        "incumbent_passed": true,
+        "candidate_passed": true,
+        "incumbent_latency_ms": 11729.01978599839,
+        "candidate_latency_ms": 10278.73255009763
+      },
+      {
+        "case_id": "project-maple-False-0",
+        "incumbent_passed": false,
+        "candidate_passed": false,
+        "incumbent_latency_ms": 7021.375007927418,
+        "candidate_latency_ms": 8215.824301121756
+      },
+      {
+        "case_id": "project-maple-False-1",
+        "incumbent_passed": true,
+        "candidate_passed": false,
+        "incumbent_latency_ms": 6822.4734489340335,
+        "candidate_latency_ms": 8229.344665072858
+      },
+      {
+        "case_id": "project-maple-False-2",
+        "incumbent_passed": true,
+        "candidate_passed": false,
+        "incumbent_latency_ms": 6193.582615815103,
+        "candidate_latency_ms": 7052.677685860544
+      },
+      {
+        "case_id": "project-maple-True-0",
+        "incumbent_passed": true,
+        "candidate_passed": true,
+        "incumbent_latency_ms": 8868.212039815262,
+        "candidate_latency_ms": 10136.385146062821
+      },
+      {
+        "case_id": "project-maple-True-1",
+        "incumbent_passed": true,
+        "candidate_passed": true,
+        "incumbent_latency_ms": 7782.254089135677,
+        "candidate_latency_ms": 8015.278325183317
+      },
+      {
+        "case_id": "project-maple-True-2",
+        "incumbent_passed": false,
+        "candidate_passed": false,
+        "incumbent_latency_ms": 7237.215920118615,
+        "candidate_latency_ms": 7358.649458037689
+      },
+      {
+        "case_id": "tui-harbor-False-0",
+        "incumbent_passed": true,
+        "candidate_passed": true,
+        "incumbent_latency_ms": 6848.392804153264,
+        "candidate_latency_ms": 6437.337395967916
+      },
+      {
+        "case_id": "tui-harbor-False-1",
+        "incumbent_passed": true,
+        "candidate_passed": false,
+        "incumbent_latency_ms": 6287.494934163988,
+        "candidate_latency_ms": 5638.333413982764
+      },
+      {
+        "case_id": "tui-harbor-False-2",
+        "incumbent_passed": true,
+        "candidate_passed": true,
+        "incumbent_latency_ms": 5883.171984925866,
+        "candidate_latency_ms": 6151.188036892563
+      },
+      {
+        "case_id": "tui-harbor-True-0",
+        "incumbent_passed": false,
+        "candidate_passed": true,
+        "incumbent_latency_ms": 48957.94416894205,
+        "candidate_latency_ms": 14481.826985022053
+      },
+      {
+        "case_id": "tui-harbor-True-1",
+        "incumbent_passed": false,
+        "candidate_passed": false,
+        "incumbent_latency_ms": 48070.76199306175,
+        "candidate_latency_ms": 12097.6037948858
+      },
+      {
+        "case_id": "tui-harbor-True-2",
+        "incumbent_passed": true,
+        "candidate_passed": true,
+        "incumbent_latency_ms": 12897.116245003417,
+        "candidate_latency_ms": 14942.751908907667
+      }
+    ],
+    "artifact": {
+      "sha256": "6dc7af4814c7c45fd0329800923e44e16057fb55241c30d1235486be31133944",
+      "size": 77163
+    },
+    "run_id": "81fe19d243de49de9f8d9d63b64da5b0",
+    "completion": "completed"
+  },
+  "verdict": "failed",
+  "adoption": "refused",
+  "automatic_activation": false,
+  "full_m3_qualified": false,
+  "journal_records": [
+    {
+      "id": "local-artifact-failure",
+      "kind": "evidence",
+      "source_session": "b5324774b0e84388be1bf8ba9b79f70e",
+      "source_seq": 2,
+      "observation": "Imported failed local tool report 20593ced701b55b63f4974fecd4c36cb39a89b8fb446d3d4fe028e9e845d3c5c.",
+      "category": "failure"
+    },
+    {
+      "id": "bounded-concise-responses",
+      "kind": "candidate",
+      "target": "context",
+      "incumbent_version": "0c6d6889c1bb940c68642b0bf88957286b746b02327922e06b43f38ae38e12a6",
+      "artifact": {
+        "sha256": "aa27438337c404ac9369f7990de171dbc7487097c69be33e3ee0319a616568e6",
+        "size": 297
+      },
+      "evidence_ids": [
+        "local-artifact-failure"
+      ],
+      "hypothesis": "Explicit sampling, output bounds and answer guidance retain correct work and useful visible answers.",
+      "expected_benefit": "Correct file artifacts with normal memory while retaining no-plugin behavior."
+    },
+    {
+      "id": "local-responses-v1",
+      "kind": "evaluation_plan",
+      "candidate_id": "bounded-concise-responses",
+      "incumbent_version": "0c6d6889c1bb940c68642b0bf88957286b746b02327922e06b43f38ae38e12a6",
+      "candidate_version": "aa27438337c404ac9369f7990de171dbc7487097c69be33e3ee0319a616568e6",
+      "suite": {
+        "sha256": "4577a96fb8d2ae67b8800e1acc06a04e0d8915061d61f03036a3aa4d015ab542",
+        "size": 2682
+      },
+      "evaluator_version": "dc9e01eb712cd3e40582959264c85c693dc0f782e0c44048bb43b7aaa6a3b128",
+      "cases": [
+        {
+          "id": "project-harbor-False-0",
+          "partition": "regression",
+          "critical": true
+        },
+        {
+          "id": "project-harbor-False-1",
+          "partition": "regression",
+          "critical": true
+        },
+        {
+          "id": "project-harbor-False-2",
+          "partition": "regression",
+          "critical": true
+        },
+        {
+          "id": "project-harbor-True-0",
+          "partition": "regression",
+          "critical": true
+        },
+        {
+          "id": "project-harbor-True-1",
+          "partition": "regression",
+          "critical": true
+        },
+        {
+          "id": "project-harbor-True-2",
+          "partition": "regression",
+          "critical": true
+        },
+        {
+          "id": "project-maple-False-0",
+          "partition": "held_out",
+          "critical": true
+        },
+        {
+          "id": "project-maple-False-1",
+          "partition": "held_out",
+          "critical": true
+        },
+        {
+          "id": "project-maple-False-2",
+          "partition": "held_out",
+          "critical": true
+        },
+        {
+          "id": "project-maple-True-0",
+          "partition": "held_out",
+          "critical": true
+        },
+        {
+          "id": "project-maple-True-1",
+          "partition": "held_out",
+          "critical": true
+        },
+        {
+          "id": "project-maple-True-2",
+          "partition": "held_out",
+          "critical": true
+        },
+        {
+          "id": "tui-harbor-False-0",
+          "partition": "regression",
+          "critical": true
+        },
+        {
+          "id": "tui-harbor-False-1",
+          "partition": "regression",
+          "critical": true
+        },
+        {
+          "id": "tui-harbor-False-2",
+          "partition": "regression",
+          "critical": true
+        },
+        {
+          "id": "tui-harbor-True-0",
+          "partition": "regression",
+          "critical": true
+        },
+        {
+          "id": "tui-harbor-True-1",
+          "partition": "regression",
+          "critical": true
+        },
+        {
+          "id": "tui-harbor-True-2",
+          "partition": "regression",
+          "critical": true
+        }
+      ],
+      "min_improved_cases": 2,
+      "max_latency_ratio": 2.0,
+      "max_case_latency_ms": 60000.0
+    },
+    {
+      "id": "result-81fe19d243de49de9f8d9d63b64da5b0",
+      "kind": "experiment_result",
+      "plan_id": "local-responses-v1",
+      "incumbent_version": "0c6d6889c1bb940c68642b0bf88957286b746b02327922e06b43f38ae38e12a6",
+      "candidate_version": "aa27438337c404ac9369f7990de171dbc7487097c69be33e3ee0319a616568e6",
+      "evaluator_version": "dc9e01eb712cd3e40582959264c85c693dc0f782e0c44048bb43b7aaa6a3b128",
+      "observations": [
+        {
+          "case_id": "project-harbor-False-0",
+          "incumbent_passed": true,
+          "candidate_passed": true,
+          "incumbent_latency_ms": 9610.450658015907,
+          "candidate_latency_ms": 5977.92089311406
+        },
+        {
+          "case_id": "project-harbor-False-1",
+          "incumbent_passed": true,
+          "candidate_passed": true,
+          "incumbent_latency_ms": 5973.539750091732,
+          "candidate_latency_ms": 6048.028752906248
+        },
+        {
+          "case_id": "project-harbor-False-2",
+          "incumbent_passed": true,
+          "candidate_passed": false,
+          "incumbent_latency_ms": 5881.406890926883,
+          "candidate_latency_ms": 7435.610942076892
+        },
+        {
+          "case_id": "project-harbor-True-0",
+          "incumbent_passed": true,
+          "candidate_passed": false,
+          "incumbent_latency_ms": 9545.170160010457,
+          "candidate_latency_ms": 9072.445342084393
+        },
+        {
+          "case_id": "project-harbor-True-1",
+          "incumbent_passed": true,
+          "candidate_passed": false,
+          "incumbent_latency_ms": 9278.651888016611,
+          "candidate_latency_ms": 11144.911921117455
+        },
+        {
+          "case_id": "project-harbor-True-2",
+          "incumbent_passed": true,
+          "candidate_passed": true,
+          "incumbent_latency_ms": 11729.01978599839,
+          "candidate_latency_ms": 10278.73255009763
+        },
+        {
+          "case_id": "project-maple-False-0",
+          "incumbent_passed": false,
+          "candidate_passed": false,
+          "incumbent_latency_ms": 7021.375007927418,
+          "candidate_latency_ms": 8215.824301121756
+        },
+        {
+          "case_id": "project-maple-False-1",
+          "incumbent_passed": true,
+          "candidate_passed": false,
+          "incumbent_latency_ms": 6822.4734489340335,
+          "candidate_latency_ms": 8229.344665072858
+        },
+        {
+          "case_id": "project-maple-False-2",
+          "incumbent_passed": true,
+          "candidate_passed": false,
+          "incumbent_latency_ms": 6193.582615815103,
+          "candidate_latency_ms": 7052.677685860544
+        },
+        {
+          "case_id": "project-maple-True-0",
+          "incumbent_passed": true,
+          "candidate_passed": true,
+          "incumbent_latency_ms": 8868.212039815262,
+          "candidate_latency_ms": 10136.385146062821
+        },
+        {
+          "case_id": "project-maple-True-1",
+          "incumbent_passed": true,
+          "candidate_passed": true,
+          "incumbent_latency_ms": 7782.254089135677,
+          "candidate_latency_ms": 8015.278325183317
+        },
+        {
+          "case_id": "project-maple-True-2",
+          "incumbent_passed": false,
+          "candidate_passed": false,
+          "incumbent_latency_ms": 7237.215920118615,
+          "candidate_latency_ms": 7358.649458037689
+        },
+        {
+          "case_id": "tui-harbor-False-0",
+          "incumbent_passed": true,
+          "candidate_passed": true,
+          "incumbent_latency_ms": 6848.392804153264,
+          "candidate_latency_ms": 6437.337395967916
+        },
+        {
+          "case_id": "tui-harbor-False-1",
+          "incumbent_passed": true,
+          "candidate_passed": false,
+          "incumbent_latency_ms": 6287.494934163988,
+          "candidate_latency_ms": 5638.333413982764
+        },
+        {
+          "case_id": "tui-harbor-False-2",
+          "incumbent_passed": true,
+          "candidate_passed": true,
+          "incumbent_latency_ms": 5883.171984925866,
+          "candidate_latency_ms": 6151.188036892563
+        },
+        {
+          "case_id": "tui-harbor-True-0",
+          "incumbent_passed": false,
+          "candidate_passed": true,
+          "incumbent_latency_ms": 48957.94416894205,
+          "candidate_latency_ms": 14481.826985022053
+        },
+        {
+          "case_id": "tui-harbor-True-1",
+          "incumbent_passed": false,
+          "candidate_passed": false,
+          "incumbent_latency_ms": 48070.76199306175,
+          "candidate_latency_ms": 12097.6037948858
+        },
+        {
+          "case_id": "tui-harbor-True-2",
+          "incumbent_passed": true,
+          "candidate_passed": true,
+          "incumbent_latency_ms": 12897.116245003417,
+          "candidate_latency_ms": 14942.751908907667
+        }
+      ],
+      "artifact": {
+        "sha256": "6dc7af4814c7c45fd0329800923e44e16057fb55241c30d1235486be31133944",
+        "size": 77163
+      },
+      "run_id": "81fe19d243de49de9f8d9d63b64da5b0",
+      "completion": "completed"
+    }
+  ]
+}

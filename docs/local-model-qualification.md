@@ -13,6 +13,9 @@ single-response limit and a core-journal context experiment. The original report
 below binds the driver/core at PR #14's `20c36ad`; it remains historical evidence.
 The later [bounded correction slice](local-tool-recovery.md) extends the driver
 with explicit correction attempts and the combined normal-memory TUI journey.
+[Response-profile experiments](response-profiles.md) add explicit output/sampling
+settings and a separately provisioned, pinned 8B comparison fixture. The original
+4B remains the driver's default, and earlier reports remain historical evidence.
 
 **September 6 result: this profile fails the complete smoke gate.** The
 [final three-run report](handoffs/2026-09-06-core-agency/local-qualification.json)

@@ -292,6 +292,15 @@ class Dispatcher:
     ) -> InferenceResult:
         request = InferenceRequest.model_validate(request.model_dump())
         policy = self.scope.context_policy
+        if policy is not None and policy.response is not None and request.purpose in ("conversation", "agent-task"):
+            settings = {}
+            for name in ("max_output_tokens", "max_output_bytes"):
+                value = getattr(policy.response, name)
+                if value is not None:
+                    settings[name] = min(getattr(request, name), value)
+            if policy.response.temperature is not None:
+                settings["temperature"] = policy.response.temperature
+            request = request.model_copy(update=settings)
         if policy is not None and policy.parallel_tool_calls is not None:
             # A narrower caller request remains narrow; descendants cannot
             # widen the root's single-call profile with an explicit True.
@@ -332,6 +341,8 @@ class Dispatcher:
                 raise ModelDispatchBlocked("rewrite changed action type — refused")
             effective_model = effective.model
             execution_kind = kind_for(effective_model)
+            if execution_kind == "agent" and (request.temperature is not None or request.response_schema is not None):
+                raise ProviderError("sampling and structured response settings require an inference model")
             if execution_kind == "agent" and request.parallel_tool_calls is False:
                 raise ProviderError(
                     "one tool call per response requires an inference model; "
