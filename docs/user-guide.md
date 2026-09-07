@@ -60,6 +60,14 @@ tool calls, and answer permission prompts inline. Key bindings:
   before it's attached; use offset/limit on `read_file` yourself (or ask
   the model to) for more.
 - `/help` — list slash commands, including any your plugins add.
+- `/task` — inspect the selected objective and its unresolved requirements.
+  `/task new OBJECTIVE` selects a durable task; `/task require TEXT` adds a
+  requirement for user review. Submit ordinary prompts to work on it. Use
+  `/task check` for configured evidence checks, `/task confirm ID NOTE` to
+  record your review, and `/task accept NOTE` to accept the checked attempt.
+  Further work invalidates the earlier checks and acceptance. `/task list`,
+  `/task use ID` and `/task off` switch task context without erasing records.
+  See [task evidence](task-evidence.md) for exact checks and headless inspection.
 - `/thoughts [collapse|full|off]` — control how a reasoning model's thinking
   is shown while it streams. `collapse` (the default) streams the live
   thought, then replaces it with a `(thought for Ns · N chars)` summary once

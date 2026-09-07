@@ -61,6 +61,9 @@ class Session:
         self._seq = start_seq
         self._closed = False
         self._redactors: list = list(redactors or [])
+        # Optional derived task view, seeded from replay on first access. Keep
+        # ordinary status/preparation off the log-reading path after that point.
+        self._task_state = None
 
     def start(self) -> Envelope:
         if self._seq != 0:
@@ -81,6 +84,8 @@ class Session:
         self._seq += 1
         envelope = Envelope(session_id=self.id, seq=self._seq, ts=time.time(), event=event)
         self._writer.append(envelope)  # source of truth first
+        if self._task_state is not None:
+            self._task_state.apply(envelope)
         self.bus.publish(envelope)  # observers second; never blocking
         return envelope
 

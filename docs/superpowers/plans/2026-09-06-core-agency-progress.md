@@ -1,7 +1,7 @@
 # Core agency implementation record
 
-Current implementation branch: `fix/inference-client-lifecycle`, based on merged `main`
-at `a7c24e3`. Previous branches: `feat/local-response-profiles`, `feat/local-tool-recovery`, `feat/local-tool-planning`, `feat/local-qualification`, `feat/semantic-evaluation`, `feat/local-context`, `feat/local-readiness`, `feat/agent-runtimes`,
+Current implementation branch: `feat/task-completion-evidence`, based on merged `main`
+at `02420aa`. Previous branches: `fix/inference-client-lifecycle`, `feat/local-response-profiles`, `feat/local-tool-recovery`, `feat/local-tool-planning`, `feat/local-qualification`, `feat/semantic-evaluation`, `feat/local-context`, `feat/local-readiness`, `feat/agent-runtimes`,
 and `feat/core-agency`.
 
 Committed checkpoints: `0351b75` (roadmap, lifecycle, and storage/result integrity),
@@ -35,6 +35,9 @@ Python 3.12/3.13 CI and automated review passed (September 6 local time).
 `93d006e` added response profiles and the expanded failed offline experiment in
 [PR #17](https://github.com/c-daly/harness/pull/17), merged at `a7c24e3` after
 Python 3.12/3.13 CI and automated review passed.
+`de2350e` fixed explicit-endpoint HTTP ownership and retained larger model
+candidates in [PR #18](https://github.com/c-daly/harness/pull/18), merged at
+`02420aa` after Python 3.12/3.13 CI and automated review passed.
 
 **Resumed after machine restart.** All 26 files in the
 [restart handoff](../../../HANDOFF.md) matched their saved hashes before new
@@ -49,8 +52,8 @@ qualification. Milestone completion requires its roadmap gates, not just code.
 | Milestone | State | Evidence / remaining work |
 |---|---|---|
 | M0 baseline and feasibility | In progress | A provisioned Qwen 4B CUDA profile supports fast offline inference and owned startup. Bounded correction improves normal-memory tasks but repeated artifacts still fail, so fallback quality remains unqualified. An additional pinned 8B feasibility probe also failed the complete journey. Earlier 30B/35B probes remain too slow. |
-| M1 correctness and interaction | In progress | Storage, delegation, controller/UI, MCP capability and explicit-endpoint HTTP cleanup changes are implemented. Broader enforcement/redaction, provider lifecycles and fault qualification remain. |
-| M2 inference / agent contracts | In progress | Bounded inference, native tasks, Codex task binding, explicit execution kinds, nullable usage, and core improvement records implemented. Remaining adapters and live capability qualification remain. |
+| M1 correctness and interaction | In progress | Storage, delegation, controller/UI, MCP capability and explicit-endpoint HTTP cleanup changes are implemented. Durable task obligations and explicit review are visible through the TUI and headless inspection. Broader enforcement/redaction, provider lifecycles and fault qualification remain. |
+| M2 inference / agent contracts | In progress | Bounded inference, native tasks, Codex task binding, explicit execution kinds, nullable usage, core improvement records and recorded task-evidence checks implemented. Remaining adapters, richer artifact predicates and live capability qualification remain. |
 | M3 local core assistant | In progress | Real 4B offline file work, normal-memory retrieval, and combined memory/TUI journeys now measured with CPU/RAM caps. Bounded tool correction helps but repeated artifact and resume-answer checks still fail; the response-profile candidate regressed from 14/18 to 9/18. Human use, crash recovery, and full product qualification remain. |
 | M4 bounded semantic agency | In progress | Shadow message interpretation, paired prompt evaluation, and real context-policy/correction experiments use core improvement records. Repeated correction and response-profile evaluations refused adoption; the larger response plan now includes real TUI journeys. Context/progress functions, broader held-out qualification, scheduling, fallback, candidate generation, activation, and rollback remain. |
 | M5 heterogeneous work / plugins | Pending | Supervision, plugin reconciliation, portable continuation, isolated improvement patches and rollback. |
@@ -735,6 +738,56 @@ controls must stay independent of inference completion.
   visible unresolved obligations, followed by a coherent resident workflow.
   Model self-assessment remains advisory; the previously failed response profile
   and local fallback remain unqualified. Memory and agent-swarm stay plugins.
+
+## Durable task requirements and recorded evidence (September 7)
+
+- `feat/task-completion-evidence` starts from merged PR #18 at `02420aa`.
+  [Task evidence](../../task-evidence.md) adds explicit objectives, immutable
+  requirements, stable task IDs across attempts, selected-task persistence,
+  recorded checks, user confirmations and user acceptance. Six additive event
+  types fold into task state without altering historical agent-result meaning.
+- Exact output/tool-result checks cite source sequences, effective arguments,
+  observed digests and blob references. They require predeclared expectations,
+  current-attempt scope and unambiguous execution boundaries. Rewrites, failed
+  retries, missing/corrupt/oversized blobs, duplicate call/results and stale
+  evidence cannot produce acceptance. These are recorded-byte checks, not live
+  file-content assertions or claims about the adequacy of tests.
+- A model answer, its `todo` state and legacy outcome scores cannot resolve a
+  requirement. Manual criteria require explicit confirmation; acceptance
+  requires a completed settled attempt and all requirements resolved. New work
+  or an added requirement invalidates prior checks, confirmations and acceptance.
+  Compaction and resume preserve the task; repair retains aborted obligations.
+- `/task` exposes the workflow with a compact unresolved-work indicator.
+  Switching/requirement changes cannot retarget active or queued prompts.
+  Read-only `harness tasks SESSION` and headless resumed prompts use the same
+  core service. The task command remains available if a plugin uses that name.
+  Core improvement evidence can cite these source events without absorbing
+  either memory or agent-swarm.
+- A synthetic 5,004-event development probe initially measured 49.00–65.40 ms
+  per prompt preparation because it reread history. The live projection now
+  updates only after successful log writes; warm status/preparation uses independent
+  snapshots with no full-log reread. The [final synthetic probe](../../handoffs/2026-09-07-task-evidence/probe.json)
+  measured 0.030–0.159 ms after 5,000 extra events, retained source hashes and
+  exported the actual terminal compositor at unresolved, accepted and changed
+  checkpoints. This is narrow fixture evidence, not M6 latency or human dogfood.
+- Regression development observed 20 missing-service failures, four missing-UI
+  failures, a repeated-history-read failure and four ambiguous-evidence failures
+  before their implementations. Final focused coverage passed **57 tests**
+  (including session/fold checks). An earlier broader run hit four localhost
+  sandbox binding failures plus four teardown errors; with localhost access the
+  broader set passed **68 tests** before the final integrity additions.
+- The earlier integration passed **1275 tests, 7 skipped, 6 warnings in 322.44s**
+  before the final projection/provenance additions. Final integration passed
+  **1283 tests, 7 skipped, 6 warnings in 313.17s**, including **46 new cases**.
+  Locked sync, Ruff and whitespace checks passed. The sdist/wheel build and fresh
+  offline wheel smoke passed, importing **60 modules**; packaging dependencies
+  were independently resolved from cache, while tests use the locked environment.
+- Next: combine the selected task, normal memory, local readiness, interruption
+  and recovery into one useful resident workflow. Task amendments/waivers,
+  richer file/check evidence and language-based requirement proposals remain
+  subsequent work. The larger local-model options stay on the candidate list;
+  no model defaults or adoption policy were changed. M0–M4 remain in progress,
+  M5–M6 pending; earlier failed local-model quality gates are still failed.
 
 ## Validation policy
 

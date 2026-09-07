@@ -27,10 +27,12 @@ from textual.worker import WorkerCancelled, WorkerFailed
 from textual_image.widget.sixel import Image as SixelImage, SixelOptions
 
 from harness.blobs import INLINE_THRESHOLD
-from harness.agent import AgentResult, AgentTask
+from harness.agent import AgentResult
 from harness.cli import Kernel, build_kernel
 from harness.frontmatter import CommandDef
 from harness.events import (
+    AgentRunStarted,
+    AgentRunFinished,
     CompactionApplied,
     CustomEvent,
     ModelCallStarted,
@@ -597,6 +599,7 @@ class HarnessApp(App[None]):
     #stats { height: 1; }
     #statusbar { height: 1; }
     #queue { height: auto; max-height: 4; }
+    #task-status { height: auto; max-height: 3; }
     """
     BINDINGS = [
         Binding("escape", "interrupt", "Interrupt", priority=True),
@@ -703,6 +706,7 @@ class HarnessApp(App[None]):
             yield Static(id="live")
         with Vertical(id="input-area"):
             yield Static(id="queue")
+            yield Static(id="task-status")
             yield Static(id="stats")
             yield Static(id="statusbar")
             yield HistoryInput(
@@ -836,6 +840,7 @@ class HarnessApp(App[None]):
             self._bus_pump(_bus_queue), group="driver", exit_on_error=False
         )
         self._stats_timer = self.set_interval(1.0, self.refresh_stats)
+        self._refresh_tasks()
 
     def _start_plugin_subscribers(self, kernel: Kernel) -> None:
         """Emit each plugin's plugin_loaded event and start one pump worker
@@ -1092,6 +1097,7 @@ class HarnessApp(App[None]):
             self._panel.reset()
         self._start_panel_subscriber(kernel)
         self._refresh_statusbar()
+        self._refresh_tasks()
 
     async def _bus_pump(self, queue) -> None:
         while True:
@@ -1203,6 +1209,8 @@ class HarnessApp(App[None]):
         status_widget.update(_plain(" | ".join(segments)))
 
     def _render_event(self, event) -> None:
+        if isinstance(event, (AgentRunStarted, AgentRunFinished)):
+            self._refresh_tasks()
         if self.controller.active is not None:
             if isinstance(event, PermissionRequested):
                 self.controller.phase = "waiting for permission"
@@ -1268,7 +1276,7 @@ class HarnessApp(App[None]):
             return
         command = parse_slash_command(text)
         if command is not None:
-            if command.name in self._plugin_commands:
+            if command.name in self._plugin_commands and command.name != "task":
                 expanded = self._plugin_commands[command.name].body.replace("$ARGUMENTS", command.arg)
                 if not self._enqueue_prompt(expanded, expand_mentions=False):
                     return
@@ -1419,8 +1427,8 @@ class HarnessApp(App[None]):
     async def _run_turn(self, prompt: str) -> AgentResult:
         self._clear_live()
         try:
-            result = await self.kernel.loop.run_task(AgentTask(
-                prompt=prompt, context=tuple(self.kernel.loop.turn_context),
+            result = await self.kernel.loop.run_task(self.kernel.tasks.prepare(
+                prompt, context=tuple(self.kernel.loop.turn_context),
             ), on_progress=self._on_agent_progress)
             reply = result.read_text(self.kernel.session.blobs)
         except asyncio.CancelledError:
@@ -1430,6 +1438,8 @@ class HarnessApp(App[None]):
             self.kernel.loop.repair_turn()  # orphaned user msg is benign;
             self.say("! ", f"turn failed: {exc}")  # unpaired tool calls are not
             raise
+        finally:
+            self._refresh_tasks()
         # full mode: the thought stays visible in the transcript, dimmed, above
         # the answer -- read _thought_buffer BEFORE _clear_live() wipes it.
         if self._thought_mode == "full" and self._thought_buffer:
@@ -1588,7 +1598,7 @@ class HarnessApp(App[None]):
             self.say(
                 "",
                 "/help  /model [alias]  /thoughts [collapse|full|off]  /markdown [on|off]  "
-                "/clear  /compact  /resume  /panel  /tools  /context  /resources  /semantics  /improvements  /quit  — @path mentions a file "
+                "/clear  /compact  /resume  /panel  /tools  /task  /context  /resources  /semantics  /improvements  /quit  — @path mentions a file "
                 "(Tab completes), read for the model only; F2 also toggles the activity panel",
             )
             self.say("", "/queue: inspect, edit, remove, pause, resume, clear; queued prompts are memory only")
@@ -1602,6 +1612,8 @@ class HarnessApp(App[None]):
                 self.say("  ", str(spec.name))
         elif command.name == "queue":
             self._queue_command(command.arg)
+        elif command.name == "task":
+            self._task_command(command.arg)
         elif command.name == "context":
             from harness.context import render_context_policy
             self.say("", render_context_policy(self.kernel.context_policy, self.kernel.loop.registry.specs()))
@@ -1673,6 +1685,110 @@ class HarnessApp(App[None]):
             self._enqueue_prompt(prompt, expand_mentions=False)
         else:
             self.say("! ", f"unknown command: /{command.name}")
+
+    def _refresh_tasks(self) -> None:
+        try:
+            widget = self.query_one("#task-status", Static)
+        except NoMatches:
+            return
+        try:
+            state = self.kernel.tasks.state()
+            task = state.items.get(state.selected_id)
+            if task is not None:
+                # Put obligations before the bounded title so small terminals
+                # retain the useful status. /task shows every requirement.
+                status = ("accepted by user" if task.accepted else
+                          f"{len(task.unresolved)}/{len(task.requirements)} unresolved"
+                          if task.requirements else "no requirements defined")
+                title = task.definition.title
+                if len(title) > 60:
+                    title = title[:60] + "…"
+                text = f"Task {task.definition.id[:8]}: {status} | execution: {task.execution}\n{title} | /task"
+            else:
+                remaining = sum(not t.accepted for t in state.items.values())
+                text = f"{remaining} task(s) awaiting acceptance | /task list" if state.items else ""
+            widget.display = bool(text)
+            widget.update(_plain(text))
+        except (OSError, ValueError):
+            widget.display = True
+            widget.update("Task state unavailable; inspect the session before continuing.")
+
+    def _task_command(self, arg: str) -> None:
+        from pydantic import ValidationError
+        from harness.tasks import render_task, task_summary
+        action, _, rest = arg.strip().partition(" ")
+        usage = ("/task: inspect selected task; /task list; /task new OBJECTIVE; /task use ID; "
+                 "/task off; /task require TEXT; /task require-json JSON; /task check; "
+                 "/task confirm REQUIREMENT_ID NOTE; /task accept NOTE")
+        try:
+            if action == "help":
+                self.say("", usage)
+                return
+            if action not in ("", "list") and self._refuse_if_busy():
+                return
+            service = self.kernel.tasks
+            if action == "list":
+                tasks = service.state().items.values()
+                for task in tasks:
+                    self.say("", task_summary(task))
+                if not tasks:
+                    self.say("", "No tracked tasks. /task new OBJECTIVE starts one.")
+                return
+            if action == "new":
+                service.create(rest)
+                self.say("", "Task selected. Add requirements with /task require TEXT, then submit work normally.")
+                return
+            elif action == "use":
+                service.select(rest.strip())
+                self.say("", "Selected " + task_summary(service.selected()))
+                return
+            elif action == "off":
+                service.select(None)
+                self.say("", "Task detached. Its requirements remain saved; /task list to return.")
+                return
+            elif action == "require":
+                task = service.selected()
+                if task is None:
+                    raise ValueError("create or select a task first")
+                index = 1
+                while f"r{index}" in task.requirements:
+                    index += 1
+                service.add_requirement({"id": f"r{index}", "description": rest})
+                self.say("", f"Requirement r{index} added: {rest}")
+                return
+            elif action == "require-json":
+                if len(rest.encode()) > 16384:
+                    raise ValueError("requirement JSON exceeds 16384 bytes")
+                requirement = json.loads(rest)
+                service.add_requirement(requirement)
+                self.say("", f"Requirement {requirement['id']} added: {requirement['description']}")
+                return
+            elif action == "check":
+                service.check()
+            elif action == "confirm":
+                identity, _, note = rest.partition(" ")
+                service.confirm(identity, note)
+                self.say("", f"{identity} confirmed by user: {note}")
+                return
+            elif action == "accept":
+                service.accept(rest)
+                self.say("", f"Task accepted by user: {rest}")
+                return
+            elif action:
+                self.say("", usage)
+                return
+            task = service.selected()
+            if task is None:
+                self.say("", "No selected task. " + usage)
+            else:
+                for line in render_task(task).splitlines():
+                    self.say("", line)
+        except ValidationError:
+            self.say("! ", "Invalid task requirement; check its ID, description, check kind and SHA-256.")
+        except (ValueError, OSError) as exc:
+            self.say("! ", f"Task command failed: {exc}")
+        finally:
+            self._refresh_tasks()
 
     async def _cancel_resource_check(self) -> None:
         worker = self._resource_worker
