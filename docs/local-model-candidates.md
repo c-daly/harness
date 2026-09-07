@@ -1,0 +1,31 @@
+# Local model candidates
+
+These are evaluation options, not supported defaults or qualified fallbacks.
+The user requested that larger models, Unsloth and Hugging Face be retained on
+the list while implementation continues with client cleanup and task evidence.
+
+| Candidate | Purpose | Current evidence |
+|---|---|---|
+| Qwen3-4B-Instruct-2507 Q4_K_M | Small local reference profile | Provisioned; repeated artifact and memory/TUI checks still fail. |
+| Qwen3-8B Q4_K_M | Larger local comparison | Provisioned; PR17's four-journey feasibility probe failed. |
+| [Qwen3-14B Q4_K_M](https://huggingface.co/Qwen/Qwen3-14B-GGUF) | Candidate for a larger model with most or all weights on the GPU | Not provisioned or tested here. Published weights are about 9 GB; runtime and context cache need additional memory. |
+| Existing Qwen3-Coder 30B and Qwen3.6 35B assets | Revisit hybrid CPU/GPU placement and quantization | Earlier configurations were too slow for synchronous resident decisions; alternative configurations remain unevaluated. |
+
+Tooling options to assess when returning to local capacity work:
+
+- [Unsloth dynamic GGUFs](https://unsloth.ai/blog/dynamic-v2): compare quantization
+  choices against the same task-quality and latency gates. Training optimizations
+  do not establish equivalent inference-memory savings. Fine-tuning remains a
+  separate future experiment, not a prerequisite for current core work.
+- [Hugging Face Hub](https://huggingface.co/docs/huggingface_hub/guides/download):
+  discover compatible artifacts, pin revisions/hashes and cache downloads for
+  offline use. A model source is distinct from its inference backend and agent
+  runtime. General Hub discovery/provisioning is still a backlog item.
+- [llama.cpp capacity controls](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md):
+  bounded context, cache precision, GPU placement and CPU expert offload. Verify
+  support in the selected runtime version and measure actual working memory.
+
+The 4B/8B fixtures and their CPU/RAM limits are experiment choices, not Harness
+architecture limits. Model-loading success is separate from useful task quality.
+Do not change user-managed servers, download new weights, enable fallback or
+replace the current model merely because an option appears on this list.

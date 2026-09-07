@@ -1,7 +1,7 @@
 # Core agency implementation record
 
-Current implementation branch: `feat/local-response-profiles`, based on merged `main`
-at `fb07139`. Previous branches: `feat/local-tool-recovery`, `feat/local-tool-planning`, `feat/local-qualification`, `feat/semantic-evaluation`, `feat/local-context`, `feat/local-readiness`, `feat/agent-runtimes`,
+Current implementation branch: `fix/inference-client-lifecycle`, based on merged `main`
+at `a7c24e3`. Previous branches: `feat/local-response-profiles`, `feat/local-tool-recovery`, `feat/local-tool-planning`, `feat/local-qualification`, `feat/semantic-evaluation`, `feat/local-context`, `feat/local-readiness`, `feat/agent-runtimes`,
 and `feat/core-agency`.
 
 Committed checkpoints: `0351b75` (roadmap, lifecycle, and storage/result integrity),
@@ -32,6 +32,9 @@ September 6 after both CI versions and automated review passed.
 `e3cbfde` added bounded correction and repeated offline evidence in
 [PR #16](https://github.com/c-daly/harness/pull/16), merged at `fb07139` after
 Python 3.12/3.13 CI and automated review passed (September 6 local time).
+`93d006e` added response profiles and the expanded failed offline experiment in
+[PR #17](https://github.com/c-daly/harness/pull/17), merged at `a7c24e3` after
+Python 3.12/3.13 CI and automated review passed.
 
 **Resumed after machine restart.** All 26 files in the
 [restart handoff](../../../HANDOFF.md) matched their saved hashes before new
@@ -46,7 +49,7 @@ qualification. Milestone completion requires its roadmap gates, not just code.
 | Milestone | State | Evidence / remaining work |
 |---|---|---|
 | M0 baseline and feasibility | In progress | A provisioned Qwen 4B CUDA profile supports fast offline inference and owned startup. Bounded correction improves normal-memory tasks but repeated artifacts still fail, so fallback quality remains unqualified. An additional pinned 8B feasibility probe also failed the complete journey. Earlier 30B/35B probes remain too slow. |
-| M1 correctness and interaction | In progress | 931 passed, 7 skipped after storage, delegation, controller/UI and MCP capability changes. Context budgets, broader enforcement/redaction and fault qualification remain. |
+| M1 correctness and interaction | In progress | Storage, delegation, controller/UI, MCP capability and explicit-endpoint HTTP cleanup changes are implemented. Broader enforcement/redaction, provider lifecycles and fault qualification remain. |
 | M2 inference / agent contracts | In progress | Bounded inference, native tasks, Codex task binding, explicit execution kinds, nullable usage, and core improvement records implemented. Remaining adapters and live capability qualification remain. |
 | M3 local core assistant | In progress | Real 4B offline file work, normal-memory retrieval, and combined memory/TUI journeys now measured with CPU/RAM caps. Bounded tool correction helps but repeated artifact and resume-answer checks still fail; the response-profile candidate regressed from 14/18 to 9/18. Human use, crash recovery, and full product qualification remain. |
 | M4 bounded semantic agency | In progress | Shadow message interpretation, paired prompt evaluation, and real context-policy/correction experiments use core improvement records. Repeated correction and response-profile evaluations refused adoption; the larger response plan now includes real TUI journeys. Context/progress functions, broader held-out qualification, scheduling, fallback, candidate generation, activation, and rollback remain. |
@@ -686,6 +689,52 @@ controls must stay independent of inference completion.
   it cannot certify completion. M3, automatic fallback and activation remain
   unqualified. No user model configuration, plugin internals or private memory
   were changed.
+
+## Request-owned inference clients and model candidates (September 6)
+
+- `fix/inference-client-lifecycle` starts from merged PR #17 at `a7c24e3`.
+  The user asked to retain larger models, Unsloth and Hugging Face as options
+  while continuing the existing priority. The [candidate list](../../local-model-candidates.md)
+  records Qwen3-14B, existing larger hybrid candidates, quantization and model
+  sourcing. No new weights, backend installation or default changes were made.
+- The real SDK reproduced unclosed HTTP clients after ordinary responses,
+  errors, output rejection and cancellation. Three legacy generator wrappers
+  also deferred inner cleanup. Initial regression result: **9 failed, 1 passed**.
+  The adapter now supplies a request-owned client for explicit `openai/` endpoints
+  and credentials, including local catalogs. It retains the SDK transport factory
+  and closes transport after stream cleanup, with AnyIO cancellation shielding.
+  Concurrent calls keep independent clients; caller-owned transports stay borrowed.
+- Legacy wrappers now propagate `aclose()` immediately. An additional regression
+  reproduced that direct `complete()` ignored its configured key environment
+  variable; that path now resolves credentials like `infer()`. The SDK is a direct
+  declared dependency, with existing locked versions unchanged. Other provider
+  types and ambient endpoint/credential routes retain their existing ownership;
+  this slice is not general provider qualification.
+- All **44 focused checks** passed, including 15 new cases covering actual
+  HTTPX/aiohttp state, concurrent requests, pre-header and streamed cancellation,
+  AnyIO cancellation, timeout, server error, output-size boundaries,
+  stream-close failure, direct credentials and legacy cleanup.
+- The [real offline lifecycle probe](../../inference-client-lifecycle.md) made
+  24 bounded requests, cancelled one stream, then completed another request.
+  The [final report](../../handoffs/2026-09-06-core-agency/local-client-lifecycle.json)
+  passed in **5.90s**, with **zero open observed clients/sessions after every
+  settled call**, 26 model streams, and no new SDK cache entries. Session state
+  settled and the owned model process stopped. Source hashes match the measured
+  implementation. This verifies lifecycle behavior, not model task quality.
+- The first probe reported failure because its total-cache check included four
+  clients created during SDK import. Their existence was reproduced before any
+  request. The corrected probe records baseline and new cache identities; the
+  [initial report](../../handoffs/2026-09-06-core-agency/local-client-lifecycle-initial.json)
+  remains preserved alongside the passing repeat. No task-quality gate changed.
+- Full integration passed **1237 tests, 7 skipped, 6 warnings in 309.08s** on
+  Python 3.13. Locked offline sync, Ruff, whitespace checks, sdist/wheel build and
+  a fresh offline wheel install importing all **58 modules** passed. The wheel
+  smoke checks packaging against independently resolved cached dependencies;
+  the real transport tests/probe use the locked SDK versions.
+- Next core work is explicit task requirements, execution/artifact checks and
+  visible unresolved obligations, followed by a coherent resident workflow.
+  Model self-assessment remains advisory; the previously failed response profile
+  and local fallback remain unqualified. Memory and agent-swarm stay plugins.
 
 ## Validation policy
 

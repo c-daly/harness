@@ -254,7 +254,24 @@ async def _acomplete(
                                 "schema": request.response_schema},
             }
     stream = None
+    owned_http = None
     try:
+        if (str(model).startswith("openai/") and api_base and api_key
+                and litellm.aclient_session is None):
+            from litellm.llms.openai.common_utils import BaseOpenAILLM
+            from openai import AsyncOpenAI
+
+            # Explicit endpoints (including local catalogs) need no ambient
+            # credential/endpoint resolution. Give each request its own client:
+            # LiteLLM's client cache otherwise grows with changing deadlines.
+            # Use the SDK's transport factory to preserve TLS/proxy settings.
+            # A caller-supplied global transport remains borrowed, never closed.
+            owned_http = BaseOpenAILLM._get_async_http_client()
+            kwargs["client"] = AsyncOpenAI(
+                api_key=api_key, base_url=api_base, http_client=owned_http,
+                timeout=request.timeout_seconds if request is not None else 120,
+                max_retries=0,
+            )
         stream = await litellm.acompletion(**kwargs)
         async for raw in stream:
             for chunk in _normalize_chunk(raw):
@@ -264,15 +281,24 @@ async def _acomplete(
     except Exception as exc:
         raise map_exception(exc) from exc
     finally:
-        close = getattr(stream, "aclose", None)
-        if close is not None:
-            await close()
+        from anyio import CancelScope
+
+        # AnyIO cancellation can otherwise interrupt every cleanup await. Keep
+        # transport closure inside the request, including stream-close failure.
+        with CancelScope(shield=True):
+            try:
+                close = getattr(stream, "aclose", None)
+                if close is not None:
+                    await close()
+            finally:
+                if owned_http is not None:
+                    await owned_http.aclose()
 
 
 @dataclass
 class LiteLLMProvider:
     api_base: str | None = None
-    api_key_env: str | None = None  # resolved by litellm from env; recorded for diagnostics
+    api_key_env: str | None = None  # resolved per call; never stored as a literal credential
 
     def infer(self, request: "InferenceRequest") -> AsyncIterator[Chunk]:
         return _acomplete(model=request.model, messages=request.messages, tools=request.tools,
@@ -287,10 +313,12 @@ class LiteLLMProvider:
         messages: Sequence[Message],
         tools: Sequence[ToolSpec] = (),
     ) -> AsyncIterator[Chunk]:
-        async for chunk in _acomplete(
-            model=model, messages=messages, tools=tools, api_base=self.api_base
-        ):
-            yield chunk
+        async with aclosing(_acomplete(
+            model=model, messages=messages, tools=tools, api_base=self.api_base,
+            api_key=os.environ.get(self.api_key_env) if self.api_key_env else None,
+        )) as source:
+            async for chunk in source:
+                yield chunk
 
 
 @dataclass
@@ -367,8 +395,9 @@ class CatalogProvider:
             resolved = self.catalog.resolve(str(model))
         except UnknownAliasError:
             # not a catalog alias: treat the string as a literal route on ambient env
-            async for chunk in _acomplete(model=model, messages=messages, tools=tools):
-                yield chunk
+            async with aclosing(_acomplete(model=model, messages=messages, tools=tools)) as source:
+                async for chunk in source:
+                    yield chunk
             return
         if resolved.backend == "claude-code":
             if self.claude_code is None:
@@ -411,11 +440,12 @@ class CatalogProvider:
             # against a local api_base; local servers ignore the value. Local
             # endpoints must not require an unrelated real credential.
             api_key = "local-no-key"
-        async for chunk in _acomplete(
+        async with aclosing(_acomplete(
             model=resolved.route,
             messages=messages,
             tools=tools,
             api_base=resolved.api_base,
             api_key=api_key,
-        ):
-            yield chunk
+        )) as source:
+            async for chunk in source:
+                yield chunk

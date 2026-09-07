@@ -1,39 +1,38 @@
 # Core agency implementation — restart handoff
 
-> **Continuation update, September 6:** [PR #16](https://github.com/c-daly/harness/pull/16)
-> merged into `main` at `fb07139` after Python 3.12/3.13 CI and review passed.
-> Implementation continues on `feat/local-response-profiles`, created from that merge.
-> Core response profiles now persist optional sampling, generation limits and
-> answer guidance. Defaults remain unchanged; semantic inference keeps its own
-> settings, and external agents refuse unsupported explicit sampling.
-> Read the [response contract](docs/response-profiles.md) and
-> [implementation record](docs/superpowers/plans/2026-09-06-core-agency-progress.md).
-> Three real four-journey pilots failed, including a separately pinned Qwen3 8B.
-> The final fixed 18-case paired evaluation passed **14/18 incumbent, 9/18 candidate**,
-> with six regressions and one improvement: core verdict **failed**, adoption
-> **refused**. Shorter answers did not preserve reliable artifact creation.
-> No candidate, default model, automatic adoption or fallback was activated.
-> Reports preserve hashes and metadata; private memory output was not copied.
-> Core audit session `b5324774b0e84388be1bf8ba9b79f70e` is under ignored
-> `.local-runtime/reports/response-audit`. Earlier evidence remains preserved.
-> The new 8B weights are `.local-runtime/Qwen3-8B-Q4_K_M.gguf`; the response
-> contract pins the exact revision/hash. The original 4B fixture remains default.
-> Model-process and MCP teardown checks passed, but the longer run emitted
-> unclosed aiohttp client-session warnings. This SDK transport lifecycle gap is
-> unresolved; do not equate existing cleanup checks with complete resource cleanup.
-> Next: reproduce and fix client ownership under concurrent/cancelled inference;
-> then check requested work against execution/artifact evidence and present unmet
-> requirements clearly. Keep semantic assessments advisory and retain exact
-> artifact, fresh-memory and final-viewport gates. More sampling changes alone
-> have not qualified M3. Candidate generation, scheduling, fallback, activation,
-> rollback and broader semantic functions remain outstanding.
-> Integration passed **1222 tests, 7 skipped, 6 warnings in 315.76s**. Locked dev
-> extra sync, Ruff, whitespace, packaging and the fresh wheel smoke (58 modules)
-> passed. All task-owned experiment containers exited.
+> **Continuation update, September 6:** [PR #17](https://github.com/c-daly/harness/pull/17)
+> merged at `a7c24e3` after Python 3.12/3.13 CI and automated review passed.
+> Implementation continues on `fix/inference-client-lifecycle`, based on that merge.
+> The user asked to keep larger models, Unsloth and Hugging Face on the
+> [candidate list](docs/local-model-candidates.md), then continue current work.
+> No new weights or model defaults were installed or activated.
+> The [HTTP-client fix](docs/inference-client-lifecycle.md) gives explicit
+> OpenAI-compatible endpoints a request-owned client and closes it after the
+> response stream, including cancellation. Concurrent and caller-owned clients
+> remain independent. Legacy wrappers now close their inner generators, and
+> direct `complete()` honors its configured credential environment variable.
+> Other SDK provider/ambient routes still need their own lifecycle qualification.
+> All **44 focused checks** passed. A real offline probe completed 24 requests,
+> cancelled a stream and completed another request, with **zero open observed
+> request clients/sessions at every checkpoint** and no new SDK cache entries.
+> Its report is saved at `docs/handoffs/2026-09-06-core-agency/local-client-lifecycle.json`.
+> The initial probe's failed total-cache check included four import-created SDK
+> clients; both that report and the corrected baseline-aware repeat are preserved.
+> Full integration passed **1237 tests, 7 skipped, 6 warnings in 309.08s**.
+> Locked sync, Ruff, whitespace, packaging and the fresh wheel smoke (58 modules)
+> passed.
+> Read the [implementation record](docs/superpowers/plans/2026-09-06-core-agency-progress.md)
+> for integration validation and scope. The prior local response candidate remains
+> rejected (**9/18 versus 14/18 incumbent**); no fallback was activated.
+> Next: explicit task requirements, checks against execution/artifact evidence,
+> and visible unresolved obligations. Semantic self-assessment remains advisory.
+> Then complete a coherent resident workflow before broader model tuning or
+> heterogeneous coordination. Candidate generation, scheduling, fallback,
+> activation, rollback and full M3 qualification remain outstanding.
 > M0–M4 remain in progress; M5–M6 remain pending. Memory and agent-swarm stay
-> independent plugins. The user authorized commits, PRs and continued implementation.
-> User `.claude/` and `.context/` remain preserved and ignored. The inventory
-> below is historical, not a restoration instruction.
+> plugins. The user authorized commits, PRs and continued implementation.
+> User `.claude/`, `.context/`, private memory and user-managed services are
+> preserved. The inventory below is historical, not a restoration instruction.
 
 ## Historical pre-reboot inventory
 

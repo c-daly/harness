@@ -1,0 +1,284 @@
+{
+  "schema_version": 1,
+  "kind": "local-client-lifecycle",
+  "isolation": {
+    "interfaces": [
+      "lo"
+    ],
+    "memory_max_bytes": 4294967296,
+    "swap_max_bytes": 0,
+    "cpu_max": [
+      "400000",
+      "100000"
+    ]
+  },
+  "image": "sha256:841b199aed2649a748875b043b32fed2e8c2d4d87e1d563556817fb7fa44b72b",
+  "weights_sha256": "3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597",
+  "source": {
+    "scripts/check_local_clients.py": "fcdb9e36db80acf4a9ded18340be7fd2fc6b6f08f4a8fe76f7a581d152a0f819",
+    "scripts/qualify_local.py": "dc30375c9455b5869811c56bb226f25db1f915850dcafb05d400f833cf53b92c",
+    "src/harness/__init__.py": "1cb99da2ab5f68f4005bd5a26681ed7a4e012de8384db1dcd8dc80d0c242c2a2",
+    "src/harness/agent.py": "d92af9a08b8df1d7f269c1eae1bbf40a5a2f607e30ca5f703cc9862dba0d7b97",
+    "src/harness/agent_runtime.py": "05a297d6ee4c6a935627e13c186848b687fb11e7f05ea0768d105a45ec6659c4",
+    "src/harness/blobs.py": "8b3ffa9d422f89961ebe83fcb78fcb27e10f1703c8ded75b2888321ce9900efc",
+    "src/harness/callctx.py": "70e7979654b262ccc715c0f2d34f4171968d5d1f8b282cab21bb916d7131e782",
+    "src/harness/catalog.py": "b23d0707550a32c70c1b3988e5a3e62bacf63b7ccc775aa5d3eaadef574741fa",
+    "src/harness/cc_import.py": "bd2c9bdb5acd194da6fd1bca1edc11643af94f94826cdc384e62091988d69b99",
+    "src/harness/cli.py": "047eaab0e34b058872073b3a0cd7093c1b71f7c4a3b0a37247ce49413059c196",
+    "src/harness/context.py": "b5aa2c017c678cdb5514fb74602404edbc380cf2cfb1028b3c64ae680369170b",
+    "src/harness/controller.py": "a47f1da827d1c95ea63f18d71d41a786f5d741ed966adb5d5dc5d33d8d1e8958",
+    "src/harness/dispatcher.py": "0be9a3688f294136831e1ee540135cc84559d98c4cb33de19f1698b238036111",
+    "src/harness/errors.py": "dae25a8ec0d5d1b8d31090692df4c374d11790dd650ca5fbe1d00a8f7152fdc8",
+    "src/harness/events.py": "1ce4a0b70a7b572b115a15ca6db2f1399fbfe62e43297db2d6b1fb740ba836a3",
+    "src/harness/execution.py": "bca517298697ab1d722f7e4e11ab468a834bef6910dbf63594013e9615a4fa0f",
+    "src/harness/fold.py": "46e889eb1622d5c37772859f16c58a6066887286ab0aa0229a0f4f7405b714ec",
+    "src/harness/frontmatter.py": "e797b1317937599259ec23c7bea7fee1417b83a7e75f8d3d1e423da9b34157a5",
+    "src/harness/hooks.py": "45d1bd793cdc79b58afea81ec50b36721ae3b8e2ea8d0397d06fa51d2a0b6aa7",
+    "src/harness/improvement.py": "25ab065a237c6c19f0c834db683ae3b12ad3a2fec4113410cec604cdce583744",
+    "src/harness/improvement_journal.py": "c0de6d310ec0f99810e44d9dce63f1342258e9ead9e8cd0cabe6c8072437e243",
+    "src/harness/inference.py": "a8be6895f56c503eb4cc18588e204cc53aaeefe5aa361b63012f0333f16a5cba",
+    "src/harness/interaction.py": "4a6c198a67567d39c8fa32f882de20b5d49207100ed474881b246735caa85c4d",
+    "src/harness/log.py": "dfca73b52f98ba6a07f43e87ac1c40c61ff3ab0555377add6eb71042ce7408c7",
+    "src/harness/loop.py": "0a97c2d44a4024fcca07b1452105ba159d72c41aadee0af33c07527116ccefa3",
+    "src/harness/math_markdown.py": "e2422337fb675a51124da68e406518496a8a3465fde330d34fcf2e1175b2f0f5",
+    "src/harness/mcp_config.py": "832432ed48f5b6f95215ec4e21d0e4199a72c58f788326ee3c8ff3de408fbc7b",
+    "src/harness/mcp_host.py": "a2b2266034fd2fd5740130295d2635ccb516bf8ace9aa923593f031e67fc6061",
+    "src/harness/mcp_import.py": "7c42a53f0ff5b5e6f7ddbad6f5a4eb3cbedca81403d2f8efc0363fba01950a1e",
+    "src/harness/mcp_serve.py": "34c0712d8286b8f6d6293625e786d8000ca5b83a80d39bef5933f0241662f6b2",
+    "src/harness/messages.py": "f43d61286b9880513d6cc68ca61e5af94ea746fdf1663e4dad1e972c6397de21",
+    "src/harness/mixture.py": "a11cea5ea07eb29dccc11e19109af8c7844b105b044b3dc2c70291b4756fbbe3",
+    "src/harness/native_tools.py": "a07215a3062ad2ae8db2bb4dc85c785628731c240c672c7699b985db5e1c75d4",
+    "src/harness/parity.py": "0e67f7b7d020677397c6f82e5406df335035ef84365d8304ae8213d098b514b2",
+    "src/harness/permissions.py": "1e2bd05ac58db657bdd5f5dfaeea1b0366d3bd0a7d4f21985281492cc929ec22",
+    "src/harness/persistence.py": "ede33d47e5a116e5ad5a05021caa89c0397c92ad21f64051119754cec0e3e5a9",
+    "src/harness/plugins.py": "72908a91dc95aee2ef0f491db9cb9c49671e4249f50d546afed9dfc989887557",
+    "src/harness/provider.py": "c4a82a66d23d9ea6f7668f19a021f5084c3b8e327645e38b6b2403daea6f9ba6",
+    "src/harness/provider_antigravity.py": "6f06e065de74aba6d23ab9a1bd1990e9a9bfc8a9afea64222d06f0ec7221ecae",
+    "src/harness/provider_claude_code.py": "22aa513571a5ad5e1af7b14e104a4e16397868c5e56a83eac4af31832a69f302",
+    "src/harness/provider_codex.py": "1e5fe88cc8fb31ef18967028d045972cf4a870c1bd5d3142e40cad0a009dc557",
+    "src/harness/provider_litellm.py": "9d3fe3424b8877df6fd4d5f00a56642ef428043b298dcbd8c45a31951fbca567",
+    "src/harness/redaction.py": "f0c5bd0d095d1423a3e5b01c184074c518c00e021304e807c0b3900b81d530aa",
+    "src/harness/resources.py": "bb4c7c414493f48bf50270d6fd1a96131f67c52e466394dd064e3c858b1f2b8f",
+    "src/harness/resume.py": "93760d15b5fe1bd7e5219c6635dbac36a07635b4a6078f6456eab4e6fd1239c0",
+    "src/harness/routing.py": "2c9d7d9e79360c2d339ba7192a47283ddf5b634cb1bd70115bad43d8718e3e2e",
+    "src/harness/semantic_cli.py": "e341067defa55495152ee52cbb3f4e8ec1fa87af4741284fd74b42aad822bac8",
+    "src/harness/semantic_evaluation.py": "31968168b78108f849c1e82c4e3d3837ef987c47aa0bfbe4cfa2683c07f86bab",
+    "src/harness/semantics.py": "e61bb266e7f16651838d83a9588ce2a84b4954c7db20247f5f953f6015810440",
+    "src/harness/session.py": "7f9da4e58cedd3db9a31119c9ee0d9837a6fef49b45363bc314e35a3380db380",
+    "src/harness/sessions.py": "bbdfc914a5ca7fe33ff6a9e30410a562404d4e9c1de184f773ba2c5c32fe40f8",
+    "src/harness/skills.py": "1e73e256391ed277e34431217f6c7c1c97f5cfb54fdc84b2f2a0f2f0085fca41",
+    "src/harness/subagent.py": "5fcdde351039b678ff11547d3e81d465754d4e526979c0d2e10131e4bf5e80be",
+    "src/harness/telemetry.py": "27a6d937bafc85f749277932577b5d0f81e6d74c3daef7edc33ad2d3f6676639",
+    "src/harness/todo.py": "667002b8fc7ece3b33c0a046584b52f580164b68c808368c0f998461d8c2726a",
+    "src/harness/tools.py": "1e62c2f914ab5ea714b276de08a02f865fceb8cced6461a6db3128bdbaed3f84",
+    "src/harness/tui.py": "bfc7ffe7e4925e378160d2d975e9c22f177be594127854314dd33f4db640fedc",
+    "src/harness/tui_panel.py": "967afd8462a2a25470f5685a8865886fb381ac48f3d8852dd5d943a743d862f9",
+    "src/harness/tui_support.py": "2a3ea77081365ce9b73431660bd60115d4d4af4f33165eadf074437523100e04",
+    "src/harness/types.py": "b2681a5fa2529153497b19e7477084969ea06c3a7897a61f1b580f5560e9ff56",
+    "src/harness/workspace.py": "e53219ad294ae38e09e5aa603eb69eea0f74c1df41c2fcea62e75310bbfe5357"
+  },
+  "dependencies": {
+    "litellm": "1.88.1",
+    "openai": "2.41.1",
+    "httpx": "0.28.1",
+    "aiohttp": "3.14.1"
+  },
+  "model_quality_qualified": false,
+  "observations": [
+    {
+      "name": "request-0",
+      "http_clients_created": 164,
+      "http_clients_open": 0,
+      "aiohttp_sessions_created": 1,
+      "aiohttp_sessions_open": 0
+    },
+    {
+      "name": "request-1",
+      "http_clients_created": 165,
+      "http_clients_open": 0,
+      "aiohttp_sessions_created": 2,
+      "aiohttp_sessions_open": 0
+    },
+    {
+      "name": "request-2",
+      "http_clients_created": 166,
+      "http_clients_open": 0,
+      "aiohttp_sessions_created": 3,
+      "aiohttp_sessions_open": 0
+    },
+    {
+      "name": "request-3",
+      "http_clients_created": 167,
+      "http_clients_open": 0,
+      "aiohttp_sessions_created": 4,
+      "aiohttp_sessions_open": 0
+    },
+    {
+      "name": "request-4",
+      "http_clients_created": 168,
+      "http_clients_open": 0,
+      "aiohttp_sessions_created": 5,
+      "aiohttp_sessions_open": 0
+    },
+    {
+      "name": "request-5",
+      "http_clients_created": 169,
+      "http_clients_open": 0,
+      "aiohttp_sessions_created": 6,
+      "aiohttp_sessions_open": 0
+    },
+    {
+      "name": "request-6",
+      "http_clients_created": 170,
+      "http_clients_open": 0,
+      "aiohttp_sessions_created": 7,
+      "aiohttp_sessions_open": 0
+    },
+    {
+      "name": "request-7",
+      "http_clients_created": 171,
+      "http_clients_open": 0,
+      "aiohttp_sessions_created": 8,
+      "aiohttp_sessions_open": 0
+    },
+    {
+      "name": "request-8",
+      "http_clients_created": 172,
+      "http_clients_open": 0,
+      "aiohttp_sessions_created": 9,
+      "aiohttp_sessions_open": 0
+    },
+    {
+      "name": "request-9",
+      "http_clients_created": 173,
+      "http_clients_open": 0,
+      "aiohttp_sessions_created": 10,
+      "aiohttp_sessions_open": 0
+    },
+    {
+      "name": "request-10",
+      "http_clients_created": 174,
+      "http_clients_open": 0,
+      "aiohttp_sessions_created": 11,
+      "aiohttp_sessions_open": 0
+    },
+    {
+      "name": "request-11",
+      "http_clients_created": 175,
+      "http_clients_open": 0,
+      "aiohttp_sessions_created": 12,
+      "aiohttp_sessions_open": 0
+    },
+    {
+      "name": "request-12",
+      "http_clients_created": 176,
+      "http_clients_open": 0,
+      "aiohttp_sessions_created": 13,
+      "aiohttp_sessions_open": 0
+    },
+    {
+      "name": "request-13",
+      "http_clients_created": 177,
+      "http_clients_open": 0,
+      "aiohttp_sessions_created": 14,
+      "aiohttp_sessions_open": 0
+    },
+    {
+      "name": "request-14",
+      "http_clients_created": 178,
+      "http_clients_open": 0,
+      "aiohttp_sessions_created": 15,
+      "aiohttp_sessions_open": 0
+    },
+    {
+      "name": "request-15",
+      "http_clients_created": 179,
+      "http_clients_open": 0,
+      "aiohttp_sessions_created": 16,
+      "aiohttp_sessions_open": 0
+    },
+    {
+      "name": "request-16",
+      "http_clients_created": 180,
+      "http_clients_open": 0,
+      "aiohttp_sessions_created": 17,
+      "aiohttp_sessions_open": 0
+    },
+    {
+      "name": "request-17",
+      "http_clients_created": 181,
+      "http_clients_open": 0,
+      "aiohttp_sessions_created": 18,
+      "aiohttp_sessions_open": 0
+    },
+    {
+      "name": "request-18",
+      "http_clients_created": 182,
+      "http_clients_open": 0,
+      "aiohttp_sessions_created": 19,
+      "aiohttp_sessions_open": 0
+    },
+    {
+      "name": "request-19",
+      "http_clients_created": 183,
+      "http_clients_open": 0,
+      "aiohttp_sessions_created": 20,
+      "aiohttp_sessions_open": 0
+    },
+    {
+      "name": "request-20",
+      "http_clients_created": 184,
+      "http_clients_open": 0,
+      "aiohttp_sessions_created": 21,
+      "aiohttp_sessions_open": 0
+    },
+    {
+      "name": "request-21",
+      "http_clients_created": 185,
+      "http_clients_open": 0,
+      "aiohttp_sessions_created": 22,
+      "aiohttp_sessions_open": 0
+    },
+    {
+      "name": "request-22",
+      "http_clients_created": 186,
+      "http_clients_open": 0,
+      "aiohttp_sessions_created": 23,
+      "aiohttp_sessions_open": 0
+    },
+    {
+      "name": "request-23",
+      "http_clients_created": 187,
+      "http_clients_open": 0,
+      "aiohttp_sessions_created": 24,
+      "aiohttp_sessions_open": 0
+    },
+    {
+      "name": "cancelled-stream",
+      "http_clients_created": 188,
+      "http_clients_open": 0,
+      "aiohttp_sessions_created": 25,
+      "aiohttp_sessions_open": 0
+    },
+    {
+      "name": "after-cancellation",
+      "http_clients_created": 190,
+      "http_clients_open": 0,
+      "aiohttp_sessions_created": 26,
+      "aiohttp_sessions_open": 0
+    },
+    {
+      "name": "kernel-closed",
+      "http_clients_created": 190,
+      "http_clients_open": 0,
+      "aiohttp_sessions_created": 26,
+      "aiohttp_sessions_open": 0
+    }
+  ],
+  "stream_cancelled": true,
+  "session_settled": true,
+  "owned_runtime_stopped": true,
+  "elapsed_seconds": 22.862397907767445,
+  "cached_sdk_clients": 4,
+  "passed": false
+}

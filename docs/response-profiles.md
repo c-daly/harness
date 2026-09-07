@@ -102,6 +102,8 @@ MCP-plugin teardown, not complete HTTP transport cleanup. Inspection of the
 installed LiteLLM 1.88.1 shows cached clients whose keys include request timeouts;
 Harness supplies a varying remaining deadline. That explains a potential source
 of client growth, but a dedicated lifecycle reproduction and fix remain pending.
+A subsequent [client-ownership fix](inference-client-lifecycle.md) addresses
+explicit OpenAI-compatible endpoints and adds a real-model lifecycle probe.
 Closing the global SDK cache during concurrent calls would be unsafe. The report
 retains the original checks and source hashes; these warnings are an additional
 qualification gap, not a reason to reinterpret the failed quality result.
