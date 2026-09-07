@@ -6,6 +6,12 @@ alongside the existing message classifier. Memory retrieval and agent-swarm
 remain plugin responsibilities. CLI commands and `/semantics progress` expose
 explicit observations; normal workflow behavior stays deterministic.
 
+**PR22 review correction:** completed execution now rejects `work` suggestions
+when recorded obligations require checking or review. The prompt states the
+same restriction. The live reports below describe commit `d1857d1`, before this
+correction; their source/prompt hashes and failed gates are preserved. This
+validator fix does not establish new model-quality evidence.
+
 ## Measured result
 
 The fixed **public** regression comparison ran three repetitions per case on the

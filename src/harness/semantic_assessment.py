@@ -119,7 +119,8 @@ PROGRESS_PROMPT = AssessmentPrompt(function="progress_assessment", instructions=
     "not mean requirements passed. While running/open_runs use wait and empty focus_ids. After "
     "failed/cancelled/aborted/incomplete execution use reconcile and empty focus_ids: inspect effects before "
     "any retry. Otherwise: repair focuses only failed checks; check focuses only unverified non-review "
-    "checks after completed execution; work focuses only unresolved requirements; review focuses only "
+    "checks after completed execution; work focuses only unresolved requirements before execution starts; "
+    "review focuses only "
     "unverified review requirements, or empty focus when all requirements passed. Without requirements "
     "use uncertain. If unsure use uncertain with empty focus_ids. Never accept tasks or take actions."
 ))
@@ -165,7 +166,8 @@ def validate_progress(data: ProgressInput, result: ProgressAssessment):
             bool(focus) if remaining else not focus) and all(
                 r.check == "review" and r.status == "unverified" for r in remaining.values())
     elif action == "work":
-        allowed = bool(focus) and not any(r.status == "failed" for r in remaining.values())
+        allowed = (data.execution != "completed" and bool(focus)
+                   and not any(r.status == "failed" for r in remaining.values()))
     else:
         allowed = False
     if not allowed:

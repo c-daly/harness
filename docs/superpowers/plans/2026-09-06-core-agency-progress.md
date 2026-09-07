@@ -1016,7 +1016,7 @@ while the new semantic functions remain unqualified for automatic decisions.
 offline sync, Ruff, whitespace checks, sdist/wheel build and a fresh-wheel smoke
 importing 63 modules passed. The seven skips remain the unavailable Anthropic/
 Ollama fixtures and opt-in live Antigravity case. Both the semantic comparison
-and M3 regression report hashes match the proposed core/driver source.
+and M3 regression report hashes match the core/driver source at `d1857d1`.
 
 **Recommendation and next scope:** keep factual progress and controls in code.
 Test narrower semantic prioritization against that baseline before promotion.
@@ -1024,3 +1024,20 @@ Continue M4 with resource scheduling and recorded task-preserving fallback,
 including uncertain-side-effect reconciliation; then complete the supervised
 evidence/candidate/paired-evaluation/adoption/rollback cycle. Assessment candidate
 evaluation, fresh held-out gates and broader fault journeys remain outstanding.
+
+## PR22 review — completed execution cannot suggest more work
+
+The reviewer identified that a completed execution with unchecked output or
+pending user review could incorrectly validate a `work` suggestion. The validator
+now rejects that action, and the prompt limits `work` to execution that has not
+started. Checking, repair, review and uncertainty retain their evidence rules.
+
+Two service-level regressions reproduced the defect before the change; both
+now record abstentions with the obligations intact, while supported `check` and
+`review` suggestions pass. A third regression retains `work` for unstarted tasks.
+All 84 focused semantic tests pass. Live reports remain the historical evidence
+from `d1857d1`; this deterministic correction does not qualify automatic decisions.
+
+Final verification: **1401 passed, 7 skipped, 6 warnings in 321.23s**, plus
+locked offline sync, Ruff, whitespace checks, sdist/wheel build and the clean
+wheel smoke importing 63 modules. The existing seven opt-in/fixture skips remain.

@@ -171,6 +171,47 @@ async def test_progress_cannot_drop_obligations_or_invent_evidence(tmp_path, val
         kernel.session.close()
 
 
+@pytest.mark.parametrize("requirement,next_action", [("output", "check"), ("review", "review")])
+async def test_completed_execution_rejects_work_before_check_or_review(tmp_path, requirement, next_action):
+    provider = FakeProvider([
+        text_turn(json.dumps(assessment([requirement], [requirement], "work"))),
+        text_turn(json.dumps(assessment([requirement], [requirement], next_action))),
+    ])
+    kernel = await kernel_for(tmp_path, provider)
+    try:
+        task = kernel.tasks.create("Finish execution, then verify the result")
+        (add_output if requirement == "output" else add_review)(kernel.tasks)
+        start(kernel, task.id)
+        finish(kernel, task.id)
+        before = kernel.tasks.state()
+
+        rejected = await kernel.semantics.assess_progress(model=MODEL)
+        assert rejected.status == "abstained" and rejected.reason == "invalid_output"
+        assert rejected.result is None
+        assert rejected.evidence.remaining_ids == (requirement,)
+        assert read_semantics(tmp_path, kernel.session.id)[-1] == rejected
+
+        supported = await kernel.semantics.assess_progress(model=MODEL)
+        assert supported.status == "ok" and supported.result.next_action == next_action
+        assert kernel.tasks.state() == before and not kernel.tasks.selected().accepted
+    finally:
+        kernel.session.close()
+
+
+async def test_unstarted_task_can_still_suggest_work(tmp_path):
+    kernel = await kernel_for(tmp_path, FakeProvider([
+        text_turn(json.dumps(assessment(["output"], ["output"], "work"))),
+    ]))
+    try:
+        kernel.tasks.create("Produce the output")
+        add_output(kernel.tasks)
+        result = await kernel.semantics.assess_progress(model=MODEL)
+        assert result.status == "ok" and result.result.next_action == "work"
+        assert kernel.tasks.selected().execution == "not started"
+    finally:
+        kernel.session.close()
+
+
 @pytest.mark.parametrize("execution", ["failed", "cancelled", "aborted", "incomplete", "running"])
 async def test_interruption_or_open_execution_cannot_suggest_blind_retry(tmp_path, execution):
     action = "wait" if execution == "running" else "reconcile"
