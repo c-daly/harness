@@ -1,7 +1,7 @@
 # Core agency implementation record
 
-Current implementation branch: `feat/local-assistant-m3`, based on merged `main`
-at `33a24fc` (PR20). Previous branches: `feat/resident-workflow`, `feat/task-completion-evidence`, `fix/inference-client-lifecycle`, `feat/local-response-profiles`, `feat/local-tool-recovery`, `feat/local-tool-planning`, `feat/local-qualification`, `feat/semantic-evaluation`, `feat/local-context`, `feat/local-readiness`, `feat/agent-runtimes`,
+Current implementation branch: `feat/semantic-context-progress`, based on merged `main`
+at `5dfd808` (PR21). Previous branches: `feat/local-assistant-m3`, `feat/resident-workflow`, `feat/task-completion-evidence`, `fix/inference-client-lifecycle`, `feat/local-response-profiles`, `feat/local-tool-recovery`, `feat/local-tool-planning`, `feat/local-qualification`, `feat/semantic-evaluation`, `feat/local-context`, `feat/local-readiness`, `feat/agent-runtimes`,
 and `feat/core-agency`.
 
 Committed checkpoints: `0351b75` (roadmap, lifecycle, and storage/result integrity),
@@ -55,7 +55,7 @@ qualification. Milestone completion requires its roadmap gates, not just code.
 | M1 correctness and interaction | In progress | Storage, delegation, controller/UI, MCP capability and explicit-endpoint HTTP cleanup changes are implemented. Durable task obligations and explicit review are visible through the TUI and headless inspection. Broader enforcement/redaction, provider lifecycles and fault qualification remain. |
 | M2 inference / agent contracts | In progress | Bounded inference, native tasks, Codex task binding, explicit execution kinds, nullable usage, core improvement records and recorded task-evidence checks implemented. Remaining adapters, richer artifact predicates and live capability qualification remain. |
 | M3 local core assistant | Complete for the measured CUDA profile | Qwen3-8B passes six full offline project journeys: twelve exact native file writes, changed-record answers after restart, real cancellation, normal memory, and visible task/context status. Four missing-assets/startup-exit recovery cases pass. Shipped profiles and a launcher reproduce the workflow. CPU-only operation, automatic fallback and broader daily-use qualification remain outside this gate. |
-| M4 bounded semantic agency | In progress | Shadow message interpretation, paired prompt evaluation, and real context-policy/correction experiments use core improvement records. Repeated correction and response-profile evaluations refused adoption; the larger response plan now includes real TUI journeys. Context/progress functions, broader held-out qualification, scheduling, fallback, candidate generation, activation, and rollback remain. |
+| M4 bounded semantic agency | In progress | All three shadow functions now exist with explicit CLI/TUI access and evidence validation. The public 8B comparison failed context/progress gates; deterministic behavior remains. Message-prompt pairing and earlier context/correction experiments use core improvement records. Held-out qualification, broader scheduling, fallback, candidate generation, assessment candidate evaluation, activation and rollback remain. |
 | M5 heterogeneous work / plugins | Pending | Supervision, plugin reconciliation, portable continuation, isolated improvement patches and rollback. |
 | M6 daily-use qualification | Pending | Measured UI, live adapter boundaries, offline and human dogfood gates. |
 
@@ -973,3 +973,71 @@ load, warm resumed writes 2.01–2.75s, cancellation 0.122–0.126s, and UI moun
 a supervised improvement cycle with explicit activation and rollback. Preserve
 this local profile as a regression gate. CPU-only support, broader task/model
 reliability, heterogeneous supervision and daily-use qualification remain open.
+
+## September 7 — M4 scoped context and recorded progress assessments
+
+[PR21](https://github.com/c-daly/harness/pull/21) merged at `5dfd808` with
+Python 3.12/3.13 CI and automated review passing. Work continues on
+`feat/semantic-context-progress` from that merge.
+
+**Added:** the two remaining core shadow functions. Context selection accepts a
+bounded candidate set and rejects stale/unknown/unavailable entries, invented
+IDs and excess selections. Progress reads existing task requirements, checks,
+artifact references and explicit confirmations at a recorded event boundary.
+It rejects dropped obligations, unsupported actions and blind retry suggestions
+after interrupted execution. Neither function retrieves memory, executes tools,
+accepts tasks or changes routing. Memory and agent-swarm remain plugins.
+
+`harness semantic context` and `harness semantic progress` expose the functions
+headlessly. TUI `/semantics progress` runs off the input path; Esc, new work,
+model changes, compaction and session teardown settle its cancellation. Fresh
+busy local-alias observations abstain. The UI retains deterministic evidence
+facts when the model fails. Saved observations replay without inference.
+
+**Measured outcome:** the fixed public comparison failed both new functions on
+the M3 8B profile. Context was 15/18 correct (83.3%), matching lexical rules in
+aggregate but failing a critical unknown-freshness case; its first call also
+exceeded the two-second runtime-warm gate. Progress was 9/21 correct (42.9%),
+versus 21/21 for simple deterministic rules. The model repeatedly suggested
+reconciliation across different task states. Validation rejected those answers.
+Message interpretation passed 12/12 public cases, also matched by rules. These
+are three repetitions of public fixtures, not held-out promotion evidence.
+No prompt, label or threshold was changed to obtain a passing result.
+
+The [evidence handoff](../../handoffs/2026-09-07-semantic-assessments/README.md)
+retains the initial failure, a diagnostic timeout with no scored responses,
+and the matching-source repeat with bounded public outputs. It also contains
+a final TUI compositor capture and a passing matching-source M3 regression:
+six actual offline journeys, twelve exact writes, six cancellations/restarts,
+normal memory and four recovery cases. Existing local workflow behavior passes
+while the new semantic functions remain unqualified for automatic decisions.
+
+**Final validation:** **1398 passed, 7 skipped, 6 warnings in 312.85s**. Locked
+offline sync, Ruff, whitespace checks, sdist/wheel build and a fresh-wheel smoke
+importing 63 modules passed. The seven skips remain the unavailable Anthropic/
+Ollama fixtures and opt-in live Antigravity case. Both the semantic comparison
+and M3 regression report hashes match the core/driver source at `d1857d1`.
+
+**Recommendation and next scope:** keep factual progress and controls in code.
+Test narrower semantic prioritization against that baseline before promotion.
+Continue M4 with resource scheduling and recorded task-preserving fallback,
+including uncertain-side-effect reconciliation; then complete the supervised
+evidence/candidate/paired-evaluation/adoption/rollback cycle. Assessment candidate
+evaluation, fresh held-out gates and broader fault journeys remain outstanding.
+
+## PR22 review — completed execution cannot suggest more work
+
+The reviewer identified that a completed execution with unchecked output or
+pending user review could incorrectly validate a `work` suggestion. The validator
+now rejects that action, and the prompt limits `work` to execution that has not
+started. Checking, repair, review and uncertainty retain their evidence rules.
+
+Two service-level regressions reproduced the defect before the change; both
+now record abstentions with the obligations intact, while supported `check` and
+`review` suggestions pass. A third regression retains `work` for unstarted tasks.
+All 84 focused semantic tests pass. Live reports remain the historical evidence
+from `d1857d1`; this deterministic correction does not qualify automatic decisions.
+
+Final verification: **1401 passed, 7 skipped, 6 warnings in 321.23s**, plus
+locked offline sync, Ruff, whitespace checks, sdist/wheel build and the clean
+wheel smoke importing 63 modules. The existing seven opt-in/fixture skips remain.

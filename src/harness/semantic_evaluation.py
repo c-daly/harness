@@ -66,7 +66,7 @@ def evaluator_version(provider, config: EvaluatorConfig) -> str:
     """Bind grader/service source, bounds, model declaration, and catalog config."""
     config = EvaluatorConfig.model_validate(config.model_dump())
     source = Path(__file__).parent
-    files = ("semantic_evaluation.py", "semantics.py", "improvement.py", "inference.py",
+    files = ("semantic_evaluation.py", "semantics.py", "semantic_assessment.py", "improvement.py", "inference.py",
              "dispatcher.py", "provider_litellm.py")
     catalog = getattr(provider, "catalog", None)
     payload = {

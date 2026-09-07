@@ -1,11 +1,11 @@
 # Semantic observations and prompt evaluation
 
-Core now supplies an explicit message-interpretation service and a paired prompt
-evaluator. They use the existing inference dispatcher, permission engine, shared
+Core supplies explicit message interpretation, scoped context selection, recorded
+progress assessment, and a paired message-prompt evaluator. They use the existing inference dispatcher, permission engine, shared
 call budget, local-readiness service, session log, and verified artifact store.
 Both work with all plugins absent. Memory and agent-swarm retain their own roles.
 
-This is a partial M4 implementation while real-model M3 qualification continues.
+This is a partial M4 implementation following the measured M3 local workflow gate.
 Normal submission, queueing, task acceptance, cancellation, routing, and recovery
 remain deterministic. No background classifier runs on typing or submission.
 
@@ -57,6 +57,78 @@ model. Semantic completions do not enter the conversational fold.
 TUI `/semantics` reads the latest ten observations and reports the total count;
 it makes no inference call. `/improvements` shows candidates, evaluation results,
 and recent run states. Neither command adopts a candidate or changes task state.
+
+## Context selection and progress
+
+```sh
+harness semantic context candidates.json --model local
+harness semantic progress SESSION_ID --model local
+```
+
+`candidates.json` supplies the query and the complete allowed candidate set:
+
+```json
+{
+  "query": "What is the current retry policy?",
+  "max_selected": 1,
+  "candidates": [
+    {"id": "current-policy", "summary": "Retry up to three times", "freshness": "current"},
+    {"id": "old-policy", "summary": "Retry ten times", "freshness": "stale"}
+  ]
+}
+```
+
+The caller owns scope, availability and freshness; the model cannot establish
+them. There are at most 16 candidates, 1,024 characters per summary, and four
+selected IDs. Unknown freshness, stale entries, unavailable entries, invented
+IDs, duplicates, and excess selections cannot enter a successful result.
+`no_match` and `uncertain` use empty selections. The service does not retrieve
+memory or inject/prune context. A plugin can supply its scoped candidates to
+`kernel.semantics.select_context(ContextSelectionInput(...), model=...)`.
+
+Progress reads the selected task's existing log evidence, or the task named by
+`--task-id`. It does not run checks or inspect mutable files. The snapshot records
+the session/event boundary, task ID, execution state, all requirements, passed or
+failed evidence, artifact references, and explicit review confirmations. The
+model must retain every unresolved requirement. It can suggest work, checking,
+repair, user review, reconciliation, waiting, or uncertainty. Failed, cancelled,
+aborted or incomplete execution permits only reconciliation or uncertainty;
+open execution permits waiting or uncertainty. No answer accepts a task, grants
+authority, or starts a retry. Deterministic passed/failed/remaining lists remain
+visible when the model abstains. Later changes do not alter a saved observation.
+
+In the TUI, `/semantics progress` runs an explicit assessment using the selected
+model. Its worker leaves the composer responsive, supports Esc, and cancels and
+settles before newly submitted work, model switching, compaction, session rebuild,
+or shutdown. It refuses to start behind active/queued work. All semantic
+functions share a non-waiting lock and abstain when their local alias has a fresh
+busy observation. This is limited to the known alias and local client activity;
+cross-alias GPU scheduling and remote generation preemption remain open.
+
+The new functions default to 16,384 payload bytes, 32,768 complete input bytes,
+2,048 output bytes, 256 output tokens, 512 stream chunks, and five seconds total.
+Inputs are revalidated and never silently truncated. Oversize inputs abstain.
+`AssessmentObserved` stores the function/schema digest, exact prompt and bounded
+input artifacts, limits, model/call identity, deterministic evidence summary,
+typed result, reason and latency. The original `SemanticObserved` format still
+replays. `harness semantic inspect` and `/semantics` need no model or plugin.
+
+The fixed offline comparison is `python -m scripts.qualify_semantics`, using the
+same pinned Docker/8B assets as [M3](local-assistant.md). It compares all three
+functions with simple rules across public stale/unavailable/injected context,
+unchecked/failed/review/interrupted task, stop/pause/ambiguous-thanks cases.
+Three repetitions, 90% accuracy, every critical case correct, and a two-second
+maximum warm call latency are fixed before execution. Reports retain failures
+and public-fixture outputs for diagnosis. These are public regression cases,
+not held-out evidence or an activation gate. The existing paired evaluator
+supports message prompt candidates only; assessment candidate evaluation and
+promotion remain later M4 work.
+
+The [first measured comparison](handoffs/2026-09-07-semantic-assessments/README.md)
+failed both new functions' gates: context 83.3%, progress 42.9% versus a 100%
+progress rules baseline. Validators rejected unsupported suggestions. These
+results justify retaining deterministic behavior; they do not qualify automatic
+context selection or progress decisions.
 
 ## Prepare a fixed experiment
 

@@ -658,6 +658,7 @@ class HarnessApp(App[None]):
         # fact in the event-sourced log.
         self._compact_worker = None
         self._resource_worker = None
+        self._semantic_worker = None
         self._context_notice = None
         self._context_calls = set()
         self._interrupting = False
@@ -993,6 +994,7 @@ class HarnessApp(App[None]):
             self._rebuild_in_progress = False
 
     async def _rebuild_kernel_body(self, resume_session_id: "SessionId | None" = None) -> None:
+        await self._cancel_semantic_check()
         await self._cancel_resource_check()
         old_kernel = self.kernel
         old_mcp = old_kernel.mcp
@@ -1384,6 +1386,7 @@ class HarnessApp(App[None]):
 
     async def _drain_queue(self) -> None:
         try:
+            await self._cancel_semantic_check()
             await self._apply_pending_model()
             while await self.controller.run_next(self._execute_prompt):
                 await self._apply_pending_model()
@@ -1660,6 +1663,18 @@ class HarnessApp(App[None]):
                 self.say("", line)
         elif command.name == "semantics":
             from harness.semantics import read_semantics, render_semantics
+            if command.arg.strip() == "progress":
+                if self._refuse_if_busy():
+                    return
+                if self._semantic_worker is not None and not self._semantic_worker.is_finished:
+                    self.say("", "Progress assessment already running; Esc cancels it.")
+                    return
+                self._semantic_worker = self.run_worker(self._semantic_progress(),
+                    group="semantics", exit_on_error=False)
+                return
+            if command.arg.strip():
+                self.say("", "Usage: /semantics [progress]")
+                return
             observations = read_semantics(self.kernel.session.base, self.kernel.session.id)
             for line in render_semantics(observations).splitlines():
                 self.say("", line)
@@ -1700,6 +1715,7 @@ class HarnessApp(App[None]):
         elif command.name == "compact":
             if self._refuse_if_busy():
                 return
+            await self._cancel_semantic_check()
             # NOT _turn_worker (item 8): /compact gets its own cancellation
             # path via action_interrupt/_after_compact_interrupt, so Esc
             # here never routes through loop.interrupt_turn()'s UserInterrupt.
@@ -1830,6 +1846,31 @@ class HarnessApp(App[None]):
             self.say("! ", f"Task command failed: {exc}")
         finally:
             self._refresh_tasks()
+
+    async def _cancel_semantic_check(self) -> None:
+        worker = self._semantic_worker
+        if worker is not None and not worker.is_finished:
+            worker.cancel()
+            try:
+                await worker.wait()
+            except (WorkerCancelled, WorkerFailed):
+                pass
+        self._semantic_worker = None
+
+    async def _semantic_progress(self) -> None:
+        from harness.semantics import render_semantics
+        self.say("", "Assessing recorded task evidence (shadow mode); Esc cancels, new work takes priority.")
+        try:
+            observation = await self.kernel.semantics.assess_progress(model=self.kernel.loop.model)
+            for line in render_semantics([observation]).splitlines():
+                self.say("", line)
+        except asyncio.CancelledError:
+            self.say("", "Progress assessment cancelled.")
+            raise
+        except ValueError as exc:
+            self.say("! ", f"Progress assessment unavailable: {exc}")
+        except Exception as exc:
+            self.say("! ", f"Progress assessment failed ({type(exc).__name__}).")
 
     async def _cancel_resource_check(self) -> None:
         worker = self._resource_worker
@@ -2015,6 +2056,7 @@ class HarnessApp(App[None]):
         from harness.cli import _make_pricing_for
         from harness.provider_litellm import CatalogProvider
 
+        await self._cancel_semantic_check()
         loop = self.kernel.loop
         loop.model = ModelId(alias)
         loop.model_pinned = True  # an explicit /model is a pin (routing-exempt)
@@ -2091,6 +2133,8 @@ class HarnessApp(App[None]):
             return
         worker = self._turn_worker
         if worker is None or worker.is_finished or self._interrupting:
+            if not self._interrupting and self._semantic_worker is not None:
+                self._semantic_worker.cancel()
             if not self._interrupting and self._resource_worker is not None:
                 self._resource_worker.cancel()
             return
@@ -2135,6 +2179,7 @@ class HarnessApp(App[None]):
         if self._ended:
             return
         self._ended = True
+        await self._cancel_semantic_check()
         await self._cancel_resource_check()
         if self._stats_timer is not None:
             self._stats_timer.stop()
