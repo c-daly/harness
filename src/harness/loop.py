@@ -11,10 +11,12 @@ from harness.agent_runtime import bind_agent_runtime
 from harness.dispatcher import Dispatcher, ToolOutcome
 from harness.execution import ExecutionScope
 from harness.errors import ToolCallLimitExceeded
+from harness.fallback import FallbackPolicy, TaskFallback
 from harness.events import (
     CustomEvent,
     ContextPolicyConfigured,
     ContextPrepared,
+    FallbackConfigured,
     ErrorRaised,
     ModelCorrectionRequested,
     SessionEnded,
@@ -51,6 +53,7 @@ class AgentLoop:
         pinned: bool = False,
         redact: StringRedactor = identity_redact,
         scope: ExecutionScope | None = None,
+        fallback_policy: FallbackPolicy | None = None,
     ) -> None:
         self.session = session
         self.provider = provider
@@ -69,6 +72,8 @@ class AgentLoop:
         self.pricing = pricing
         self.pricing_for = pricing_for
         self.model_pinned = pinned
+        self.fallback_policy = FallbackPolicy.model_validate(fallback_policy.model_dump()) if fallback_policy else None
+        self.active_model: ModelId | None = None
         self.dispatcher = Dispatcher(
             session=session, registry=registry, hooks=hooks, resolver=resolver, redact=redact,
             scope=scope,
@@ -111,6 +116,8 @@ class AgentLoop:
         self.session.start()
         if self.dispatcher.scope.context_policy is not None:
             self.session.append(ContextPolicyConfigured(policy=self.dispatcher.scope.context_policy))
+        if self.fallback_policy is not None:
+            self.session.append(FallbackConfigured(policy=self.fallback_policy))
         await self._apply_contributions(
             LifecyclePoint.SESSION_START, {"session_id": self.session.id}
         )
@@ -136,6 +143,7 @@ class AgentLoop:
         if self._task_active:
             raise RuntimeError("an agent task is already running")
         self._task_active = True
+        self.active_model = self.model
         try:
             return await execute_task(
                 self.session, task, runtime="harness", model=self.model,
@@ -143,6 +151,7 @@ class AgentLoop:
             )
         finally:
             self._task_active = False
+            self.active_model = None
             self.turn_context = []
 
     async def _run_task_body(self, task: AgentTask, on_progress) -> AgentOutput:
@@ -153,6 +162,7 @@ class AgentLoop:
         usage = Usage(0, 0, 0, 0)
         corrections = 0
         active_run = current_agent_run.get()
+        fallback = TaskFallback(self)
 
         def progress(phase, iteration, chunk=None):
             if on_progress is not None:
@@ -192,15 +202,20 @@ class AgentLoop:
                 else:
                     messages = [*prefix, *self.history]
                 runtime = bind_agent_runtime(
-                    self.provider, self.model, self.dispatcher, prepared_messages=tuple(messages),
-                    pricing=self.pricing, pricing_for=self.pricing_for, pinned=self.model_pinned,
+                    self.provider, fallback.model, self.dispatcher, prepared_messages=tuple(messages),
+                    pricing=self.pricing, pricing_for=self.pricing_for, pinned=fallback.pinned,
                     on_chunk=self.on_chunk,
                 )
                 if runtime is not None:
-                    child = await runtime.run_task(AgentTask(
-                        prompt=task.prompt, agent=task.agent, acceptance_criteria=task.acceptance_criteria,
-                        limits=task.limits,
-                    ), on_progress=on_progress)
+                    from harness.errors import ProviderError
+                    try:
+                        child = await runtime.run_task(AgentTask(
+                            prompt=task.prompt, agent=task.agent, acceptance_criteria=task.acceptance_criteria,
+                            limits=task.limits,
+                        ), on_progress=on_progress)
+                    except ProviderError as exc:
+                        fallback.hold_external(exc)
+                        raise
                     if child.response is not None:
                         self.history.append(child.response)
                     return AgentOutput(child.read_text(self.session.blobs), child.status,
@@ -213,10 +228,10 @@ class AgentLoop:
                         self.on_chunk(chunk)
 
                 try:
-                    response = await self.dispatcher.dispatch_response(
-                        provider=self.provider,
-                        request=InferenceRequest(
-                            model=self.model, messages=tuple(messages), tools=self.registry.specs(),
+                    failures = fallback.failed_calls
+                    response = await fallback.dispatch(
+                        InferenceRequest(
+                            model=fallback.model, messages=tuple(messages), tools=self.registry.specs(),
                             purpose="conversation", tool_choice="auto",
                             max_input_bytes=task.limits.max_input_bytes,
                             max_output_bytes=task.limits.max_response_bytes,
@@ -224,11 +239,12 @@ class AgentLoop:
                             max_stream_chunks=task.limits.max_stream_chunks,
                             timeout_seconds=min(120, task.limits.timeout_seconds),
                         ),
-                        pricing=self.pricing,
-                        pricing_for=self.pricing_for,
-                        pinned=self.model_pinned,
+                        before_work=iteration == 1,
                         on_chunk=chunk_received,
+                        on_switch=lambda: progress("fallback", iteration),
                     )
+                    if fallback.failed_calls != failures:
+                        usage = add_usage(usage, Usage())
                 except ToolCallLimitExceeded as exc:
                     if (policy is None or corrections >= policy.tool_recovery_attempts
                             or iteration >= max_iterations or exc.call_id is None):

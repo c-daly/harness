@@ -5,6 +5,8 @@ route = "openai/local-small"
 api_base = "http://127.0.0.1:8080/v1"
 max_input_tokens = 8192
 verified = false
+# Declared for the bounded M3 project workflow; not universal tool conformance.
+tags = ["tools"]
 
 [models.local-small.local]
 auto_start = true

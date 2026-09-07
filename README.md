@@ -58,6 +58,7 @@ optional normal memory, checked file work, cancellation and task continuation.
 | **[docs/plugin-authoring.md](docs/plugin-authoring.md)** | Writing a plugin: the eight primitives, the manifest, worked examples |
 | **[docs/contributing.md](docs/contributing.md)** | Modifying the harness: the invariants, extension recipes, testing discipline |
 | **[docs/resident-workflow.md](docs/resident-workflow.md)** | Configured context, task continuation, status, interruption and offline evidence |
+| **[docs/local-fallback.md](docs/local-fallback.md)** | Opt-in local fallback that preserves task context, authority and budgets |
 
 The complete working reference plugin is [`plugins/memory/`](plugins/memory/).
 The authoritative design record (design doc + per-phase completion notes) lives
@@ -68,7 +69,9 @@ in the project vault at `vault/10-projects/harness/`.
 The core is built: event spine and kernel, provider layer, permissions,
 telemetry, MCP, the Textual TUI, the plugin loader, the native tool inventory,
 and the Claude Code importer. The [core agency implementation record](docs/superpowers/plans/2026-09-06-core-agency-progress.md)
-tracks current validation and remaining work; the local write-workflow pilot still fails.
+tracks current validation and remaining work. The bounded offline 8B project
+workflow passes; broader model/task reliability and automatic semantic decisions
+remain unqualified.
 
 > Secondary docs drift from code. Where this README or anything under `docs/`
 > disagrees with the source, the source is right — please fix the doc.

@@ -19,7 +19,7 @@ from urllib.parse import urlsplit, urlunsplit
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from harness.errors import ProviderError
+from harness.errors import LocalUnavailable, ProviderError
 
 
 class LocalProfile(BaseModel):
@@ -309,12 +309,12 @@ class LocalResources:
             async with asyncio.timeout(profile.startup_seconds):
                 while True:
                     if process.returncode is not None:
-                        raise ProviderError("local runtime exited during startup")
+                        raise LocalUnavailable("local runtime exited during startup")
                     observation = await self._probe(resolved, emit)
                     if observation.status == "ready":
                         return observation
                     if observation.status not in ("loading", "unreachable"):
-                        raise ProviderError(f"local runtime startup: {observation.status} ({observation.reason})")
+                        raise LocalUnavailable(f"local runtime startup: {observation.status} ({observation.reason})")
                     await asyncio.sleep(0.1)
         except BaseException:
             await self._terminate(resolved.alias, emit)
@@ -325,7 +325,7 @@ class LocalResources:
         async with self._locks.setdefault(resolved.alias, asyncio.Lock()):
             observation = await self._ready(resolved, emit)
             if observation.status != "ready":
-                raise ProviderError(f"local model {resolved.alias}: {observation.status} ({observation.reason})")
+                raise LocalUnavailable(f"local model {resolved.alias}: {observation.status} ({observation.reason})")
             self._record(resolved, "busy", "active_requests", emit, evidence="local_activity", cache=False)
             self._active[resolved.alias] = self._active.get(resolved.alias, 0) + 1
         try:

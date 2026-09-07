@@ -90,13 +90,15 @@ async def fetch_context(dispatcher):
 
 def render_status(events, *, model=None, resources=None):
     """An explicit inspection, never a probe or a claim of recovered live state."""
-    from harness.events import AgentRunStarted, ContextPolicyConfigured, ResourceObserved
+    from harness.events import AgentRunStarted, ContextPolicyConfigured, FallbackConfigured, FallbackDecided, ResourceObserved
+    from harness.fallback import render_fallback
     from harness.resources import render_resources
     from harness.tasks import project_tasks, render_task
     tasks = project_tasks(events)
     task = tasks.items.get(tasks.selected_id)
     policy, configured_at, latest_run = None, 0, None
     observations, saved_resources = {}, {}
+    fallback_policy, fallbacks = None, []
     for env in events:
         event = env.event
         if isinstance(event, ContextPolicyConfigured):
@@ -111,9 +113,19 @@ def render_status(events, *, model=None, resources=None):
             observations[event.run_id, event.policy_digest, event.source_id] = (env.seq, event)
         elif isinstance(event, ResourceObserved):
             saved_resources[event.observation.alias] = event.observation.model_copy(update={"stale": True})
+        elif isinstance(event, FallbackConfigured):
+            fallback_policy = event.policy
+        elif isinstance(event, FallbackDecided):
+            fallbacks.append(event.decision)
     rows = [f"Model: {model}" if model is not None else "Saved session status (not a live readiness check).",
             render_task(task) if task else "No task selected."]
     run_id = task.run_id if task else latest_run
+    if fallback_policy is not None and fallback_policy.models:
+        rows.append("Local fallback candidates: " + ", ".join(fallback_policy.models))
+    else:
+        rows.append("Automatic local fallback: disabled.")
+    for decision in [d for d in fallbacks if d.run_id == run_id][-4:]:
+        rows.append(render_fallback(decision) + " Recorded choice; inspect task outcome for completion.")
     if policy is None or not policy.sources:
         rows.append("Context: no sources configured.")
     else:

@@ -37,6 +37,7 @@ from harness.events import (
     CustomEvent,
     ModelCallStarted,
     ModelCorrectionRequested,
+    FallbackDecided,
     PermissionRequested,
     PermissionResolved,
     ResourceObserved,
@@ -1048,6 +1049,7 @@ class HarnessApp(App[None]):
             execution_limits=old_kernel.loop.dispatcher.scope.budget.limits,
             resources=old_kernel.resources,
             context_policy=old_kernel.context_policy if resume_session_id is None else None,
+            fallback_policy=old_kernel.loop.fallback_policy,
         )
         self.kernel = kernel
         self.controller = kernel.controller
@@ -1148,7 +1150,7 @@ class HarnessApp(App[None]):
         inp = rollup["input_tokens"] if rollup["input_tokens"] is not None else "n/a"
         out = rollup["output_tokens"] if rollup["output_tokens"] is not None else "n/a"
         tc = rollup["tool_calls"]
-        model = self.kernel.loop.model
+        model = self.kernel.loop.active_model or self.kernel.loop.model
         stats_widget.update(
             _plain(f"{model} | in {inp} out {out} | cost {cost_text} | tools {tc}")
         )
@@ -1181,7 +1183,7 @@ class HarnessApp(App[None]):
             else:
                 catalog = Catalog.load(path)
                 self._catalog_cache = (mtime, catalog)
-            resolved = catalog.resolve(str(self.kernel.loop.model))
+            resolved = catalog.resolve(str(self.kernel.loop.active_model or self.kernel.loop.model))
         except Exception:
             return None, None
 
@@ -1215,7 +1217,7 @@ class HarnessApp(App[None]):
         if rollup is not None:
             self._last_rollup = rollup
         tool_calls = self._last_rollup["tool_calls"] if self._last_rollup else 0
-        segments = [str(self.kernel.loop.model)]
+        segments = [str(self.kernel.loop.active_model or self.kernel.loop.model)]
         ctx_segment, cost_segment = self._statusbar_catalog_segments()
         if self.kernel.context_policy is not None:
             segments.append(f"ctx cap {self.kernel.context_policy.max_input_bytes:,}B")
@@ -1248,6 +1250,10 @@ class HarnessApp(App[None]):
                 self.controller.phase = "working"
             self._refresh_queue()
         match event:
+            case FallbackDecided(decision=decision):
+                from harness.fallback import render_fallback
+                self.say("", render_fallback(decision))
+                self._refresh_statusbar()
             case ContextSourceObserved(source_id=source, status=status):
                 if status == "fetching":
                     self._context_calls.add(event.call_id)
@@ -1453,7 +1459,7 @@ class HarnessApp(App[None]):
         ]
 
     def _on_agent_progress(self, progress) -> None:
-        if progress.phase == "correction":
+        if progress.phase in {"correction", "fallback"}:
             # Runs synchronously before replacement chunks. The bus notice
             # can arrive later, so clearing there would erase valid new text.
             self._clear_live()

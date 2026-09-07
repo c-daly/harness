@@ -29,6 +29,7 @@ from harness.hooks import (
     Rewrite,
 )
 from harness.types import ModelId
+from harness.fallback import FallbackPolicy
 
 
 class RoutingConfigError(Exception):
@@ -77,6 +78,7 @@ class RoutingRuleSet:
     default: str | None = None     # routable baseline alias (used as the unpinned model)
     leeway: bool = False           # if no rule matches, defer to the router alias
     router: str | None = None      # cheap alias consulted under leeway
+    fallback: FallbackPolicy | None = None
 
     @classmethod
     def load(cls, path: Path) -> "RoutingRuleSet":
@@ -97,11 +99,16 @@ class RoutingRuleSet:
             ]
         except KeyError as exc:
             raise RoutingConfigError(f"{path}: rule missing required key {exc}") from exc
+        try:
+            fallback = FallbackPolicy.model_validate(data["fallback"]) if "fallback" in data else None
+        except (ValueError, TypeError) as exc:
+            raise RoutingConfigError(f"{path}: invalid fallback policy") from exc
         return cls(
             rules=rules,
             default=data.get("default"),
             leeway=bool(data.get("leeway", False)),
             router=data.get("router"),
+            fallback=fallback,
         )
 
     @classmethod
@@ -110,6 +117,7 @@ class RoutingRuleSet:
         declares default/router/leeway wins (mirrors permissions' layer order)."""
         rules: list[RoutingRule] = []
         default = router = None
+        fallback = None
         leeway = False
         for s in sets:
             rules.extend(s.rules)
@@ -118,7 +126,9 @@ class RoutingRuleSet:
             if router is None:
                 router = s.router
             leeway = leeway or s.leeway
-        return cls(rules=rules, default=default, leeway=leeway, router=router)
+            if fallback is None:
+                fallback = s.fallback
+        return cls(rules=rules, default=default, leeway=leeway, router=router, fallback=fallback)
 
 
 def load_routing(

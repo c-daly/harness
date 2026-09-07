@@ -138,3 +138,30 @@ def test_missing_credentials_maps_to_auth_failed():
         "OpenAIException - Missing credentials. Please set OPENAI_API_KEY", "openai", "gpt"
     )
     assert isinstance(map_exception(exc), AuthFailed)
+
+
+def test_litellm_wrapped_connection_refusal_remains_a_network_failure():
+    import httpx
+    import litellm
+    from harness.errors import NetworkFailed, Overloaded
+
+    # The real offline OpenAI-compatible route wraps SDK transport failures
+    # in a synthetic HTTP 500, retaining the typed cause further down-chain.
+    wrapped = litellm.InternalServerError("opaque server error", "openai", "fixture")
+    wrapper = RuntimeError("opaque intermediate wrapper")
+    wrapper.__cause__ = httpx.ConnectError("connection refused")
+    wrapped.__cause__ = wrapper
+    assert isinstance(map_exception(wrapped), NetworkFailed)
+    # Error-message guesses must not misclassify a real server 500.
+    actual = litellm.InternalServerError("connection refused by a downstream service", "openai", "fixture")
+    assert isinstance(map_exception(actual), Overloaded)
+
+
+def test_exception_cause_cycle_is_bounded():
+    import litellm
+    from harness.errors import Overloaded
+    wrapped = litellm.InternalServerError("opaque error", "openai", "fixture")
+    wrapper = RuntimeError("intermediate")
+    wrapped.__cause__ = wrapper
+    wrapper.__cause__ = wrapped
+    assert isinstance(map_exception(wrapped), Overloaded)

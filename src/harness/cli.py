@@ -13,6 +13,7 @@ from harness.hooks import HookBus
 from harness.controller import InteractionController
 from harness.context import ContextPolicy
 from harness.execution import ExecutionBudget, ExecutionLimits, ExecutionScope
+from harness.fallback import FallbackPolicy
 from harness.interaction import HeadlessResolver, Resolver
 from harness.loop import AgentLoop
 from harness.mcp_config import McpConfigError, McpServerSpec, load_mcp_config, load_mcp_file
@@ -118,10 +119,13 @@ def build_kernel(
     resources=None,
     context_policy: ContextPolicy | None = None,
     inherit_context_policy: bool = True,
+    fallback_policy: FallbackPolicy | None = None,
 ) -> Kernel:
     from harness.resume import resume_session
 
     resolver = resolver or HeadlessResolver()
+    if fallback_policy is None and routing_rules is not None:
+        fallback_policy = routing_rules.fallback
     hooks = hooks or HookBus()
     if permissions is not None:
         hooks.register_dispatch(permissions.name, permissions, priority=permissions.priority)
@@ -224,6 +228,7 @@ def build_kernel(
         pricing=pricing,
         pricing_for=pricing_for,
         pinned=model_pinned,
+        fallback_policy=fallback_policy,
     )
     if transcript is not None:
         loop_kwargs["history"] = transcript
@@ -238,6 +243,12 @@ def build_kernel(
     if resumed and (context_policy is not None or not inherit_context_policy):
         from harness.events import ContextPolicyConfigured
         session.append(ContextPolicyConfigured(policy=context_policy))
+    if resumed:
+        from harness.events import FallbackConfigured
+        from harness.log import read_session
+        if fallback_policy is not None or any(isinstance(e.event, FallbackConfigured)
+                for e in read_session(base_dir, session.id, repair=False)):
+            session.append(FallbackConfigured(policy=fallback_policy))
     if hasattr(provider, "bind_dispatcher"):
         provider.bind_dispatcher(loop.dispatcher)
     if routing_rules is not None:

@@ -1,0 +1,8 @@
+# Merge into .harness/routing.toml after configuring a preferred model alias.
+# This opts the project into sending the same prepared context to local-small.
+# Explicit --model and /model pins still block automatic switching.
+default = "preferred"
+
+[fallback]
+models = ["local-small"]
+required_tags = ["tools"]

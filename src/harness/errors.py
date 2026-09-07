@@ -6,6 +6,14 @@ from typing import ClassVar
 
 class ProviderError(Exception):
     retryable: ClassVar[bool] = False
+    # Set by dispatch only after the failed model call has been recorded.
+    call_id: str | None = None
+    model: str | None = None
+    execution_kind: str | None = None
+
+
+class LocalUnavailable(ProviderError):
+    """A configured local resource could not become ready for inference."""
 
 
 class RateLimited(ProviderError):
@@ -38,6 +46,4 @@ class MalformedStreamError(ProviderError):
 class ToolCallLimitExceeded(MalformedStreamError):
     """The inference response exceeded an explicit tool proposal limit."""
 
-    # Set only after the dispatcher has recorded the failed model call. Direct
-    # inference has no session linkage and cannot authorize loop correction.
-    call_id: str | None = None
+    # Inherits dispatch linkage; direct inference cannot authorize correction.

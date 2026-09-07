@@ -1,7 +1,7 @@
 # Core agency implementation record
 
-Current implementation branch: `feat/semantic-context-progress`, based on merged `main`
-at `5dfd808` (PR21). Previous branches: `feat/local-assistant-m3`, `feat/resident-workflow`, `feat/task-completion-evidence`, `fix/inference-client-lifecycle`, `feat/local-response-profiles`, `feat/local-tool-recovery`, `feat/local-tool-planning`, `feat/local-qualification`, `feat/semantic-evaluation`, `feat/local-context`, `feat/local-readiness`, `feat/agent-runtimes`,
+Current implementation branch: `feat/task-fallback`, based on merged `main`
+at `d74a6cf` (PR22). Previous branches: `feat/semantic-context-progress`, `feat/local-assistant-m3`, `feat/resident-workflow`, `feat/task-completion-evidence`, `fix/inference-client-lifecycle`, `feat/local-response-profiles`, `feat/local-tool-recovery`, `feat/local-tool-planning`, `feat/local-qualification`, `feat/semantic-evaluation`, `feat/local-context`, `feat/local-readiness`, `feat/agent-runtimes`,
 and `feat/core-agency`.
 
 Committed checkpoints: `0351b75` (roadmap, lifecycle, and storage/result integrity),
@@ -1041,3 +1041,64 @@ from `d1857d1`; this deterministic correction does not qualify automatic decisio
 Final verification: **1401 passed, 7 skipped, 6 warnings in 321.23s**, plus
 locked offline sync, Ruff, whitespace checks, sdist/wheel build and the clean
 wheel smoke importing 63 modules. The existing seven opt-in/fixture skips remain.
+
+## September 7 — M4 task-preserving local fallback
+
+[PR22](https://github.com/c-daly/harness/pull/22) merged at `d74a6cf`; its
+Python 3.12/3.13 CI and automated review passed. Work continues from that merge
+on `feat/task-fallback`.
+
+**Added:** an explicit routing policy with at most three local inference
+candidates. Eligible first-call transport/authentication/availability failures
+can switch the prepared inference request within the same task and root run.
+Context retrieval, acceptance criteria, authority, cumulative call budgets and
+deadlines survive the transition. Each destination re-enters dispatch, requires
+declared capabilities and actual readiness, and cannot be redirected by a hook.
+Fresh busy candidates are skipped. Explicit model pins remain authoritative.
+
+**Recovery boundary:** accepted conversation responses, recorded non-context
+tool proposals and child-agent work hold fallback for reconciliation. External
+agent failures do not restart in a local native loop. The dispatcher's own
+retries now stop when tools or children were dispatched during the failed call.
+Cancellation, denial, limits and malformed output do not enable switching.
+Selected aliases remain in use for the run; primary recovery cannot cause
+oscillation. Replay restores choices without model execution, and current
+routing configuration governs a restarted process.
+
+The TUI clears failed partial output before replacement chunks, retains drafts,
+shows the active model and records the fallback reason. Saved status includes
+the choice and separates it from the execution outcome. Configuration and
+recovery limits are in [local fallback](../../local-fallback.md).
+
+**Evidence and defects:** the first real isolated gate completed all four exact
+writes but failed both connection-failure label checks. LiteLLM had wrapped
+connection refusal in a synthetic HTTP 500. The adapter now uses a bounded typed
+cause chain to retain the network category; real server failures retain overload
+classification. A regression reproduced this before correction. A stronger
+side-effect test then demonstrated three tool executions through existing
+provider retries; the retry guard reduces this to one and holds the task.
+Another regression found that native child logs are separate from the parent's;
+the shared child reservation now blocks fallback after that work as well.
+The unchanged offline gates and final source provenance are recorded in the
+[evidence handoff](../../handoffs/2026-09-07-local-fallback/README.md).
+
+The first M3 run on the final core source had two runtime-deadline failures
+and a GPU-monitor timeout, despite the preceding M3 pass. Both failed and
+passing evidence remain retained; runtime latency is not consistently
+qualified by a single passing run. The repeat keeps the original fixed gates.
+That unchanged repeat passed all six M3 journeys and four recovery cases,
+including twelve exact writes and six cancellations/restarts. The final
+fallback gate passed all four real journeys in 13.03–24.76s. Both reports'
+core/driver hashes match this implementation.
+
+**Final validation:** **1439 passed, 7 skipped, 6 warnings in 314.92s**, plus
+locked offline sync, Ruff, whitespace checks, sdist/wheel build and a clean
+Python 3.13 wheel smoke importing 64 modules. The existing seven recorded-fixture
+and opt-in live-provider skips remain.
+
+**Next:** general device/cross-alias scheduling and explicit external-agent
+reconciliation remain open, followed by the supervised improvement
+candidate/paired-evaluation/activation/rollback cycle. The semantic assessments
+remain advisory with their previous failed gates retained. M4 is in progress;
+this bounded fallback slice does not qualify automatic semantic decisions or
+heterogeneous-agent handoff. Memory and agent-swarm remain plugins.
