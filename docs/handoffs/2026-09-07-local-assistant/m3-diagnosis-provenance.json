@@ -1,0 +1,189 @@
+{
+  "isolation": {
+    "interfaces": [
+      "lo"
+    ],
+    "memory_max_bytes": 4294967296,
+    "swap_max_bytes": 0,
+    "cpu_max": [
+      "400000",
+      "100000"
+    ]
+  },
+  "cases": [
+    {
+      "repeat": 0,
+      "status": "completed",
+      "seconds": 5.17,
+      "answer_facts": true,
+      "tools": [
+        {
+          "tool": "read_file",
+          "purpose": "context",
+          "keys": [
+            "file_path"
+          ],
+          "path_category": "FACTS.json",
+          "error_categories": [],
+          "is_error": false,
+          "missing_file": false,
+          "output_bytes": 46
+        },
+        {
+          "tool": "mcp__memory__memory_list",
+          "purpose": "context",
+          "keys": [
+            "subject"
+          ],
+          "path_category": null,
+          "error_categories": [],
+          "is_error": false,
+          "missing_file": false,
+          "output_bytes": 13802
+        },
+        {
+          "tool": "read_file",
+          "purpose": "conversation",
+          "keys": [
+            "file_path"
+          ],
+          "path_category": "FACTS.json",
+          "error_categories": [],
+          "is_error": false,
+          "missing_file": false,
+          "output_bytes": 46
+        },
+        {
+          "tool": "write_file",
+          "purpose": "conversation",
+          "keys": [
+            "content",
+            "file_path"
+          ],
+          "path_category": "RESULT.json",
+          "error_categories": [],
+          "is_error": false,
+          "missing_file": false,
+          "output_bytes": 57
+        }
+      ],
+      "artifact_exact": true
+    },
+    {
+      "repeat": 1,
+      "status": "completed",
+      "seconds": 3.683,
+      "answer_facts": true,
+      "tools": [
+        {
+          "tool": "read_file",
+          "purpose": "context",
+          "keys": [
+            "file_path"
+          ],
+          "path_category": "FACTS.json",
+          "error_categories": [],
+          "is_error": false,
+          "missing_file": false,
+          "output_bytes": 46
+        },
+        {
+          "tool": "mcp__memory__memory_list",
+          "purpose": "context",
+          "keys": [
+            "subject"
+          ],
+          "path_category": null,
+          "error_categories": [],
+          "is_error": false,
+          "missing_file": false,
+          "output_bytes": 13802
+        },
+        {
+          "tool": "read_file",
+          "purpose": "conversation",
+          "keys": [
+            "file_path"
+          ],
+          "path_category": "FACTS.json",
+          "error_categories": [],
+          "is_error": false,
+          "missing_file": false,
+          "output_bytes": 46
+        },
+        {
+          "tool": "write_file",
+          "purpose": "conversation",
+          "keys": [
+            "content",
+            "file_path"
+          ],
+          "path_category": "RESULT.json",
+          "error_categories": [],
+          "is_error": false,
+          "missing_file": false,
+          "output_bytes": 57
+        }
+      ],
+      "artifact_exact": true
+    },
+    {
+      "repeat": 2,
+      "status": "completed",
+      "seconds": 3.646,
+      "answer_facts": true,
+      "tools": [
+        {
+          "tool": "read_file",
+          "purpose": "context",
+          "keys": [
+            "file_path"
+          ],
+          "path_category": "FACTS.json",
+          "error_categories": [],
+          "is_error": false,
+          "missing_file": false,
+          "output_bytes": 46
+        },
+        {
+          "tool": "mcp__memory__memory_list",
+          "purpose": "context",
+          "keys": [
+            "subject"
+          ],
+          "path_category": null,
+          "error_categories": [],
+          "is_error": false,
+          "missing_file": false,
+          "output_bytes": 13802
+        },
+        {
+          "tool": "read_file",
+          "purpose": "conversation",
+          "keys": [
+            "file_path"
+          ],
+          "path_category": "FACTS.json",
+          "error_categories": [],
+          "is_error": false,
+          "missing_file": false,
+          "output_bytes": 46
+        },
+        {
+          "tool": "write_file",
+          "purpose": "conversation",
+          "keys": [
+            "content",
+            "file_path"
+          ],
+          "path_category": "RESULT.json",
+          "error_categories": [],
+          "is_error": false,
+          "missing_file": false,
+          "output_bytes": 57
+        }
+      ],
+      "artifact_exact": true
+    }
+  ]
+}

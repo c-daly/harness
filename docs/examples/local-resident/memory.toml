@@ -1,0 +1,23 @@
+# Same project workflow, with the separately installed normal memory plugin.
+history_turns = 1
+max_input_bytes = 32768
+tools = ["read_file", "write_file", "mcp__memory__memory_list"]
+
+[response]
+max_output_tokens = 512
+instructions = "For a requested file change, use tools to inspect any existing destination and perform the write. Check the tool result before reporting success. Printing the proposed content does not change a file. Give the requested facts briefly."
+
+[[sources]]
+id = "project-record"
+tool = "read_file"
+args = { file_path = "PROJECT.md" }
+max_bytes = 8192
+required = true
+
+[[sources]]
+id = "normal-memory"
+tool = "mcp__memory__memory_list"
+args = { subject = "harness" }
+max_bytes = 16384
+timeout_seconds = 5
+required = true

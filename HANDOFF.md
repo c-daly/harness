@@ -1,5 +1,14 @@
 # Core agency implementation — restart handoff
 
+> **Latest continuation, September 7 — M3:** PR20 merged at `33a24fc`.
+> Current branch: `feat/local-assistant-m3`. The [offline local assistant](docs/local-assistant.md)
+> now passes the M3 workflow gate on the provisioned 8B CUDA profile, with plugins
+> absent and normal memory enabled. It includes a runnable launcher, effective
+> context-source provenance, explicit queue-pause handling and working fresh-install
+> CLI grants. The 4B failure reports remain preserved. See the
+> [current implementation record](docs/superpowers/plans/2026-09-06-core-agency-progress.md)
+> for validation and the next M4 work. Earlier updates below are historical.
+
 > **Continuation update, September 7:** [PR #19](https://github.com/c-daly/harness/pull/19)
 > merged at `eb77885` after Python 3.12/3.13 CI and automated review passed.
 > Implementation continues on `feat/resident-workflow`, based on that merge.

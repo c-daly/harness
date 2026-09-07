@@ -1,7 +1,7 @@
 # Core agency implementation record
 
-Current implementation branch: `feat/resident-workflow`, based on merged `main`
-at `eb77885`. Previous branches: `feat/task-completion-evidence`, `fix/inference-client-lifecycle`, `feat/local-response-profiles`, `feat/local-tool-recovery`, `feat/local-tool-planning`, `feat/local-qualification`, `feat/semantic-evaluation`, `feat/local-context`, `feat/local-readiness`, `feat/agent-runtimes`,
+Current implementation branch: `feat/local-assistant-m3`, based on merged `main`
+at `33a24fc` (PR20). Previous branches: `feat/resident-workflow`, `feat/task-completion-evidence`, `fix/inference-client-lifecycle`, `feat/local-response-profiles`, `feat/local-tool-recovery`, `feat/local-tool-planning`, `feat/local-qualification`, `feat/semantic-evaluation`, `feat/local-context`, `feat/local-readiness`, `feat/agent-runtimes`,
 and `feat/core-agency`.
 
 Committed checkpoints: `0351b75` (roadmap, lifecycle, and storage/result integrity),
@@ -51,10 +51,10 @@ qualification. Milestone completion requires its roadmap gates, not just code.
 
 | Milestone | State | Evidence / remaining work |
 |---|---|---|
-| M0 baseline and feasibility | In progress | A provisioned Qwen 4B CUDA profile supports fast offline inference and owned startup. Bounded correction improves normal-memory tasks but repeated artifacts still fail, so fallback quality remains unqualified. An additional pinned 8B feasibility probe also failed the complete journey. Earlier 30B/35B probes remain too slow. |
+| M0 baseline and feasibility | In progress | Local feasibility is now established by the M3 8B CUDA workflow. Earlier 4B and 8B profiles failed; 30B/35B probes were too slow. Automatic fallback and broader baseline qualification remain open. |
 | M1 correctness and interaction | In progress | Storage, delegation, controller/UI, MCP capability and explicit-endpoint HTTP cleanup changes are implemented. Durable task obligations and explicit review are visible through the TUI and headless inspection. Broader enforcement/redaction, provider lifecycles and fault qualification remain. |
 | M2 inference / agent contracts | In progress | Bounded inference, native tasks, Codex task binding, explicit execution kinds, nullable usage, core improvement records and recorded task-evidence checks implemented. Remaining adapters, richer artifact predicates and live capability qualification remain. |
-| M3 local core assistant | In progress | Real 4B offline file work, normal-memory retrieval, and combined memory/TUI journeys now measured with CPU/RAM caps. Bounded tool correction helps but repeated artifact and resume-answer checks still fail; the response-profile candidate regressed from 14/18 to 9/18. Human use, crash recovery, and full product qualification remain. |
+| M3 local core assistant | Complete for the measured CUDA profile | Qwen3-8B passes six full offline project journeys: twelve exact native file writes, changed-record answers after restart, real cancellation, normal memory, and visible task/context status. Four missing-assets/startup-exit recovery cases pass. Shipped profiles and a launcher reproduce the workflow. CPU-only operation, automatic fallback and broader daily-use qualification remain outside this gate. |
 | M4 bounded semantic agency | In progress | Shadow message interpretation, paired prompt evaluation, and real context-policy/correction experiments use core improvement records. Repeated correction and response-profile evaluations refused adoption; the larger response plan now includes real TUI journeys. Context/progress functions, broader held-out qualification, scheduling, fallback, candidate generation, activation, and rollback remain. |
 | M5 heterogeneous work / plugins | Pending | Supervision, plugin reconciliation, portable continuation, isolated improvement patches and rollback. |
 | M6 daily-use qualification | Pending | Measured UI, live adapter boundaries, offline and human dogfood gates. |
@@ -917,3 +917,59 @@ resume regressions failed and the three invalidation checks passed. After the
 fix, all 63 focused context/status tests passed in 6.54s. Final validation:
 **1329 passed, 7 skipped, 6 warnings in 308.39s**. Locked offline sync, Ruff,
 whitespace, sdist/wheel build and the 62-module fresh-wheel smoke passed.
+
+
+## September 7 — M3 offline local assistant
+
+[PR20](https://github.com/c-daly/harness/pull/20) merged at `33a24fc` with
+Python 3.12/3.13 CI and automated review passing. Work continues on
+`feat/local-assistant-m3` from that merge.
+
+**Completed M3 gate:** the [local assistant profile](../../local-assistant.md)
+uses preinstalled Qwen3-8B Q4_K_M weights and llama.cpp b9603 on the measured
+RTX 5070 host. Six complete journeys cover three project records, plugins absent
+and the real normal-memory plugin/vault. Each performs an exact file write,
+stream cancellation with draft/queue preservation, process stop, fresh-kernel
+resume, a changed-record answer, and a second exact write. Four additional cases
+exercise missing assets and actual runtime startup exit, with working records,
+queue controls, input and recovery. No cloud connection is available in the
+loopback-only container. This is a bounded workflow qualification, not M6.
+
+**Observed defects fixed:** source labels lacked retrieval provenance, causing
+`read_file("project-facts")`; context now includes the effective tool/arguments
+and clear label semantics. Nested argument mutation and redaction cannot change
+the recorded origin or reprocess stored content. Explicit pause of an empty
+queue now survives prompt submission, while automatic error pauses still allow
+a fresh prompt when no follow-ups remain. The real launcher also exposed an
+existing CLI defect: `--allow` was ignored without a permission file. One engine
+now receives baseline rules, explicit grants and interactive decisions. A real
+native-write regression verifies that the grant works and its absence still
+blocks a headless write.
+
+**Model selection:** the narrow same-model 4B diagnosis improved from 0/3 to 3/3
+exact writes after the provenance fix. The larger fixed suite still failed on
+4B: it sometimes printed proposed JSON without writing a file. The 8B model
+passed both the first full suite and the stricter version 2. Earlier failed
+reports remain in the [evidence directory](../../handoffs/2026-09-07-local-assistant/).
+The chosen profile is explicit, and the user's catalog/server are unchanged.
+The launcher independently completed an exact public-fixture write through the
+real terminal entry point, plus a separate normal-memory launcher task. Both
+stopped their owned runtime. Memory and agent-swarm remain plugins.
+
+**Validation provenance:** the first full repository run found two regressions
+in restarting after an automatic error pause: **2 failed, 1344 passed, 7 skipped,
+6 warnings in 303.16s**. The explicit-pause marker was restricted to user pauses;
+all 45 focused UI/CLI regressions then passed. The initial restricted runtime-test
+run was interrupted when localhost-dependent tests stalled; it is not a passing
+run. Final verification: **1347 passed, 7 skipped, 6 warnings in 305.65s**, plus
+locked offline sync, Ruff, whitespace, sdist/wheel build and a fresh-wheel smoke
+importing 62 modules. The [matching-source offline report](../../handoffs/2026-09-07-local-assistant/m3-qualification-release.json)
+passes all six journeys and all four fault cases. All recorded core/driver hashes
+match the proposed files. Cold readiness was 7.36–14.35s under concurrent test
+load, warm resumed writes 2.01–2.75s, cancellation 0.122–0.126s, and UI mount below
+0.83s. GPU peak is a whole-device observation, not a per-process allocation cap.
+
+**Next:** M4 bounded semantic functions and resource-aware fallback, followed by
+a supervised improvement cycle with explicit activation and rollback. Preserve
+this local profile as a regression gate. CPU-only support, broader task/model
+reliability, heterogeneous supervision and daily-use qualification remain open.

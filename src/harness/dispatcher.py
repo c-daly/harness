@@ -4,6 +4,7 @@
 import asyncio
 import time
 from contextvars import ContextVar
+from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from typing import Callable
 
@@ -62,6 +63,7 @@ class ToolOutcome:
     blob: BlobRef | None
     is_error: bool
     _blobs: BlobStore | None = field(default=None, repr=False, compare=False)
+    resolved: DispatchResolved | None = field(default=None, repr=False, compare=False)
 
     def read_text(self) -> str:
         if self.blob is not None:
@@ -183,11 +185,10 @@ class Dispatcher:
                 ToolCallCompleted(call_id=call.call_id, result_text=denial, is_error=True)
             )
             return ToolOutcome(text=denial, blob=None, is_error=True)
-        self.session.append(
-            DispatchResolved(
-                call_id=call.call_id, kind="tool", tool=effective.tool, args=dict(effective.args)
-            )
+        resolved = DispatchResolved(
+            call_id=call.call_id, kind="tool", tool=effective.tool, args=deepcopy(dict(effective.args))
         )
+        self.session.append(resolved)
         started = time.monotonic()
         try:
             token = set_current_call_id(call.call_id)
@@ -218,7 +219,8 @@ class Dispatcher:
                 duration_ms=duration_ms,
             )
         )
-        return ToolOutcome(text=text, blob=blob, is_error=is_error, _blobs=self.session.blobs)
+        return ToolOutcome(text=text, blob=blob, is_error=is_error, _blobs=self.session.blobs,
+                           resolved=resolved)
 
     async def dispatch_model(
         self,

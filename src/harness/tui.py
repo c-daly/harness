@@ -1335,7 +1335,8 @@ class HarnessApp(App[None]):
             return False
         # A new explicit request can restart an empty queue after an error.
         # Existing follow-ups remain paused until /queue resume.
-        if was_empty and self.controller.paused and not self._interrupting:
+        if (was_empty and self.controller.paused and not self._interrupting and
+                not self.controller.paused_by_user):
             self.controller.resume()
         self.say("", f"queued #{prompt.id}: {prompt.text}")
         self._refresh_queue()
@@ -1390,7 +1391,7 @@ class HarnessApp(App[None]):
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            self.controller.pause()
+            self.controller.pause(user_requested=False)
             self.say("! ", f"queue paused ({type(exc).__name__}); /queue to inspect or resume")
         finally:
             self._turn_worker = None
@@ -1486,7 +1487,7 @@ class HarnessApp(App[None]):
         try:
             await self._run_compact_body()
         except asyncio.CancelledError:
-            self.controller.pause()
+            self.controller.pause(user_requested=False)
             self.controller.phase = "interrupted"
             raise
         finally:
@@ -1532,7 +1533,7 @@ class HarnessApp(App[None]):
                 raise ValueError("summary was incomplete; history retained")
         except Exception as exc:
             self.say("! ", f"compact failed: {exc}")
-            self.controller.pause()
+            self.controller.pause(user_requested=False)
             self.controller.phase = "failed"
             return
         summary = result.message.text()
@@ -2058,7 +2059,7 @@ class HarnessApp(App[None]):
             try:
                 await self._switch_model(alias, _at_boundary=True)
             except Exception as exc:
-                self.controller.pause()
+                self.controller.pause(user_requested=False)
                 self.say("! ", f"model switch failed ({type(exc).__name__}); current selection retained")
 
     def action_interrupt(self) -> None:

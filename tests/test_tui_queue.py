@@ -2,6 +2,7 @@
 
 import asyncio
 
+import pytest
 from textual.widgets import Input
 
 from harness.log import read_session
@@ -13,6 +14,40 @@ from tests.test_tui import GatedProvider, MODELS_TOML_TWO_ALIASES, make_app
 
 def screen_text(app):
     return "\n".join(strip.text for strip in app.screen._compositor.render_strips())
+
+
+@pytest.mark.parametrize("after_failure", [False, True])
+async def test_explicitly_paused_empty_queue_waits_for_resume(tmp_path, after_failure):
+    class OnceIncomplete:
+        calls = 0
+
+        async def infer(self, request):
+            self.calls += 1
+            yield TextDelta("answer")
+            yield StreamStop("max_tokens" if self.calls == 1 else "end_turn")
+
+    app = make_app(tmp_path, **({"provider": OnceIncomplete()} if after_failure else {}))
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.1)
+        composer = app.query_one("#prompt", Input)
+        if after_failure:
+            composer.value = "incomplete work"
+            await pilot.press("enter")
+            await pilot.pause(0.1)
+            assert app.controller.last_result.status == "incomplete"
+        previous = ["incomplete work"] if after_failure else []
+        for text in ("/queue pause", "first", "second"):
+            composer.value = text
+            await pilot.press("enter")
+        assert app.controller.paused
+        assert [p.text for p in app.controller.pending] == ["first", "second"]
+        assert "Queue paused" in screen_text(app)
+        assert [e.event.text for e in read_session(tmp_path, app.kernel.session.id)
+                if e.event.type == "user_message"] == previous
+        composer.value = "/queue resume"
+        await pilot.press("enter")
+        await pilot.pause(0.2)
+        assert [m.text() for m in app.kernel.loop.history if m.role == "user"] == [*previous, "first", "second"]
 
 
 async def test_stats_tick_after_widgets_unmount_does_not_crash(tmp_path):

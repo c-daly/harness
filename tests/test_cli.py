@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 from harness.cli import Kernel, build_kernel, main, run_once
 from harness.mcp_config import load_mcp_file
 from harness.provider import FakeProvider, text_turn
@@ -295,18 +297,26 @@ def test_allow_flags_become_session_grants(tmp_path):
     assert engine.decide("write_file", {}) == "ask"
 
 
-def test_allow_without_config_warns(tmp_path, capsys, monkeypatch):
+@pytest.mark.parametrize("grant", [False, True])
+def test_allow_without_config_controls_real_native_writes(tmp_path, capsys, monkeypatch, grant):
     import harness.cli as cli_mod
 
     monkeypatch.setattr(cli_mod, "default_engine", lambda project_dir=None: None)
+    from harness.provider import FakeProvider, text_turn, tool_call_turn
+    from harness.types import ToolName
+    provider = FakeProvider([tool_call_turn("write", ToolName("write_file"),
+                             {"file_path": "RESULT.txt", "content": "written"}), text_turn("done")])
+    monkeypatch.setattr(cli_mod, "FakeProvider", lambda turns: provider)
     monkeypatch.setattr(
         "sys.argv",
-        ["harness", "-p", "hi", "--allow", "bash", "--base-dir", str(tmp_path)],
+        ["harness", "-p", "write the file", "--no-mcp", "--no-plugins", "--base-dir", str(tmp_path / "sessions"),
+         "--workspace", str(tmp_path), *(["--allow", "write_file"] if grant else [])],
     )
     cli_mod.main()
     captured = capsys.readouterr()
-    assert "echo: hi" in captured.out
-    assert "no permission config found" in captured.err
+    assert "done" in captured.out
+    assert "no permission config found" not in captured.err
+    assert (tmp_path / "RESULT.txt").exists() is grant
 
 
 async def test_run_with_tags_lands_in_telemetry(tmp_path):

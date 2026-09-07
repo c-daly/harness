@@ -583,14 +583,11 @@ def _run_main() -> None:
         model = ModelId("echo")
         pricing = None
 
-    engine = default_engine(project_dir=Path.cwd())
-    if args.allow and engine is None:
-        print(
-            "warning: --allow given but no permission config found; "
-            "flags have no effect (tool calls are not gated)",
-            file=sys.stderr,
-        )
-    if engine and args.allow:
+    # The CLI always installs native tools. Keep one engine for its baseline,
+    # explicit session grants, and the interactive permission resolver even on
+    # a fresh installation without a permissions.toml.
+    engine = default_engine(project_dir=Path.cwd()) or PermissionEngine()
+    if args.allow:
         _apply_allow_flags(engine, args.allow)
 
     mcp_specs: tuple[McpServerSpec, ...] = ()
