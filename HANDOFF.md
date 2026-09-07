@@ -1,38 +1,42 @@
 # Core agency implementation — restart handoff
 
-> **Continuation update, September 6:** [PR #17](https://github.com/c-daly/harness/pull/17)
-> merged at `a7c24e3` after Python 3.12/3.13 CI and automated review passed.
-> Implementation continues on `fix/inference-client-lifecycle`, based on that merge.
-> The user asked to keep larger models, Unsloth and Hugging Face on the
-> [candidate list](docs/local-model-candidates.md), then continue current work.
-> No new weights or model defaults were installed or activated.
-> The [HTTP-client fix](docs/inference-client-lifecycle.md) gives explicit
-> OpenAI-compatible endpoints a request-owned client and closes it after the
-> response stream, including cancellation. Concurrent and caller-owned clients
-> remain independent. Legacy wrappers now close their inner generators, and
-> direct `complete()` honors its configured credential environment variable.
-> Other SDK provider/ambient routes still need their own lifecycle qualification.
-> All **44 focused checks** passed. A real offline probe completed 24 requests,
-> cancelled a stream and completed another request, with **zero open observed
-> request clients/sessions at every checkpoint** and no new SDK cache entries.
-> Its report is saved at `docs/handoffs/2026-09-06-core-agency/local-client-lifecycle.json`.
-> The initial probe's failed total-cache check included four import-created SDK
-> clients; both that report and the corrected baseline-aware repeat are preserved.
-> Full integration passed **1237 tests, 7 skipped, 6 warnings in 309.08s**.
-> Locked sync, Ruff, whitespace, packaging and the fresh wheel smoke (58 modules)
-> passed.
+> **Continuation update, September 7:** [PR #18](https://github.com/c-daly/harness/pull/18)
+> merged at `02420aa` after Python 3.12/3.13 CI and automated review passed.
+> Implementation continues on `feat/task-completion-evidence`, based on that merge.
+> [Task evidence](docs/task-evidence.md) now retains explicit objectives and
+> requirements across prompts, model changes, compaction and resume. Exact
+> recorded-output/tool-result checks and user review remain distinct from an
+> agent merely returning an answer. New work invalidates prior checks and acceptance.
+> `/task` exposes creation, selection, requirements, checks, confirmation and
+> acceptance, with an unresolved-work indicator. `harness tasks SESSION` inspects
+> the same records without a provider; headless resumed prompts retain the selected
+> task. Active/queued work cannot be silently retargeted by task commands.
+> The live projection updates after successful log writes, keeping warm status
+> and prompt preparation off the full-history read path. Checks still reread the
+> log and verify bounded immutable evidence. No check executes commands or grants
+> authority. Task outcome events can supply core improvement evidence.
+> **57 focused checks** passed. Final full integration passed **1283 tests,
+> 7 skipped, 6 warnings in 313.17s**, including **46 new cases**. Locked sync,
+> Ruff, whitespace, packaging and the fresh wheel smoke (60 modules) passed.
+> The [synthetic UI probe](docs/handoffs/2026-09-07-task-evidence/probe.json)
+> saved source hashes and rendered unresolved, accepted and changed states,
+> preserving an unsent draft. Five warm preparation samples after 5,000 extra
+> events measured 0.030–0.159 ms. This is fixture evidence, not human dogfood,
+> whole-interface latency qualification or model-quality evidence.
 > Read the [implementation record](docs/superpowers/plans/2026-09-06-core-agency-progress.md)
-> for integration validation and scope. The prior local response candidate remains
-> rejected (**9/18 versus 14/18 incumbent**); no fallback was activated.
-> Next: explicit task requirements, checks against execution/artifact evidence,
-> and visible unresolved obligations. Semantic self-assessment remains advisory.
-> Then complete a coherent resident workflow before broader model tuning or
-> heterogeneous coordination. Candidate generation, scheduling, fallback,
-> activation, rollback and full M3 qualification remain outstanding.
-> M0–M4 remain in progress; M5–M6 remain pending. Memory and agent-swarm stay
-> plugins. The user authorized commits, PRs and continued implementation.
-> User `.claude/`, `.context/`, private memory and user-managed services are
-> preserved. The inventory below is historical, not a restoration instruction.
+> for the earlier failed/sandbox-limited checks and final validation scope.
+> Next: combine task continuity, configured normal memory, local readiness,
+> interruption and recovery into one useful resident workflow. Task amendments,
+> richer live file/check evidence and natural-language requirement proposals
+> remain outstanding. Semantic judgments cannot accept tasks or override checks.
+> Larger models, Unsloth and Hugging Face remain on the candidate list. The prior
+> local response candidate remains rejected (**9/18 versus 14/18 incumbent**);
+> no fallback or improvement activation was enabled. Automatic adoption policy
+> remains unanswered; continue implementation without assuming approval.
+> M0–M4 remain in progress; M5–M6 pending. Memory and agent-swarm stay plugins.
+> The user authorized commits, PRs and continued implementation. User `.claude/`,
+> `.context/`, private memory and user-managed services are preserved. The
+> inventory below is historical, not a restoration instruction.
 
 ## Historical pre-reboot inventory
 

@@ -112,7 +112,9 @@ async def execute_task(
     of the terminal write is not misreported as a second terminal outcome.
     """
     from harness.events import AgentRunFinished, AgentRunStarted
+    from harness.tasks import TaskService
     task = AgentTask.model_validate(task.model_dump())
+    TaskService(session).validate_run(task)
     run_id = uuid4().hex
     parent = current_agent_run.get()
     session.append(AgentRunStarted(task_id=task.id, run_id=run_id, runtime=runtime,

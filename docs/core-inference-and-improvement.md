@@ -9,6 +9,11 @@ live local-model qualification, broader experiment runners, activation, and roll
 interpretation and a bounded paired prompt evaluator with fixed grades and
 recoverable run records.
 
+[Task evidence](task-evidence.md) adds persistent user requirements, exact checks
+of recorded results and artifacts, and explicit review/acceptance. These facts
+can supply outcome evidence to the improvement journal; an agent's own completion
+or self-assessment cannot accept the task or activate an improvement.
+
 [Context profiles](context-profiles.md) add persisted request and tool restrictions.
 Their preparation events provide input-size and omission evidence for later
 evaluation; no candidate adoption or activation follows automatically.

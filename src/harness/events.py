@@ -15,6 +15,7 @@ from harness.resources import ResourceObservation
 from harness.context import ContextPolicy
 from harness.improvement import ImprovementRecord
 from harness.semantics import SemanticObservation
+from harness.tasks import RequirementEvidence, TaskDefinition, TaskRequirement
 from harness.types import SCHEMA_VERSION, AgentId, CallId, ModelId, SessionId, ToolName
 
 
@@ -303,6 +304,50 @@ class CompactionApplied(_Event):
 # --- outcomes ---
 
 
+class TaskCreated(_Event):
+    type: Literal["task_created"] = "task_created"
+    is_intent: ClassVar[bool] = True
+    definition: TaskDefinition | None = None
+
+
+class TaskSelected(_Event):
+    type: Literal["task_selected"] = "task_selected"
+    is_intent: ClassVar[bool] = True
+    task_id: str | None = None
+
+
+class TaskRequirementAdded(_Event):
+    type: Literal["task_requirement_added"] = "task_requirement_added"
+    is_intent: ClassVar[bool] = True
+    task_id: str = ""
+    requirement: TaskRequirement | None = None
+
+
+class TaskChecked(_Event):
+    type: Literal["task_checked"] = "task_checked"
+    is_intent: ClassVar[bool] = True
+    task_id: str = ""
+    basis_seq: int = 0
+    evidence: tuple[RequirementEvidence, ...] = ()
+
+
+class TaskRequirementConfirmed(_Event):
+    type: Literal["task_requirement_confirmed"] = "task_requirement_confirmed"
+    is_intent: ClassVar[bool] = True
+    task_id: str = ""
+    basis_seq: int = 0
+    requirement_id: str = ""
+    note: str = ""
+
+
+class TaskAccepted(_Event):
+    type: Literal["task_accepted"] = "task_accepted"
+    is_intent: ClassVar[bool] = True
+    task_id: str = ""
+    basis_seq: int = 0
+    note: str = ""
+
+
 class TaskOutcome(_Event):
     type: Literal["task_outcome"] = "task_outcome"
     status: Literal["ok", "fail", "abandoned"]
@@ -419,6 +464,12 @@ Event = Annotated[
         ContextPolicyConfigured,
         ContextPrepared,
         CompactionApplied,
+        TaskCreated,
+        TaskSelected,
+        TaskRequirementAdded,
+        TaskChecked,
+        TaskRequirementConfirmed,
+        TaskAccepted,
         TaskOutcome,
         SessionOutcome,
         ErrorRaised,

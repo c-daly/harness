@@ -11,7 +11,6 @@ from typing import TYPE_CHECKING, Callable, Sequence
 
 from harness.hooks import HookBus
 from harness.controller import InteractionController
-from harness.agent import AgentTask
 from harness.context import ContextPolicy
 from harness.execution import ExecutionBudget, ExecutionLimits, ExecutionScope
 from harness.interaction import HeadlessResolver, Resolver
@@ -53,6 +52,11 @@ class Kernel:
     @property
     def context_policy(self):
         return self.loop.dispatcher.scope.context_policy
+
+    @cached_property
+    def tasks(self):
+        from harness.tasks import TaskService
+        return TaskService(self.session)
 
     @cached_property
     def improvements(self):
@@ -307,7 +311,7 @@ async def run_once(kernel: Kernel, prompt: str) -> str:
         async def execute(pending):
             nonlocal result
             kernel.controller.phase = "working"
-            outcome = await kernel.loop.run_task(AgentTask(prompt=pending.text))
+            outcome = await kernel.loop.run_task(kernel.tasks.prepare(pending.text))
             result = outcome.read_text(kernel.session.blobs)
             return outcome
 
@@ -932,6 +936,10 @@ def _resources_subcommand(argv: list[str]) -> None:
 
 def main() -> None:
     argv = sys.argv[1:]
+    if argv and argv[0] == "tasks":
+        from harness.task_cli import main as tasks_main
+        tasks_main(argv[1:])
+        return
     if argv and argv[0] == "semantic":
         from harness.semantic_cli import main as semantic_main
         semantic_main(argv[1:])

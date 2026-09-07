@@ -28,6 +28,9 @@ sampling and answer guidance while keeping semantic requests separate.
 [Inference-client ownership](inference-client-lifecycle.md) scopes explicit
 OpenAI-compatible endpoint clients to individual requests, including cancellation.
 
+[Task evidence](task-evidence.md) retains user requirements across attempts,
+checks recorded artifacts and tool results, and records explicit user acceptance.
+
 [Semantic evaluation](semantic-evaluation.md) adds shadow observations and paired
 prompt experiments through the same dispatcher, with fixed grading and recovery.
 
@@ -71,6 +74,7 @@ The source is flat under `src/harness/`. Grouped by role:
 
 **Kernel**
 - `agent.py` — typed tasks, results, progress, and durable agent run boundaries.
+- `tasks.py` — durable user objectives, requirements, evidence checks and review.
 - `agent_runtime.py` — external task binding, initially Codex, retaining dispatcher authority.
 - `resources.py` — bounded local inventory checks, freshness, and owned process lifetime.
 - `context.py` — explicit context profiles, complete-turn selection, and input byte accounting.
@@ -129,6 +133,7 @@ The source is flat under `src/harness/`. Grouped by role:
 
 **Surface**
 - `cli.py` — `build_kernel`, `run_once`, and the `harness` CLI.
+- `task_cli.py` — read-only task inspection outside the TUI.
 - `tui.py` / `tui_support.py` — the Textual UI (subscriber + decision provider).
 - `redaction.py` — the day-one redaction seam (identity by default).
 - `errors.py` — shared error types.

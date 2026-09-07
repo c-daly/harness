@@ -181,6 +181,14 @@ with the user; independent implementation work does not require assuming it.
 
 ## Milestone sequence
 
+**Implementation update, September 7:** [Task evidence](../../task-evidence.md)
+now persists explicit user requirements, checks recorded execution artifacts,
+and shows unresolved work across prompts and resume. Acceptance is a separate
+user decision; models and semantic observations cannot supply it. The initial
+checks concern exact recorded bytes, with richer workspace checks and natural
+requirement proposals still outstanding. This advances M1/M2 without completing
+the useful resident workflow or the M3/M6 qualification gates.
+
 Use exit gates rather than calendar estimates. The largest uncertainties are
 local quality/latency on the actual machine and external-agent continuation,
 tool visibility, and containment. Measure those early instead of accumulating
