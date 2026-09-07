@@ -10,11 +10,13 @@ from harness.agent import (
 from harness.agent_runtime import bind_agent_runtime
 from harness.dispatcher import Dispatcher, ToolOutcome
 from harness.execution import ExecutionScope
+from harness.errors import ToolCallLimitExceeded
 from harness.events import (
     CustomEvent,
     ContextPolicyConfigured,
     ContextPrepared,
     ErrorRaised,
+    ModelCorrectionRequested,
     SessionEnded,
     ToolCallCancelled,
     UserInterrupt,
@@ -145,6 +147,7 @@ class AgentLoop:
         self.history.append(Message.user_text(user_text))
         max_iterations = min(self.max_iterations, task.limits.max_iterations)
         usage = Usage(0, 0, 0, 0)
+        corrections = 0
         active_run = current_agent_run.get()
 
         def progress(phase, iteration, chunk=None):
@@ -200,22 +203,40 @@ class AgentLoop:
                     if self.on_chunk is not None:
                         self.on_chunk(chunk)
 
-                response = await self.dispatcher.dispatch_response(
-                    provider=self.provider,
-                    request=InferenceRequest(
-                        model=self.model, messages=tuple(messages), tools=self.registry.specs(),
-                        purpose="conversation", tool_choice="auto",
-                        max_input_bytes=task.limits.max_input_bytes,
-                        max_output_bytes=task.limits.max_response_bytes,
-                        max_output_tokens=task.limits.max_output_tokens,
-                        max_stream_chunks=task.limits.max_stream_chunks,
-                        timeout_seconds=min(120, task.limits.timeout_seconds),
-                    ),
-                    pricing=self.pricing,
-                    pricing_for=self.pricing_for,
-                    pinned=self.model_pinned,
-                    on_chunk=chunk_received,
-                )
+                try:
+                    response = await self.dispatcher.dispatch_response(
+                        provider=self.provider,
+                        request=InferenceRequest(
+                            model=self.model, messages=tuple(messages), tools=self.registry.specs(),
+                            purpose="conversation", tool_choice="auto",
+                            max_input_bytes=task.limits.max_input_bytes,
+                            max_output_bytes=task.limits.max_response_bytes,
+                            max_output_tokens=task.limits.max_output_tokens,
+                            max_stream_chunks=task.limits.max_stream_chunks,
+                            timeout_seconds=min(120, task.limits.timeout_seconds),
+                        ),
+                        pricing=self.pricing,
+                        pricing_for=self.pricing_for,
+                        pinned=self.model_pinned,
+                        on_chunk=chunk_received,
+                    )
+                except ToolCallLimitExceeded as exc:
+                    if (policy is None or corrections >= policy.tool_recovery_attempts
+                            or iteration >= max_iterations or exc.call_id is None):
+                        raise
+                    corrections += 1
+                    correction = ModelCorrectionRequested(
+                        failed_call_id=CallId(exc.call_id), task_id=task.id,
+                        agent_run_id=active_run.run_id, attempt=corrections,
+                    )
+                    self.session.append(correction)
+                    self.history.append(Message.system_text(correction.instruction))
+                    progress("correction", iteration)
+                    # The failed stream has no accepted usage result. Retain
+                    # unknown accounting rather than implying that correction
+                    # was free; its model reservation is never refunded.
+                    usage = add_usage(usage, Usage())
+                    continue
                 assistant = response.message
                 usage = add_usage(usage, response.usage)
                 self.history.append(assistant)

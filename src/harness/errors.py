@@ -37,3 +37,7 @@ class MalformedStreamError(ProviderError):
 
 class ToolCallLimitExceeded(MalformedStreamError):
     """The inference response exceeded an explicit tool proposal limit."""
+
+    # Set only after the dispatcher has recorded the failed model call. Direct
+    # inference has no session linkage and cannot authorize loop correction.
+    call_id: str | None = None

@@ -48,8 +48,8 @@ An optional `parallel_tool_calls = false` requests **at most one tool proposal
 per inference response**. The dispatcher preserves this bound across descendants
 and routing; a caller cannot widen it. Harness also checks the completed response
 locally and rejects an entire oversized batch before executing any call from it.
-Earlier completed calls remain completed. A model that ignores the option fails
-the task normally, preserving existing cancellation, logging and queue recovery.
+Earlier completed calls remain completed. By default, a model that ignores the
+option fails the task normally, preserving cancellation, logging and queue recovery.
 Provider-native agents are refused before execution under this profile because
 their internal tool batches cannot be bounded by Harness. Omit the option to keep
 provider defaults; `true` explicitly permits multiple proposals without overriding
@@ -59,6 +59,11 @@ the LiteLLM inference adapter additionally forwards the option when tools are se
 This is an opt-in protocol bound, not a planner or an artifact validator. A single
 tool call can still contain guessed values or malformed file content. The
 [local planning experiment](local-tool-planning.md) measures that distinction.
+
+With `parallel_tool_calls = false`, optional `tool_recovery_attempts = 1` or `2`
+allows [bounded correction](local-tool-recovery.md) after an oversized response
+was rejected before execution. It consumes existing task/call budgets, retains
+durable feedback, and leaves tool permissions unchanged. The default is zero.
 
 ## Inspection and continuation
 

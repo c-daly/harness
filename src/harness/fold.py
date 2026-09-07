@@ -24,6 +24,7 @@ from harness.events import (
     ModelCallCancelled,
     ModelCallCompleted,
     ModelCallFailed,
+    ModelCorrectionRequested,
     ModelCallProposed,
     ResourceObserved,
     ContextPolicyConfigured,
@@ -81,6 +82,8 @@ def fold(envelopes: list[Envelope]) -> FoldedState:
         state.last_seq = max(state.last_seq, env.seq)
         if isinstance(ev, UserMessage):
             state._append(env.seq, Message.user_text(ev.text))
+        elif isinstance(ev, ModelCorrectionRequested):
+            state._append(env.seq, Message.system_text(ev.instruction))
         elif isinstance(ev, ModelCallProposed):
             state.open_model_intents[ev.call_id] = env.seq
         elif isinstance(ev, AgentRunStarted):

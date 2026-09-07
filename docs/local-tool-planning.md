@@ -1,5 +1,9 @@
 # Local tool planning and candidate rejection
 
+This records the original single-tool experiment. A subsequent
+[bounded correction experiment](local-tool-recovery.md) builds on its failure
+without replacing this evidence.
+
 PR #14's real 4B profile failed all three memory-assisted artifact tasks. A fresh
 diagnostic confirmed that the model proposed `read_file`, `write_file`, and
 `memory_list` in one response, before observing any read results. Adding instructions

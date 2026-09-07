@@ -34,6 +34,7 @@ from harness.events import (
     CompactionApplied,
     CustomEvent,
     ModelCallStarted,
+    ModelCorrectionRequested,
     PermissionRequested,
     PermissionResolved,
     ResourceObserved,
@@ -1218,6 +1219,8 @@ class HarnessApp(App[None]):
                 self.controller.phase = "working"
             self._refresh_queue()
         match event:
+            case ModelCorrectionRequested(attempt=attempt):
+                self.say("", f"Model proposed too many tools; requesting one next call (correction {attempt}).")
             case ContextPrepared(omitted_turns=count) if count:
                 notice = (event.task_id, event.policy_digest, count)
                 if notice != self._context_notice:
@@ -1407,12 +1410,18 @@ class HarnessApp(App[None]):
             )
         ]
 
+    def _on_agent_progress(self, progress) -> None:
+        if progress.phase == "correction":
+            # Runs synchronously before replacement chunks. The bus notice
+            # can arrive later, so clearing there would erase valid new text.
+            self._clear_live()
+
     async def _run_turn(self, prompt: str) -> AgentResult:
         self._clear_live()
         try:
             result = await self.kernel.loop.run_task(AgentTask(
                 prompt=prompt, context=tuple(self.kernel.loop.turn_context),
-            ))
+            ), on_progress=self._on_agent_progress)
             reply = result.read_text(self.kernel.session.blobs)
         except asyncio.CancelledError:
             raise  # _after_interrupt owns cleanup; keep _stream_buffer for it to preserve

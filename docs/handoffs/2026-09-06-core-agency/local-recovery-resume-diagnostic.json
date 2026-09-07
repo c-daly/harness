@@ -1,0 +1,87 @@
+{
+  "row": {
+    "mode": "tui-normal-memory",
+    "checks": {
+      "composer_before_runtime_start": true,
+      "mount_deadline": true,
+      "project_answer_visible": true,
+      "real_read_succeeded": true,
+      "execution_completed": true,
+      "acceptance_remains_unverified": true,
+      "read_succeeded": true,
+      "write_succeeded": true,
+      "artifact_exact": true,
+      "normal_memory_used": true,
+      "cancelled_real_stream": true,
+      "draft_preserved": true,
+      "cancel_settled": true,
+      "resume_same_session": true,
+      "resume_profile": true,
+      "resume_history": true,
+      "resume_answer": false,
+      "resume_settled": true,
+      "resume_normal_memory_used": true,
+      "missing_runtime_reported": true,
+      "failure_recoverable": true,
+      "cleanup_succeeded": true
+    },
+    "stage": "complete",
+    "mount_seconds": 0.5532366640400141,
+    "artifact": {
+      "object": true,
+      "keys_exact": true,
+      "project_matches": true,
+      "retry_limit_matches": true,
+      "retry_limit_type": "int",
+      "sha256": "ebb67ffa17fe3ee913b027a5f253f80c30e773a60133397aaf87f39f56127340"
+    },
+    "memory_bytes": 13802,
+    "memory_sha256": "55482a75decc8659985fae320d2712ec1d006bc6f46947b82422d96b1921f1f6",
+    "active_at_cancel": true,
+    "cancel_seconds": 0.08973288419656456,
+    "cancel_outcomes": [
+      "completed",
+      "cancelled"
+    ],
+    "correction_attempts": 2,
+    "passed": false
+  },
+  "answer_metadata": [
+    {
+      "status": "completed",
+      "caller": "tui_case",
+      "contains_project": true,
+      "contains_retry_limit": true,
+      "bytes": 663,
+      "sha256": "ee15c85f240c91049e9e427286497829e1b7225482be0a8779404d70a1eb5df8"
+    },
+    {
+      "status": "completed",
+      "caller": "tui_case",
+      "contains_project": true,
+      "contains_retry_limit": true,
+      "bytes": 14036,
+      "sha256": "6757aae3870ca7ccf7630a06568ad6f0407079a9e9db1a30d3b2fef12af54e66"
+    }
+  ],
+  "provenance": {
+    "qualification_driver_sha256": "75a70765744ce122903f69d86de36b310d3f7d3a37f95098136009ce9ab02a77",
+    "source_tree_sha256": "7b7445fbf1a33d34b8e1eb333a0287a5e4c69c743c3425b15b3df5182ab34c77",
+    "weights_sha256": "3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597",
+    "image": "sha256:841b199aed2649a748875b043b32fed2e8c2d4d87e1d563556817fb7fa44b72b",
+    "isolation": {
+      "interfaces": [
+        "lo"
+      ],
+      "memory_max_bytes": 4294967296,
+      "swap_max_bytes": 0,
+      "cpu_max": [
+        "400000",
+        "100000"
+      ]
+    },
+    "observer_script_sha256": "f7c91c89f72958e61c3248eae5ea64ecdf4c9c5337e14e84b30eb5015d795db9",
+    "observer": "Wrap AgentResult.read_text and retain status, byte count, fact-presence flags and digest only. Values returned to callers are unchanged.",
+    "limitation": "Diagnostic timing overlapped the integration suite and is not additional latency qualification."
+  }
+}

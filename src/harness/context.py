@@ -9,7 +9,7 @@ import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from harness.errors import ContextOverflow
 from harness.inference import input_bytes
@@ -22,6 +22,13 @@ class ContextPolicy(BaseModel):
     max_input_bytes: int = Field(default=32768, gt=0, le=4 * 1024 * 1024, strict=True)
     tools: tuple[str, ...] | None = Field(default=None, max_length=256)
     parallel_tool_calls: bool | None = Field(default=None, strict=True)
+    tool_recovery_attempts: int = Field(default=0, ge=0, le=2, strict=True)
+
+    @model_validator(mode="after")
+    def recovery_requires_bound(self):
+        if self.tool_recovery_attempts and self.parallel_tool_calls is not False:
+            raise ValueError("tool recovery requires parallel_tool_calls = false")
+        return self
 
     @field_validator("tools")
     @classmethod
@@ -90,5 +97,7 @@ def render_context_policy(policy, tools):
     return (f"Context profile: up to {policy.history_turns} recent turns, "
             f"{policy.max_input_bytes} input bytes. Tools: {names}. "
             + ("At most one tool call per response; requires an inference model. "
-               if policy.parallel_tool_calls is False else "") +
+               if policy.parallel_tool_calls is False else "")
+            + (f"Up to {policy.tool_recovery_attempts} correction attempts per task, within its limits. "
+               if policy.tool_recovery_attempts else "") +
             "Full session history is retained; byte limits are not token limits.")

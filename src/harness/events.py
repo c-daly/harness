@@ -204,6 +204,22 @@ class ModelCallFailed(_Event):
     duration_ms: int = 0
 
 
+class ModelCorrectionRequested(_Event):
+    """Durable feedback for a rejected inference response; never a tool result."""
+
+    type: Literal["model_correction_requested"] = "model_correction_requested"
+    is_intent: ClassVar[bool] = True
+    failed_call_id: CallId | None = None
+    task_id: str = ""
+    agent_run_id: str = ""
+    attempt: int = 0
+    instruction: str = (
+        "Harness rejected the previous response because it proposed more than one tool call. "
+        "None of those tool calls ran. Propose exactly one next tool call and wait for its result. "
+        "Read needed source information before constructing a write; do not guess its contents."
+    )
+
+
 class ModelCallAborted(_Event):
     """Resume-time repair; an interrupted external agent may have performed work."""
 
@@ -390,6 +406,7 @@ Event = Annotated[
         ModelCallCompleted,
         ModelCallCancelled,
         ModelCallFailed,
+        ModelCorrectionRequested,
         ModelCallAborted,
         PermissionRequested,
         PermissionResolved,
