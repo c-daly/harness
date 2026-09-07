@@ -1,13 +1,13 @@
 # Local model candidates
 
-These are evaluation options, not supported defaults or qualified fallbacks.
+These are evaluation options and one measured task profile, not qualified fallbacks.
 The user requested that larger models, Unsloth and Hugging Face be retained on
 the list while implementation continues with client cleanup and task evidence.
 
 | Candidate | Purpose | Current evidence |
 |---|---|---|
 | Qwen3-4B-Instruct-2507 Q4_K_M | Small local reference profile | Provisioned; repeated artifact and memory/TUI checks still fail. |
-| Qwen3-8B Q4_K_M | Larger local comparison | Provisioned; PR17's four-journey feasibility probe failed. |
+| Qwen3-8B Q4_K_M | Initial M3 local task profile | Provisioned; the [M3 offline workflow](local-assistant.md) passes with the current context and response profile. PR17's earlier four-journey feasibility probe remains a historical failure. |
 | [Qwen3-14B Q4_K_M](https://huggingface.co/Qwen/Qwen3-14B-GGUF) | Candidate for a larger model with most or all weights on the GPU | Not provisioned or tested here. Published weights are about 9 GB; runtime and context cache need additional memory. |
 | Existing Qwen3-Coder 30B and Qwen3.6 35B assets | Revisit hybrid CPU/GPU placement and quantization | Earlier configurations were too slow for synchronous resident decisions; alternative configurations remain unevaluated. |
 

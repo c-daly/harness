@@ -1,0 +1,23 @@
+{
+  "mode": "actual launcher",
+  "project_only_artifact_exact": true,
+  "normal_memory_artifact_exact": true,
+  "sessions": [
+    {
+      "session_id": "08d056e3d507408bb661273dfdc35ef7",
+      "normal_memory_ready": true,
+      "completed": true,
+      "owned_runtime_stopped": true,
+      "ended": true
+    },
+    {
+      "session_id": "9e8acd44f7d147c28eb1d543ffc58f22",
+      "normal_memory_ready": false,
+      "completed": true,
+      "owned_runtime_stopped": true,
+      "ended": true
+    }
+  ],
+  "memory_writes": 0,
+  "private_text_exported": false
+}

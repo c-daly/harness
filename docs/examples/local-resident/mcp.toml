@@ -1,0 +1,10 @@
+[servers.memory]
+transport = "stdio"
+command = "/memory/.venv/bin/python"
+args = ["-B", "/memory/lib/server.py"]
+tools_allow = ["memory_list"]
+restart = "never"
+tool_timeout_s = 10
+
+[servers.memory.env]
+MEMORY_VAULT_DIR = "MEMORY_VAULT_DIR"

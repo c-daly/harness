@@ -5,6 +5,10 @@ model call. The model does not have to remember to request those sources. Each
 new root attempt retrieves them again, under normal tool permissions, limits and
 cancellation. Memory and agent-swarm remain plugins; the core owns this workflow.
 
+The [M3 local assistant](local-assistant.md) supplies a runnable offline profile
+and the completed CUDA workflow gate. The 4B pilot below remains historical
+failure evidence.
+
 ## Configure and use
 
 Add sources to a context profile, for example `resident.toml`:
@@ -96,6 +100,12 @@ silently truncated, and an oversized sidecar is rejected before materialization.
 Storage or journal failures remain fatal. Ready means bounded bytes were obtained;
 it does not establish their correctness, relevance or freshness in the underlying
 store. Source content is labeled as tool data, not trusted instructions.
+
+Model-facing source context includes the effective retrieval tool and arguments,
+after rewrites and workspace canonicalization. `source` is explicitly a label,
+not a filename. `origin` is redacted text describing the retrieval, so a text
+redactor need not preserve JSON syntax. Stored result content is not processed
+twice; its digest continues to identify the supplied bytes.
 
 Source results remain in the existing session blob sidecar. Typed
 `ContextSourceObserved` facts retain source, run, call and policy provenance.

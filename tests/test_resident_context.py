@@ -1,6 +1,7 @@
 """Configured context is owned by core, enforced normally, and never guessed."""
 
 import asyncio
+import json
 
 import pytest
 
@@ -129,6 +130,87 @@ async def test_source_arguments_and_rewrites_use_existing_enforcement(tmp_path):
         await kernel.loop.run_task(AgentTask(prompt="work"))
         assert seen == [{"subject": "rewritten"}] and not lookup.calls
         assert observations(kernel)[-1].status == "unavailable"
+    finally:
+        kernel.session.close()
+
+
+async def test_source_provenance_names_the_effective_retrieval_not_the_label(tmp_path):
+    lookup = Lookup()
+    kernel = await make_kernel(tmp_path, profile=policy(), lookup=lookup)
+
+    async def rewrite(action):
+        if isinstance(action, ProposedToolCall):
+            return Rewrite(ProposedToolCall(action.call_id, action.tool, {"subject": "rewritten"}))
+        return Allow()
+
+    kernel.hooks.register_dispatch("rewrite-source", rewrite, priority=10)
+    try:
+        await kernel.loop.run_task(AgentTask(prompt="Use the supplied normal-memory context."))
+        message = next(m.text() for m in kernel.provider.calls[0]
+                       if m.text().startswith("Configured context source"))
+        header, data = message.split("\n", 1)
+        source = json.loads(data)
+        assert "label, not a file path" in header
+        origin = json.loads(source["origin"])
+        assert origin == {"tool": "memory_lookup", "args": {"subject": "rewritten"}}
+        assert source["source"] == "normal-memory" and source["content"] == lookup.text
+        resolved = next(env.event for env in read_session(tmp_path, kernel.session.id)
+                        if env.event.type == "dispatch_resolved" and env.event.kind == "tool")
+        assert source["call_id"] == resolved.call_id
+        assert origin["args"] == resolved.args
+    finally:
+        kernel.session.close()
+
+
+async def test_source_origin_is_redacted_without_reprocessing_its_stored_content(tmp_path):
+    kernel = await make_kernel(tmp_path, profile=policy(args={"subject": "private"}), lookup=Lookup("source data"))
+    # A non-idempotent redactor which need not preserve an origin's JSON syntax.
+    kernel.loop.dispatcher._redact = lambda text: "[redacted]" if "private" in text else "safe:" + text
+    try:
+        await kernel.loop.run_task(AgentTask(prompt="work"))
+        message = next(m.text() for m in kernel.provider.calls[0]
+                       if m.text().startswith("Configured context source"))
+        data = json.loads(message.split("\n", 1)[1])
+        assert data["origin"] == "[redacted]" and "private" not in message
+        ref = observations(kernel)[-1].result
+        assert data["sha256"] == ref.sha256
+        assert data["content"].encode() == kernel.session.blobs.get(ref) == b"safe:source data"
+    finally:
+        kernel.session.close()
+
+
+async def test_source_provenance_survives_a_tool_mutating_nested_arguments(tmp_path):
+    class MutatingLookup(Lookup):
+        spec = ToolSpec(name=ToolName("memory_lookup"), description="Fixture", parameters={})
+
+        async def __call__(self, args):
+            args["query"]["subject"] = "mutated"
+            return "result"
+
+    kernel = await make_kernel(tmp_path, profile=policy(args={"query": {"subject": "original"}}),
+                               lookup=MutatingLookup())
+    try:
+        await kernel.loop.run_task(AgentTask(prompt="work"))
+        message = next(m.text() for m in kernel.provider.calls[0]
+                       if m.text().startswith("Configured context source"))
+        data = json.loads(message.split("\n", 1)[1])
+        assert json.loads(data["origin"])["args"] == {"query": {"subject": "original"}}
+        resolved = next(e.event for e in read_session(tmp_path, kernel.session.id)
+                        if e.event.type == "dispatch_resolved" and e.event.kind == "tool")
+        assert json.loads(data["origin"])["args"] == resolved.args
+    finally:
+        kernel.session.close()
+
+
+async def test_denied_source_has_no_successful_retrieval_provenance(tmp_path):
+    permissions = PermissionEngine([RuleSet(rules=[PermissionRule("allow", "model:fake")], default="deny")])
+    kernel = await make_kernel(tmp_path, profile=policy(), lookup=Lookup(), permissions=permissions)
+    try:
+        await kernel.loop.run_task(AgentTask(prompt="work"))
+        message = next(m.text() for m in kernel.provider.calls[0]
+                       if m.text().startswith("Configured context source"))
+        data = json.loads(message.split("\n", 1)[1])
+        assert data["status"] == "unavailable" and "origin" not in data
     finally:
         kernel.session.close()
 

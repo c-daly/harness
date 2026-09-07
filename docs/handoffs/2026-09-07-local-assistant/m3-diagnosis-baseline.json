@@ -1,0 +1,141 @@
+{
+  "isolation": {
+    "interfaces": [
+      "lo"
+    ],
+    "memory_max_bytes": 4294967296,
+    "swap_max_bytes": 0,
+    "cpu_max": [
+      "400000",
+      "100000"
+    ]
+  },
+  "cases": [
+    {
+      "repeat": 0,
+      "status": "completed",
+      "seconds": 17.937,
+      "answer_facts": false,
+      "tools": [
+        {
+          "tool": "read_file",
+          "purpose": "context",
+          "keys": [
+            "file_path"
+          ],
+          "path_category": "other",
+          "is_error": false,
+          "missing_file": false,
+          "output_bytes": 46
+        },
+        {
+          "tool": "mcp__memory__memory_list",
+          "purpose": "context",
+          "keys": [
+            "subject"
+          ],
+          "path_category": null,
+          "is_error": false,
+          "missing_file": false,
+          "output_bytes": 13802
+        },
+        {
+          "tool": "read_file",
+          "purpose": "conversation",
+          "keys": [
+            "file_path"
+          ],
+          "path_category": "other",
+          "is_error": true,
+          "missing_file": false,
+          "output_bytes": 119
+        }
+      ],
+      "artifact_exact": false
+    },
+    {
+      "repeat": 1,
+      "status": "completed",
+      "seconds": 3.893,
+      "answer_facts": false,
+      "tools": [
+        {
+          "tool": "read_file",
+          "purpose": "context",
+          "keys": [
+            "file_path"
+          ],
+          "path_category": "other",
+          "is_error": false,
+          "missing_file": false,
+          "output_bytes": 46
+        },
+        {
+          "tool": "mcp__memory__memory_list",
+          "purpose": "context",
+          "keys": [
+            "subject"
+          ],
+          "path_category": null,
+          "is_error": false,
+          "missing_file": false,
+          "output_bytes": 13802
+        },
+        {
+          "tool": "read_file",
+          "purpose": "conversation",
+          "keys": [
+            "file_path"
+          ],
+          "path_category": "other",
+          "is_error": true,
+          "missing_file": false,
+          "output_bytes": 119
+        }
+      ],
+      "artifact_exact": false
+    },
+    {
+      "repeat": 2,
+      "status": "completed",
+      "seconds": 3.144,
+      "answer_facts": false,
+      "tools": [
+        {
+          "tool": "read_file",
+          "purpose": "context",
+          "keys": [
+            "file_path"
+          ],
+          "path_category": "other",
+          "is_error": false,
+          "missing_file": false,
+          "output_bytes": 46
+        },
+        {
+          "tool": "mcp__memory__memory_list",
+          "purpose": "context",
+          "keys": [
+            "subject"
+          ],
+          "path_category": null,
+          "is_error": false,
+          "missing_file": false,
+          "output_bytes": 13802
+        },
+        {
+          "tool": "read_file",
+          "purpose": "conversation",
+          "keys": [
+            "file_path"
+          ],
+          "path_category": "other",
+          "is_error": true,
+          "missing_file": false,
+          "output_bytes": 119
+        }
+      ],
+      "artifact_exact": false
+    }
+  ]
+}

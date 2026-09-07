@@ -13,6 +13,10 @@ uv run harness                              # interactive TUI
 uv run harness -p "summarize the README"    # one-shot, headless
 ```
 
+For the provisioned CUDA setup, the [local assistant](docs/local-assistant.md)
+provides an offline launcher and a measured 8B profile with project context,
+optional normal memory, checked file work, cancellation and task continuation.
+
 ## What it is
 
 - **Event-sourced kernel.** The session log is the unit of truth; model state is

@@ -28,6 +28,7 @@ class InteractionController:
         self.active: PendingPrompt | None = None
         self.last_failed: PendingPrompt | None = None
         self.paused = False
+        self.paused_by_user = False
         self.phase = "idle"
         self.last_result: AgentResult | None = None
 
@@ -69,11 +70,13 @@ class InteractionController:
     def clear(self) -> None:
         self._pending.clear()
 
-    def pause(self) -> None:
+    def pause(self, *, user_requested: bool = True) -> None:
         self.paused = True
+        self.paused_by_user |= user_requested
 
     def resume(self) -> None:
         self.paused = False
+        self.paused_by_user = False
         if self.active is None:
             self.phase = "idle"
 
