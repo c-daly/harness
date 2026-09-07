@@ -90,7 +90,11 @@ def render_status(events, *, model=None, resources=None):
     for env in events:
         event = env.event
         if isinstance(event, ContextPolicyConfigured):
-            policy, configured_at = event.policy, env.seq
+            # Resume reasserts the inherited policy. Only an actual change
+            # invalidates observations made under the previous configuration.
+            if event.policy != policy:
+                configured_at = env.seq
+            policy = event.policy
         elif isinstance(event, AgentRunStarted) and event.parent_run_id is None:
             latest_run = event.run_id
         elif isinstance(event, ContextSourceObserved):

@@ -59,6 +59,10 @@ attempt's execution, stop reason and unresolved requirements. Prior acceptance
 is historical; new work still requires fresh checks and review. An interrupted
 operation is never automatically replayed during session recovery.
 
+Before new work starts, `/status` retains the previous attempt's source results
+when resume reasserts the same policy. Clearing or changing the policy invalidates
+those results, including when an earlier policy is subsequently restored.
+
 For inspection without a provider:
 
 ```sh

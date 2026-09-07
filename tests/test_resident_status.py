@@ -2,14 +2,18 @@
 
 import asyncio
 
-from textual.widgets import Input
+import pytest
+from textual.widgets import Input, RichLog
 
+from harness.cli import build_kernel
 from harness.events import ContextSourceObserved, ResourceObserved
 from harness.log import read_session
 from harness.resident import render_status
 from harness.resources import ResourceObservation
 from harness.status_cli import main
 from harness.tui_support import SlashCommand
+from harness.provider import FakeProvider
+from harness.types import ModelId
 from tests.test_resident_context import Lookup, make_kernel, policy
 from tests.test_tui import make_app
 from tests.test_tui_queue import screen_text
@@ -51,6 +55,71 @@ async def test_new_attempt_never_displays_previous_source_as_ready(tmp_path):
         assert "completion unconfirmed" in render_status(read_session(tmp_path, kernel.session.id))
     finally:
         kernel.session.close()
+
+
+@pytest.mark.parametrize("ready", [False, True])
+async def test_repeated_resume_keeps_previous_source_status_without_another_attempt(tmp_path, capsys, ready):
+    kernel = await make_kernel(tmp_path, profile=policy(), lookup=Lookup() if ready else None)
+    try:
+        kernel.tasks.create("Continue project")
+        await kernel.loop.run_task(kernel.tasks.prepare("work"))
+        original = read_session(tmp_path, kernel.session.id)
+    finally:
+        kernel.session.close()
+    for _ in range(2):
+        provider = FakeProvider([])
+        resumed = build_kernel(base_dir=tmp_path, provider=provider, model=ModelId("other"),
+                               resume_session_id=kernel.session.id)
+        try:
+            events = read_session(tmp_path, resumed.session.id)
+            assert events[-1].event.type == "context_policy_configured"
+            assert events[-1].seq > original[-1].seq
+            assert [e for e in events if e.event.type in ("agent_run_started", "context_source_observed")] == [
+                e for e in original if e.event.type in ("agent_run_started", "context_source_observed")]
+            main([str(resumed.session.id), "--base-dir", str(tmp_path)])
+            text = capsys.readouterr().out
+            expected = "ready for recorded attempt" if ready else "unavailable"
+            assert f"Context normal-memory: {expected}" in text
+            assert "not fetched for this attempt" not in text
+            assert not provider.calls
+            assert read_session(tmp_path, resumed.session.id) == events
+        finally:
+            resumed.session.close()
+
+
+@pytest.mark.parametrize("change", ["clear", "override", "restore"])
+async def test_real_policy_changes_invalidate_previous_source_status(tmp_path, change):
+    from harness.events import ContextPolicyConfigured
+    kernel = await make_kernel(tmp_path, profile=policy(), lookup=Lookup())
+    try:
+        await kernel.loop.run_task(kernel.tasks.prepare("work"))
+        replacement = None if change == "clear" else policy(max_bytes=2048)
+        kernel.session.append(ContextPolicyConfigured(policy=replacement))
+        if change == "restore":
+            kernel.session.append(ContextPolicyConfigured(policy=policy()))
+        text = render_status(read_session(tmp_path, kernel.session.id))
+        assert "ready for recorded attempt" not in text
+        assert ("no sources configured" if change == "clear" else "not fetched for this attempt") in text
+    finally:
+        kernel.session.close()
+
+
+async def test_resumed_tui_shows_previous_source_status_before_new_work(tmp_path):
+    app = make_app(tmp_path, context_policy=policy())
+    app.kernel.registry.register(Lookup())
+    async with app.run_test(size=(140, 45)) as pilot:
+        await pilot.pause(0.1)
+        await command(app, pilot, "/task new Keep continuity")
+        await command(app, pilot, "work")
+        await app._rebuild_kernel(resume_session_id=app.kernel.session.id)
+        # Inspect the newly rendered status, without the old retrieval notice.
+        app.query_one("#transcript", RichLog).clear()
+        before = read_session(tmp_path, app.kernel.session.id)
+        await command(app, pilot, "/status")
+        screen = screen_text(app)
+        assert "Context normal-memory: ready for recorded attempt" in screen
+        assert "not fetched for this attempt" not in screen
+        assert read_session(tmp_path, app.kernel.session.id) == before
 
 
 async def test_optional_failure_and_status_are_visible_without_source_payload(tmp_path):

@@ -13,7 +13,10 @@
 > Typed observations reference the existing session blob store. No context fetch
 > creates an orphan conversation tool result or implicitly repeats in children.
 > Expired permission dialogs are retired without dismissing another live prompt.
-> **Validation:** 1323 passed, 7 skipped, 6 warnings in 294.43s; locked sync,
+> PR20 review fixed status inspection immediately after resume: reasserting an
+> unchanged policy retains recorded source results; actual policy changes still
+> invalidate them. Six regressions cover CLI, repeated resume and the compositor.
+> **Validation:** 1329 passed, 7 skipped, 6 warnings in 308.39s; locked sync,
 > Ruff, whitespace, packaging and the 62-module fresh-wheel smoke passed. The
 > [implementation record](docs/superpowers/plans/2026-09-06-core-agency-progress.md)
 > also retains the restricted MCP-bind failures, host-overload test failures,

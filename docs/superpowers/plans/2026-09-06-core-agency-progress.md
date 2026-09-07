@@ -899,3 +899,21 @@ The sdist/wheel build and a fresh wheel smoke passed (`harness --help`, all
 independently of the lockfile; it is packaging evidence, not another locked
 integration or model-quality run. Skips remain three missing Anthropic fixtures,
 three missing Ollama fixtures and one opt-in live Antigravity test.
+
+
+## PR20 review — source status immediately after resume
+
+The reviewer correctly identified that an unchanged `ContextPolicyConfigured`
+event emitted on resume advanced the status cutoff past the previous attempt's
+source observations. `/status` and read-only inspection then falsely reported
+that no retrieval had happened. The projection now advances its cutoff only
+when the policy changes. It retains recorded success and failure across repeated
+resumes, without fetching context or calling a provider. Actual clears, overrides
+and restoration after a policy change still invalidate the old observations.
+
+Six new regressions cover repeated resume, success/failure visibility, policy
+invalidation and the final TUI compositor before new work. Before the fix, three
+resume regressions failed and the three invalidation checks passed. After the
+fix, all 63 focused context/status tests passed in 6.54s. Final validation:
+**1329 passed, 7 skipped, 6 warnings in 308.39s**. Locked offline sync, Ruff,
+whitespace, sdist/wheel build and the 62-module fresh-wheel smoke passed.
