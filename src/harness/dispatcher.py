@@ -32,7 +32,7 @@ from harness.hooks import (
     ProposedToolCall,
     decision_to_payload,
 )
-from harness.execution import BudgetExceeded, ExecutionScope, current_scope
+from harness.execution import BudgetExceeded, ExecutionScope, current_model_call_id, current_scope
 from harness.interaction import PermissionRequest, Resolver
 from harness.inference import (
     InferenceRequest, InferenceResult, LegacyCompletionAdapter, check_input, collect_bounded, infer,
@@ -386,6 +386,7 @@ class Dispatcher:
             activity_before = (budget.tool_calls, budget.children)
             token = current_dispatch_tool.set(self.dispatch_tool)
             scope_token = current_scope.set(self.scope)
+            model_token = current_model_call_id.set(call.call_id)
             try:
                 while True:
                     try:
@@ -434,6 +435,7 @@ class Dispatcher:
             finally:
                 current_dispatch_tool.reset(token)
                 current_scope.reset(scope_token)
+                current_model_call_id.reset(model_token)
             stamped_pricing = (
                 pricing_for(effective_model) if pricing_for is not None else (pricing or {})
             )

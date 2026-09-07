@@ -16,6 +16,10 @@ class LocalUnavailable(ProviderError):
     """A configured local resource could not become ready for inference."""
 
 
+class LocalBusy(ProviderError):
+    """Local admission was refused; waiting/retrying cannot expand its budget."""
+
+
 class RateLimited(ProviderError):
     retryable: ClassVar[bool] = True
 

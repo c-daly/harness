@@ -3,6 +3,7 @@
 import argparse
 import json
 import os
+import signal
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -11,7 +12,11 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--port", type=int, required=True)
 parser.add_argument("--pid-file", type=Path, required=True)
 parser.add_argument("--delay", type=float, default=0)
+parser.add_argument("--model-id", default="test-model")
+parser.add_argument("--ignore-term", action="store_true")
 args = parser.parse_args()
+if args.ignore_term:
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
 started = time.monotonic()
 
 
@@ -22,7 +27,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         loading = time.monotonic() - started < args.delay
         data = {"error": {"type": "unavailable_error", "message": "Loading model"}} if loading else (
-            {"status": "ok"} if self.path.endswith("/health") else {"data": [{"id": "test-model"}]})
+            {"status": "ok"} if self.path.endswith("/health") else {"data": [{"id": args.model_id}]})
         payload = json.dumps(data).encode()
         self.send_response(503 if loading else 200)
         self.send_header("Content-Type", "application/json")
@@ -48,7 +53,7 @@ class Handler(BaseHTTPRequestHandler):
             {"choices": [{"index": 0, "delta": {}, "finish_reason": finish}],
              "usage": {"prompt_tokens": 10, "completion_tokens": 8}},
         ]:
-            chunk.update(id="local-fixture", object="chat.completion.chunk", model="test-model", created=1)
+            chunk.update(id="local-fixture", object="chat.completion.chunk", model=args.model_id, created=1)
             self.wfile.write(("data: " + json.dumps(chunk) + "\n\n").encode())
         self.wfile.write(b"data: [DONE]\n\n")
         self.wfile.flush()

@@ -59,6 +59,7 @@ optional normal memory, checked file work, cancellation and task continuation.
 | **[docs/contributing.md](docs/contributing.md)** | Modifying the harness: the invariants, extension recipes, testing discipline |
 | **[docs/resident-workflow.md](docs/resident-workflow.md)** | Configured context, task continuation, status, interruption and offline evidence |
 | **[docs/local-fallback.md](docs/local-fallback.md)** | Opt-in local fallback that preserves task context, authority and budgets |
+| **[docs/local-scheduling.md](docs/local-scheduling.md)** | Local device groups, visible priority queues and owned runtime replacement |
 
 The complete working reference plugin is [`plugins/memory/`](plugins/memory/).
 The authoritative design record (design doc + per-phase completion notes) lives

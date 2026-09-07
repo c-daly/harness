@@ -173,7 +173,7 @@ class SemanticService:
     async def _observe(self, text, *, model, prompt, profile, schema, validate, limits, enabled,
                        observation_type, fields, save_input=False):
         from harness.dispatcher import ModelDispatchBlocked
-        from harness.errors import ContextOverflow, MalformedStreamError, ProviderError
+        from harness.errors import ContextOverflow, LocalBusy, MalformedStreamError, ProviderError
         from harness.events import AssessmentObserved, SemanticObserved
         from harness.execution import BudgetExceeded
         from harness.inference import InferenceRequest
@@ -240,6 +240,8 @@ class SemanticService:
                 return record("input_limit")
             except MalformedStreamError:
                 return record("invalid_output")
+            except LocalBusy:
+                return record("busy")
             except ProviderError:
                 return record("provider_error")
             fields.update(effective_model=result.model, call_id=result.call_id)

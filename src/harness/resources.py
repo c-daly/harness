@@ -19,7 +19,8 @@ from urllib.parse import urlsplit, urlunsplit
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from harness.errors import LocalUnavailable, ProviderError
+from harness.errors import LocalBusy, LocalUnavailable, ProviderError
+from harness.scheduling import LocalScheduler, Priority
 
 
 class LocalProfile(BaseModel):
@@ -33,6 +34,7 @@ class LocalProfile(BaseModel):
     startup_seconds: float = Field(default=120, gt=0, le=600)
     probe_seconds: float = Field(default=2, gt=0, le=10)
     ttl_seconds: float = Field(default=5, ge=0, le=60)
+    resource_group: str = Field(default="local", pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 
     @field_validator("command", "env_names")
     @classmethod
@@ -86,10 +88,13 @@ class ResourceObservation(BaseModel):
     tool_support: bool | None = None
     structured_output: bool | None = None
     runtime_version: str | None = None
+    resource_group: str | None = None
+    active_alias: str | None = None
+    queued_requests: int = Field(default=0, ge=0)
 
 
 class LocalResources:
-    def __init__(self, *, transport=None, max_owned_processes=1):
+    def __init__(self, *, transport=None, max_owned_processes=1, max_waiting=32):
         if type(max_owned_processes) is not int or max_owned_processes < 1:
             raise ValueError("owned local process limit must be a positive integer")
         self._transport = transport
@@ -100,6 +105,7 @@ class LocalResources:
         self._owned: dict[str, tuple[asyncio.subprocess.Process, object, str]] = {}
         self._active: dict[str, int] = {}
         self._closing = False
+        self.scheduler = LocalScheduler(max_waiting=max_waiting)
 
     @staticmethod
     def _identity(resolved):
@@ -115,6 +121,14 @@ class LocalResources:
 
     def snapshot(self, resolved, *, activity=True) -> ResourceObservation:
         identity = self._identity(resolved)
+        if activity and resolved.local:
+            active_alias, queued = self.scheduler.activity(resolved.local.resource_group)
+            if active_alias or queued:
+                return ResourceObservation(alias=resolved.alias, config_digest=identity, status="busy",
+                    reason="active_requests" if active_alias == resolved.alias else "resource_group_busy",
+                    stale=False, observed_at=time.time(), evidence="local_activity",
+                    ownership="harness" if resolved.alias in self._owned else "external",
+                    resource_group=resolved.local.resource_group, active_alias=active_alias, queued_requests=queued)
         cached = self._cache.get(resolved.alias)
         if cached is not None and cached[0].config_digest == identity:
             observation, expires, credential = cached
@@ -125,7 +139,8 @@ class LocalResources:
             return observation.model_copy(update={"stale": not fresh})
         return ResourceObservation(alias=resolved.alias, config_digest=identity,
                                    status="unknown" if resolved.local else "missing_configuration",
-                                   reason="not_checked" if resolved.local else "no_local_profile")
+                                   reason="not_checked" if resolved.local else "no_local_profile",
+                                   resource_group=resolved.local.resource_group if resolved.local else None)
 
     def _record(self, resolved, status, reason, emit, *, evidence=None, cache=True):
         from harness.events import ResourceObserved
@@ -138,6 +153,7 @@ class LocalResources:
             evidence=evidence or ("health_and_inventory" if resolved.local and
                                  resolved.local.probe_kind == "llamacpp" else "model_inventory"),
             model_id=str(resolved.route).split("/", 1)[-1] if status == "ready" else None,
+            resource_group=resolved.local.resource_group if resolved.local else None,
         )
         emit(ResourceObserved(observation=observation))
         if cache:
@@ -211,6 +227,20 @@ class LocalResources:
             return await self._probe(resolved, emit)
 
     async def _terminate(self, alias, emit):
+        # A queue deadline can arrive while switching idle runtimes. Finish
+        # reaping the owned process before releasing admission to its successor.
+        cleanup = asyncio.create_task(self._terminate_owned(alias, emit))
+        interrupted = False
+        while not cleanup.done():
+            try:
+                await asyncio.shield(cleanup)
+            except asyncio.CancelledError:
+                interrupted = True
+        cleanup.result()
+        if interrupted:
+            raise asyncio.CancelledError
+
+    async def _terminate_owned(self, alias, emit):
         from harness.events import LocalRuntimeRequested
         process, resolved, identity = self._owned[alias]
         log_error = None
@@ -237,6 +267,9 @@ class LocalResources:
         except ProcessLookupError:
             pass
         try:
+            # Other aliases may have borrowed this endpoint's ready evidence.
+            # Releasing an owned process invalidates that evidence too.
+            self._cache.clear()
             self._record(resolved, "stopped", "owned_process_stopped", emit, evidence="local_process")
         finally:
             self._owned.pop(alias)
@@ -244,7 +277,7 @@ class LocalResources:
         if log_error is not None:
             raise log_error
 
-    async def _ready(self, resolved, emit):
+    async def _ready(self, resolved, emit, *, background=False):
         if self._closing:
             raise ProviderError("local resources are closing")
         owned = self._owned.get(resolved.alias)
@@ -253,21 +286,40 @@ class LocalResources:
         if owned and owned[0].returncode is not None:
             await self._terminate(resolved.alias, emit)
             return self._record(resolved, "failed", "owned_process_exited", emit, evidence="local_process")
+        if background and any(previous.local.resource_group == resolved.local.resource_group
+                and (previous.api_base != resolved.api_base or previous.route != resolved.route)
+                for _, previous, _ in self._owned.values()):
+            raise LocalBusy("background inference cannot replace an owned local runtime")
         observation = self.snapshot(resolved, activity=False)
         # Negative diagnostics describe their probe, not a cooldown for future
         # inference. Recheck them even within the TTL; only fresh ready evidence
         # can skip a probe. This also preserves denial if the endpoint still fails.
         if observation.stale or observation.status != "ready":
             observation = await self._probe(resolved, emit)
-        if (observation.status != "unreachable" or not resolved.local.auto_start or owned):
-            return observation
+        if background and observation.status != "ready":
+            raise LocalBusy("background inference requires an already ready local runtime")
         profile = resolved.local
+        replaceable_endpoint = any(alias != resolved.alias and previous.api_base == resolved.api_base
+            and previous.local.resource_group == profile.resource_group
+            for alias, (_, previous, _) in self._owned.items())
+        replace_wrong_model = (replaceable_endpoint and observation.status == "missing_configuration"
+                               and observation.reason == "model_not_listed")
+        if observation.status == "ready":
+            await self._unload_idle_group(resolved, emit)
+        if (observation.status != "unreachable" and not replace_wrong_model
+                or not profile.auto_start or owned):
+            return observation
         if profile.cwd is not None and not profile.cwd.is_dir():
             return self._record(resolved, "missing_configuration", "local_working_directory_missing", emit,
                                 evidence="configuration")
         if any(not path.is_file() for path in profile.required_files):
             return self._record(resolved, "missing_configuration", "local_assets_missing", emit,
                                 evidence="configuration")
+        await self._unload_idle_group(resolved, emit)
+        if replace_wrong_model:
+            observation = await self._probe(resolved, emit)
+            if observation.status != "unreachable":
+                return observation
         if self._reserved >= self._max_owned:
             return self._record(resolved, "busy", "owned_process_capacity", emit, evidence="local_activity")
         from harness.events import LocalRuntimeRequested
@@ -321,9 +373,27 @@ class LocalResources:
             raise
 
     @asynccontextmanager
-    async def use(self, resolved, *, emit):
+    async def use(self, resolved, *, emit, priority: Priority = "interactive", timeout_seconds=120, call_id=None):
+        async with asyncio.timeout(timeout_seconds), self.scheduler.slot(
+                resolved, emit=emit, priority=priority, call_id=call_id):
+            async with self._use_ready(resolved, emit=emit, background=priority == "background") as observation:
+                yield observation
+
+    async def _unload_idle_group(self, resolved, emit):
+        # The group's lease excludes other inference/startup. Same endpoint
+        # and model aliases share the existing process; a different selection
+        # can unload only our own idle processes. Checks never reach this path.
+        for alias, (_, previous, _) in list(self._owned.items()):
+            if (alias != resolved.alias and previous.local.resource_group == resolved.local.resource_group
+                    and (previous.api_base != resolved.api_base or previous.route != resolved.route)):
+                async with self._locks.setdefault(alias, asyncio.Lock()):
+                    if not self._active.get(alias) and alias in self._owned:
+                        await self._terminate(alias, emit)
+
+    @asynccontextmanager
+    async def _use_ready(self, resolved, *, emit, background=False):
         async with self._locks.setdefault(resolved.alias, asyncio.Lock()):
-            observation = await self._ready(resolved, emit)
+            observation = await self._ready(resolved, emit, background=background)
             if observation.status != "ready":
                 raise LocalUnavailable(f"local model {resolved.alias}: {observation.status} ({observation.reason})")
             self._record(resolved, "busy", "active_requests", emit, evidence="local_activity", cache=False)
@@ -345,15 +415,18 @@ class LocalResources:
 
     async def stop(self, alias, *, emit) -> bool:
         async with self._locks.setdefault(alias, asyncio.Lock()):
-            if any(self._active.values()):
-                raise ProviderError("local runtime is in use; interrupt its task before stopping")
-            if alias not in self._owned:
+            owned = self._owned.get(alias)
+            if owned is None:
                 return False
+            # Protect the target group, including aliases borrowing this process.
+            if self.scheduler.activity(owned[1].local.resource_group)[0] is not None:
+                raise ProviderError("local runtime is in use; interrupt its task before stopping")
             await self._terminate(alias, emit)
             return True
 
     async def close(self, *, emit):
         self._closing = True
+        self.scheduler.close()
         failure = None
         for alias in list(self._owned):
             try:
@@ -365,6 +438,8 @@ class LocalResources:
 
 
 def render_resources(observations) -> str:
-    rows = [f"{o.alias}: {o.status}{' (stale)' if o.stale else ''}; {o.ownership}; {o.reason}"
+    rows = [f"{o.alias}: {o.status}{' (stale)' if o.stale else ''}; {o.ownership}; {o.reason}" +
+            (f"; group {o.resource_group}; active {o.active_alias or 'none'}; waiting {o.queued_requests}"
+             if o.resource_group else "")
             for o in observations]
     return "\n".join(rows) if rows else "No local runtime profiles configured."

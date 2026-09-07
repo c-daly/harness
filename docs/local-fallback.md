@@ -94,7 +94,8 @@ native write, retained criteria, one retrieval per source, visible status,
 bounded latency and owned-runtime cleanup. The endpoints simulate provider
 failures; this is not a live cloud-provider outage test.
 
-This slice does not complete M4. General device/cross-alias scheduling,
+Core now provides [session-tree local scheduling](local-scheduling.md) across
+aliases, with visible queues and bounded background work. M4 remains open:
 external-agent reconciliation and handoff, held-out semantic promotion, and
 the supervised self-improvement activation/rollback cycle remain open. This
 fallback gate does not qualify CPU-only execution, every local model, or

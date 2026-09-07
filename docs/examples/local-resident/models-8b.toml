@@ -9,6 +9,7 @@ verified = false
 tags = ["tools"]
 
 [models.local-small.local]
+resource_group = "local"
 auto_start = true
 cwd = "/app"
 probe_kind = "llamacpp"

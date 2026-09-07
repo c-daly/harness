@@ -1,7 +1,7 @@
 # Core agency implementation record
 
-Current implementation branch: `feat/task-fallback`, based on merged `main`
-at `d74a6cf` (PR22). Previous branches: `feat/semantic-context-progress`, `feat/local-assistant-m3`, `feat/resident-workflow`, `feat/task-completion-evidence`, `fix/inference-client-lifecycle`, `feat/local-response-profiles`, `feat/local-tool-recovery`, `feat/local-tool-planning`, `feat/local-qualification`, `feat/semantic-evaluation`, `feat/local-context`, `feat/local-readiness`, `feat/agent-runtimes`,
+Current implementation branch: `feat/local-scheduling`, based on merged `main`
+at `f8b7c1c` (PR23). Previous branches: `feat/task-fallback`, `feat/semantic-context-progress`, `feat/local-assistant-m3`, `feat/resident-workflow`, `feat/task-completion-evidence`, `fix/inference-client-lifecycle`, `feat/local-response-profiles`, `feat/local-tool-recovery`, `feat/local-tool-planning`, `feat/local-qualification`, `feat/semantic-evaluation`, `feat/local-context`, `feat/local-readiness`, `feat/agent-runtimes`,
 and `feat/core-agency`.
 
 Committed checkpoints: `0351b75` (roadmap, lifecycle, and storage/result integrity),
@@ -51,11 +51,11 @@ qualification. Milestone completion requires its roadmap gates, not just code.
 
 | Milestone | State | Evidence / remaining work |
 |---|---|---|
-| M0 baseline and feasibility | In progress | Local feasibility is now established by the M3 8B CUDA workflow. Earlier 4B and 8B profiles failed; 30B/35B probes were too slow. Automatic fallback and broader baseline qualification remain open. |
+| M0 baseline and feasibility | In progress | Local feasibility is now established by the M3 8B CUDA workflow. Earlier 4B and 8B profiles failed; 30B/35B probes were too slow. Bounded local fallback is implemented; broader baseline qualification remains open. |
 | M1 correctness and interaction | In progress | Storage, delegation, controller/UI, MCP capability and explicit-endpoint HTTP cleanup changes are implemented. Durable task obligations and explicit review are visible through the TUI and headless inspection. Broader enforcement/redaction, provider lifecycles and fault qualification remain. |
 | M2 inference / agent contracts | In progress | Bounded inference, native tasks, Codex task binding, explicit execution kinds, nullable usage, core improvement records and recorded task-evidence checks implemented. Remaining adapters, richer artifact predicates and live capability qualification remain. |
 | M3 local core assistant | Complete for the measured CUDA profile | Qwen3-8B passes six full offline project journeys: twelve exact native file writes, changed-record answers after restart, real cancellation, normal memory, and visible task/context status. Four missing-assets/startup-exit recovery cases pass. Shipped profiles and a launcher reproduce the workflow. CPU-only operation, automatic fallback and broader daily-use qualification remain outside this gate. |
-| M4 bounded semantic agency | In progress | All three shadow functions now exist with explicit CLI/TUI access and evidence validation. The public 8B comparison failed context/progress gates; deterministic behavior remains. Message-prompt pairing and earlier context/correction experiments use core improvement records. Held-out qualification, broader scheduling, fallback, candidate generation, assessment candidate evaluation, activation and rollback remain. |
+| M4 bounded semantic agency | In progress | All three shadow functions now exist with explicit CLI/TUI access and evidence validation. The public 8B comparison failed context/progress gates; deterministic behavior remains. Bounded task-preserving fallback and session-tree local scheduling are implemented. Message-prompt pairing and earlier context/correction experiments use core improvement records. Held-out qualification, external-agent reconciliation, candidate generation, assessment candidate evaluation, activation and rollback remain. |
 | M5 heterogeneous work / plugins | Pending | Supervision, plugin reconciliation, portable continuation, isolated improvement patches and rollback. |
 | M6 daily-use qualification | Pending | Measured UI, live adapter boundaries, offline and human dogfood gates. |
 
@@ -1102,3 +1102,88 @@ candidate/paired-evaluation/activation/rollback cycle. The semantic assessments
 remain advisory with their previous failed gates retained. M4 is in progress;
 this bounded fallback slice does not qualify automatic semantic decisions or
 heterogeneous-agent handoff. Memory and agent-swarm remain plugins.
+
+## September 7 — M4 local device-group scheduling
+
+[PR23](https://github.com/c-daly/harness/pull/23) merged at `f8b7c1c`; its
+Python 3.12/3.13 CI and automated review passed. Work continues from that merge
+on `feat/local-scheduling`.
+
+**Added:** one active local startup/inference per declared device group within
+the live session tree. All local aliases default to the same group. A bounded
+queue gives root conversation/compaction priority over waiting work, with FIFO
+within each class. Active streams are not preempted. Queueing consumes the
+original request deadline and retains the existing call reservation; dispatch
+authority and budgets remain prerequisites. Recursive requests fail promptly.
+
+**Background and residency:** semantic/evaluation work abstains when the group
+is busy, does not cold-start a runtime, and cannot replace a warm owned model.
+Foreground/work requests can stop idle Harness-owned runtimes in their group
+before loading a different alias, including a different model on the same
+endpoint. Equivalent endpoint/model aliases reuse the process. Externally
+managed processes are never stopped or adopted. The global owned-process cap
+still applies. Device groups are operator declarations, not GPU memory probes
+or coordination with other applications or Harness processes.
+
+The TUI shows a waiting group while preserving the editable draft and interrupt
+control. Scheduling events link admission to model calls and task runs; resource
+inspection includes active aliases and queue counts. Saved status explicitly
+distinguishes recorded admission from live state. Replay does not run the queue.
+[Configuration and limits](../../local-scheduling.md) and the
+[evidence handoff](../../handoffs/2026-09-07-local-scheduling/README.md) document
+the boundary.
+
+**Validation:** 160 focused tests passed, including actual fixture-process
+replacement, permissions/budgets before admission, queue deadlines, handoff races,
+failed journals and TUI cancellation. A cancellation during idle unload now
+finishes owned-process cleanup before releasing admission; its regression uses
+a real process that ignores TERM. The first real 8B scheduling gate passed both
+plugin configurations, with 21–23ms queued cancellation, 10–13ms stream
+cancellation, priority ordering and exactly one project write in each journey.
+
+The first full M3 regression passed four of six project journeys and all four
+recovery cases. The plugin-free harbor/maple resumed-answer attempts timed out;
+a live event trace showed the runtime reporting loading. GPU telemetry also
+exceeded its five-second deadline and escaped at teardown, leaving the report
+unfinalized. Both the failed report and traceback are retained. This repeats
+the kind of runtime variability recorded before scheduling; it is not evidence
+that session-tree admission controls external GPU load.
+
+A stronger regression then reproduced a live process remaining after repeated
+cancellation during termination. The cleanup guard now withstands additional
+interruptions until reaping finishes, then propagates cancellation. The first
+scheduling run on that final source passed without plugins but timed out before
+the first stream with normal memory. This failed report is also retained.
+
+The unchanged scheduling repeat passed both full journeys on the final source,
+with 21–27ms queue cancellation, 9–16ms stream cancellation and exactly one
+project write per journey. The final-source M3 repeat passed all six journeys
+and four recovery cases, and the final fallback run passed all four cases.
+All three final reports' source hashes match the core and drivers. These passes
+do not establish consistent cold-start latency under external GPU activity.
+
+**Final repository validation:** **1468 passed, 7 skipped, 6 warnings in 328.32s**,
+plus locked offline sync, Ruff, whitespace checks, sdist/wheel build and a clean
+Python 3.13 wheel smoke importing 65 modules. The built wheel's core bytes match
+the source. Existing recorded-fixture and opt-in live-provider skips remain.
+
+**Next:** complete the supervised improvement candidate/paired-evaluation/
+activation/rollback cycle, then the remaining held-out semantic and explicit
+external-agent reconciliation/handoff gates. M4 remains in progress. Memory
+and agent-swarm remain plugins, while the scheduler and improvement machinery
+belong to core.
+
+## PR24 review — independent groups do not block explicit stops
+
+The review identified that `LocalResources.stop` still checked activity across
+all aliases. It now checks the owned target's scheduler group, so unrelated
+groups can continue working while an idle runtime is stopped. Group activity
+also protects aliases borrowing the same runtime and requests in readiness.
+
+A real two-process regression reproduced the rejection before the fix and now
+confirms that the target is reaped while the other process stays live and its
+HTTP readiness check succeeds. Two further cases retain stop denial for an
+active target and a borrowing alias. **111 focused scheduling, local-resource,
+resource-TUI and fallback tests passed in 22.31s**; Ruff and whitespace checks
+passed. The earlier full suite, wheel and GPU reports remain evidence for
+`6d5366a`; they were not rerun for this scoped stop correction.
