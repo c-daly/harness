@@ -78,3 +78,4 @@ class ExecutionScope:
 
 
 current_scope: ContextVar[ExecutionScope | None] = ContextVar("harness_execution_scope", default=None)
+current_model_call_id: ContextVar[str | None] = ContextVar("harness_model_call_id", default=None)

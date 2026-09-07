@@ -261,7 +261,7 @@ async def test_loading_cancellation_and_deadline_reap_owned_process(tmp_path, un
         await work
     with pytest.raises(ProcessLookupError):
         os.kill(pid, 0)
-    assert events[-1].observation.status == "stopped"
+    assert [e.observation for e in events if e.type == "resource_observed"][-1].status == "stopped"
     await resources.close(emit=events.append)
 
 
@@ -419,6 +419,9 @@ async def test_owned_capacity_does_not_launch_a_second_runtime(tmp_path, unused_
     second_dir.mkdir()
     second_catalog = owned_catalog(second_dir, unused_tcp_port_factory())
     second_catalog.entries["second"] = second_catalog.entries.pop("local")
+    # Independent groups still share the finite owned-process cap. Same-group
+    # selections now replace an idle owned runtime rather than dead-ending.
+    second_catalog.entries["second"]["local"]["resource_group"] = "other-device"
     second = second_catalog.resolve("second")
     try:
         async with resources.use(first, emit=lambda e: None):

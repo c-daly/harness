@@ -15,6 +15,7 @@ from harness.resources import ResourceObservation
 from harness.context import ContextPolicy
 from harness.improvement import ImprovementRecord
 from harness.fallback import FallbackDecision, FallbackPolicy
+from harness.scheduling import LocalRequestObservation
 from harness.semantics import AssessmentObservation, SemanticObservation
 from harness.tasks import RequirementEvidence, TaskDefinition, TaskRequirement
 from harness.types import SCHEMA_VERSION, AgentId, CallId, ModelId, SessionId, ToolName
@@ -70,6 +71,12 @@ class UserInterrupt(_Event):
 class ResourceObserved(_Event):
     type: Literal["resource_observed"] = "resource_observed"
     observation: ResourceObservation
+
+
+class LocalRequestObserved(_Event):
+    type: Literal["local_request_observed"] = "local_request_observed"
+    is_intent: ClassVar[bool] = True
+    observation: LocalRequestObservation
 
 
 class LocalRuntimeRequested(_Event):
@@ -492,6 +499,7 @@ Event = Annotated[
         AgentRunStarted,
         AgentRunFinished,
         ResourceObserved,
+        LocalRequestObserved,
         LocalRuntimeRequested,
         ContextPolicyConfigured,
         FallbackConfigured,

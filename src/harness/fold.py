@@ -27,6 +27,7 @@ from harness.events import (
     ModelCorrectionRequested,
     ModelCallProposed,
     ResourceObserved,
+    LocalRequestObserved,
     ContextPolicyConfigured,
     FallbackConfigured,
     FallbackDecided,
@@ -57,6 +58,7 @@ class FoldedState:
     agent_runs: dict[str, AgentResult] = field(default_factory=dict)
     # Historical observations are evidence only; live readiness must recheck.
     resources: dict = field(default_factory=dict)
+    local_requests: dict = field(default_factory=dict)
     context_policy: ContextPolicy | None = None
     fallback_policy: FallbackPolicy | None = None
     fallback_decisions: list[FallbackDecision] = field(default_factory=list)
@@ -111,6 +113,8 @@ def fold(envelopes: list[Envelope]) -> FoldedState:
                 state.evaluation_results[ev.record.run_id] = ev.record
         elif isinstance(ev, ResourceObserved):
             state.resources[ev.observation.alias] = ev.observation
+        elif isinstance(ev, LocalRequestObserved):
+            state.local_requests[ev.observation.request_id] = ev.observation
         elif isinstance(ev, AgentRunFinished):
             state.open_agent_runs.pop(ev.result.run_id, None)
             state.agent_runs[ev.result.run_id] = ev.result

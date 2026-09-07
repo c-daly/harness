@@ -1,0 +1,43 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_ test_interrupted_idle_unload_reaps_stubborn_process_before_next_admission[repeated-cancel] _
+
+tmp_path = PosixPath('/tmp/pytest-of-fearsidhe/pytest-1258/test_interrupted_idle_unload_r0')
+unused_tcp_port_factory = <function unused_tcp_port_factory.<locals>.factory at 0x763acbeb8180>
+mode = 'repeated-cancel'
+
+    @pytest.mark.parametrize("mode", ["deadline", "repeated-cancel"])
+    async def test_interrupted_idle_unload_reaps_stubborn_process_before_next_admission(
+        tmp_path, unused_tcp_port_factory, mode,
+    ):
+        resources, events = LocalResources(), []
+        cat = owned_catalog(tmp_path, unused_tcp_port_factory())
+        cat.entries["local"]["local"]["command"] += ("--ignore-term",)
+        first = cat.resolve("local")
+        other = tmp_path / "other"
+        other.mkdir()
+        second = replace(owned_catalog(other, unused_tcp_port_factory()).resolve("local"), alias="second")
+        try:
+            async with resources.use(first, emit=events.append):
+                pass
+            pid = int((tmp_path / "runtime.pid").read_text())
+            async def switch():
+                async with resources.use(second, emit=events.append, timeout_seconds=0.1 if mode == "deadline" else 5):
+                    pytest.fail("interrupted while reaping the previous process")
+
+            switching = asyncio.create_task(switch())
+            if mode == "repeated-cancel":
+                await until(lambda: any(e.type == "local_runtime_requested" and e.action == "stop" for e in events))
+                switching.cancel()
+                await asyncio.sleep(0)
+                switching.cancel()
+            with pytest.raises(TimeoutError if mode == "deadline" else asyncio.CancelledError):
+                await switching
+>           with pytest.raises(ProcessLookupError):
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           Failed: DID NOT RAISE <class 'ProcessLookupError'>
+
+tests/test_local_scheduling.py:449: Failed
+=========================== short test summary info ============================
+FAILED tests/test_local_scheduling.py::test_interrupted_idle_unload_reaps_stubborn_process_before_next_admission[repeated-cancel]
+1 failed, 28 deselected in 2.84s

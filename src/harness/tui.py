@@ -38,6 +38,7 @@ from harness.events import (
     ModelCallStarted,
     ModelCorrectionRequested,
     FallbackDecided,
+    LocalRequestObserved,
     PermissionRequested,
     PermissionResolved,
     ResourceObserved,
@@ -1250,6 +1251,17 @@ class HarnessApp(App[None]):
                 self.controller.phase = "working"
             self._refresh_queue()
         match event:
+            case LocalRequestObserved(observation=observation):
+                if observation.status == "queued":
+                    from harness.scheduling import render_local_request
+                    self.say("", render_local_request(observation))
+                    if observation.priority == "interactive" and self.controller.active is not None:
+                        self.controller.phase = f"waiting for local group {observation.group}"
+                        self._refresh_queue()
+                elif (observation.status == "acquired" and observation.priority == "interactive"
+                      and self.controller.active is not None):
+                    self.controller.phase = "waiting for response"
+                    self._refresh_queue()
             case FallbackDecided(decision=decision):
                 from harness.fallback import render_fallback
                 self.say("", render_fallback(decision))

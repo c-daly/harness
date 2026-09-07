@@ -96,9 +96,10 @@ server error bodies are not copied into events. Use the runtime's own separately
 configured diagnostics when investigating a launch failure.
 
 Startup happens within the normal, post-routing model dispatch, after permission
-and shared-call-budget checks. The request/task deadline includes startup. A
-healthy existing endpoint is always treated as externally managed, even when an
-auto-start command is configured. A loading or denied external endpoint does not
+and shared-call-budget checks. The request/task deadline includes startup and
+[local queue admission](local-scheduling.md). A healthy endpoint that Harness
+did not launch is treated as externally managed, even when an auto-start command
+is configured. A loading or denied external endpoint does not
 trigger a second process. Only an unreachable endpoint permits on-demand launch.
 
 The default root scope allows **one owned local process**, shared with delegated
@@ -107,7 +108,12 @@ for an embedding application. This is a process count limit, not a RAM or GPU
 memory guarantee. A running owned profile cannot silently change its command or
 endpoint; stop it before applying that configuration change.
 
-An owned server remains available between turns and across session rebuilds.
+An owned server remains available between turns and across session rebuilds
+until another foreground/work alias in its declared group needs that capacity.
+Core then stops the idle owned server before starting its replacement; background
+assessments cannot cold-start or displace a warm runtime. Equivalent endpoint/model
+aliases can share the existing process. See [scheduling](local-scheduling.md) for
+priority, cancellation and residency rules.
 Cancellation or failure during startup reaps the new process before returning;
 normal application shutdown settles active work, terminates owned process groups,
 and reaps its children, including when a worker ignores graceful termination.

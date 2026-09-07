@@ -90,8 +90,10 @@ async def fetch_context(dispatcher):
 
 def render_status(events, *, model=None, resources=None):
     """An explicit inspection, never a probe or a claim of recovered live state."""
-    from harness.events import AgentRunStarted, ContextPolicyConfigured, FallbackConfigured, FallbackDecided, ResourceObserved
+    from harness.events import (AgentRunStarted, ContextPolicyConfigured, FallbackConfigured,
+                                FallbackDecided, LocalRequestObserved, ResourceObserved)
     from harness.fallback import render_fallback
+    from harness.scheduling import render_local_request
     from harness.resources import render_resources
     from harness.tasks import project_tasks, render_task
     tasks = project_tasks(events)
@@ -99,6 +101,7 @@ def render_status(events, *, model=None, resources=None):
     policy, configured_at, latest_run = None, 0, None
     observations, saved_resources = {}, {}
     fallback_policy, fallbacks = None, []
+    local_requests = {}
     for env in events:
         event = env.event
         if isinstance(event, ContextPolicyConfigured):
@@ -117,6 +120,8 @@ def render_status(events, *, model=None, resources=None):
             fallback_policy = event.policy
         elif isinstance(event, FallbackDecided):
             fallbacks.append(event.decision)
+        elif isinstance(event, LocalRequestObserved):
+            local_requests[event.observation.request_id] = event.observation
     rows = [f"Model: {model}" if model is not None else "Saved session status (not a live readiness check).",
             render_task(task) if task else "No task selected."]
     run_id = task.run_id if task else latest_run
@@ -126,6 +131,8 @@ def render_status(events, *, model=None, resources=None):
         rows.append("Automatic local fallback: disabled.")
     for decision in [d for d in fallbacks if d.run_id == run_id][-4:]:
         rows.append(render_fallback(decision) + " Recorded choice; inspect task outcome for completion.")
+    for request in [r for r in local_requests.values() if r.run_id == run_id][-4:]:
+        rows.append(render_local_request(request, saved=True))
     if policy is None or not policy.sources:
         rows.append("Context: no sources configured.")
     else:
