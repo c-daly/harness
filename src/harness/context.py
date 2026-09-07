@@ -5,11 +5,12 @@ Pinned instructions, supplied context, and the current user/tool turn stay intac
 """
 
 import hashlib
+import json
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator, model_validator
 
 from harness.errors import ContextOverflow
 from harness.inference import input_bytes
@@ -33,6 +34,32 @@ class ResponsePolicy(BaseModel):
         return value
 
 
+class ContextSource(BaseModel):
+    """An explicit, repeatable tool query, subject to normal dispatch enforcement."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid", allow_inf_nan=False)
+    id: str = Field(pattern=r"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$")
+    tool: str = Field(min_length=1, max_length=256)
+    args: dict[str, JsonValue] = Field(default_factory=dict)
+    max_bytes: int = Field(default=4096, gt=0, le=16384, strict=True)
+    timeout_seconds: float = Field(default=5, gt=0, le=30)
+    required: bool = Field(default=False, strict=True)
+
+    @field_validator("tool")
+    @classmethod
+    def exact_tool(cls, value):
+        if any(c.isspace() or c in "\0*?[]" for c in value):
+            raise ValueError("context source requires an exact tool name")
+        return value
+
+    @field_validator("args")
+    @classmethod
+    def bounded_arguments(cls, value):
+        if len(json.dumps(value, allow_nan=False).encode()) > 8192:
+            raise ValueError("context source arguments exceed 8192 bytes")
+        return value
+
+
 class ContextPolicy(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
     history_turns: int = Field(default=4, ge=1, le=128, strict=True)
@@ -41,6 +68,14 @@ class ContextPolicy(BaseModel):
     parallel_tool_calls: bool | None = Field(default=None, strict=True)
     tool_recovery_attempts: int = Field(default=0, ge=0, le=2, strict=True)
     response: ResponsePolicy | None = None
+    sources: tuple[ContextSource, ...] = Field(default=(), max_length=4)
+
+    @field_validator("sources")
+    @classmethod
+    def unique_sources(cls, value):
+        if len({source.id for source in value}) != len(value):
+            raise ValueError("context source IDs must be unique")
+        return value
 
     @model_validator(mode="after")
     def recovery_requires_bound(self):
@@ -129,4 +164,6 @@ def render_context_policy(policy, tools):
             + (f"Up to {policy.tool_recovery_attempts} correction attempts per task, within its limits. "
                if policy.tool_recovery_attempts else "")
             + ("Responses: " + ", ".join(response) + ". " if response else "") +
+            ("Context sources: " + ", ".join(source.id for source in policy.sources) + ". "
+             if policy.sources else "") +
             "Full session history is retained; byte limits are not token limits.")

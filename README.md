@@ -24,6 +24,9 @@ uv run harness -p "summarize the README"    # one-shot, headless
   review. Not getting locked in is the point.
 - **One enforcement path.** Native tools and MCP tools dispatch identically,
   through one dispatcher, behind one permission engine.
+- **Resident continuity.** Explicit task requirements and configured project/memory
+  queries survive session resume. `/status` joins task, context and local readiness;
+  normal memory remains a plugin. See [the workflow and its limits](docs/resident-workflow.md).
 - **Permission engine.** Allow / deny / ask rules over tool name *and* arguments,
   layered user → project, with a safe baseline (reads allowed, writes and shell
   prompt).
@@ -50,6 +53,7 @@ uv run harness -p "summarize the README"    # one-shot, headless
 | **[docs/architecture.md](docs/architecture.md)** | How it works: the event spine, kernel loop, dispatcher, hooks, the module map |
 | **[docs/plugin-authoring.md](docs/plugin-authoring.md)** | Writing a plugin: the eight primitives, the manifest, worked examples |
 | **[docs/contributing.md](docs/contributing.md)** | Modifying the harness: the invariants, extension recipes, testing discipline |
+| **[docs/resident-workflow.md](docs/resident-workflow.md)** | Configured context, task continuation, status, interruption and offline evidence |
 
 The complete working reference plugin is [`plugins/memory/`](plugins/memory/).
 The authoritative design record (design doc + per-phase completion notes) lives
@@ -59,7 +63,8 @@ in the project vault at `vault/10-projects/harness/`.
 
 The core is built: event spine and kernel, provider layer, permissions,
 telemetry, MCP, the Textual TUI, the plugin loader, the native tool inventory,
-and the Claude Code importer. The suite runs ~880 tests.
+and the Claude Code importer. The [core agency implementation record](docs/superpowers/plans/2026-09-06-core-agency-progress.md)
+tracks current validation and remaining work; the local write-workflow pilot still fails.
 
 > Secondary docs drift from code. Where this README or anything under `docs/`
 > disagrees with the source, the source is right — please fix the doc.

@@ -1,42 +1,46 @@
 # Core agency implementation — restart handoff
 
-> **Continuation update, September 7:** [PR #18](https://github.com/c-daly/harness/pull/18)
-> merged at `02420aa` after Python 3.12/3.13 CI and automated review passed.
-> Implementation continues on `feat/task-completion-evidence`, based on that merge.
-> [Task evidence](docs/task-evidence.md) now retains explicit objectives and
-> requirements across prompts, model changes, compaction and resume. Exact
-> recorded-output/tool-result checks and user review remain distinct from an
-> agent merely returning an answer. New work invalidates prior checks and acceptance.
-> `/task` exposes creation, selection, requirements, checks, confirmation and
-> acceptance, with an unresolved-work indicator. `harness tasks SESSION` inspects
-> the same records without a provider; headless resumed prompts retain the selected
-> task. Active/queued work cannot be silently retargeted by task commands.
-> The live projection updates after successful log writes, keeping warm status
-> and prompt preparation off the full-history read path. Checks still reread the
-> log and verify bounded immutable evidence. No check executes commands or grants
-> authority. Task outcome events can supply core improvement evidence.
-> **57 focused checks** passed. Final full integration passed **1283 tests,
-> 7 skipped, 6 warnings in 313.17s**, including **46 new cases**. Locked sync,
-> Ruff, whitespace, packaging and the fresh wheel smoke (60 modules) passed.
-> The [synthetic UI probe](docs/handoffs/2026-09-07-task-evidence/probe.json)
-> saved source hashes and rendered unresolved, accepted and changed states,
-> preserving an unsent draft. Five warm preparation samples after 5,000 extra
-> events measured 0.030–0.159 ms. This is fixture evidence, not human dogfood,
-> whole-interface latency qualification or model-quality evidence.
-> Read the [implementation record](docs/superpowers/plans/2026-09-06-core-agency-progress.md)
-> for the earlier failed/sandbox-limited checks and final validation scope.
-> Next: combine task continuity, configured normal memory, local readiness,
-> interruption and recovery into one useful resident workflow. Task amendments,
-> richer live file/check evidence and natural-language requirement proposals
-> remain outstanding. Semantic judgments cannot accept tasks or override checks.
+> **Continuation update, September 7:** [PR #19](https://github.com/c-daly/harness/pull/19)
+> merged at `eb77885` after Python 3.12/3.13 CI and automated review passed.
+> Implementation continues on `feat/resident-workflow`, based on that merge.
+> [Resident continuity](docs/resident-workflow.md) now fetches explicit context
+> sources once per root attempt through normal tool enforcement, retains a
+> bounded previous-attempt brief, and joins task/context/local snapshots in
+> `/status`. `harness status SESSION` inspects historical state without a provider
+> or log repair. Source configuration survives resume and explicit overrides.
+> Required-source failure stops inference; optional failure is visible. Result
+> caps, total input limits, task/source deadlines and root tool budgets apply.
+> Typed observations reference the existing session blob store. No context fetch
+> creates an orphan conversation tool result or implicitly repeats in children.
+> Expired permission dialogs are retired without dismissing another live prompt.
+> PR20 review fixed status inspection immediately after resume: reasserting an
+> unchanged policy retains recorded source results; actual policy changes still
+> invalidate them. Six regressions cover CLI, repeated resume and the compositor.
+> **Validation:** 1329 passed, 7 skipped, 6 warnings in 308.39s; locked sync,
+> Ruff, whitespace, packaging and the 62-module fresh-wheel smoke passed. The
+> [implementation record](docs/superpowers/plans/2026-09-06-core-agency-progress.md)
+> also retains the restricted MCP-bind failures, host-overload test failures,
+> initial red regressions and final packaging scope.
+> The [real offline pilot](docs/handoffs/2026-09-07-resident-workflow/resident-workflow.json)
+> **failed overall**. Both configured queries, fresh normal-memory retrieval after
+> restart, visible status, real streaming cancellation (123 ms), preserved draft,
+> stable task/profile and resumed factual answer passed. The initial write task
+> failed to create the exact artifact and omitted the expected facts. The normal
+> memory index was 13,802 bytes; these facts do not establish the failure's cause.
+> The initial probe's cancellation-method error is retained separately. Neither
+> run qualifies a fallback. The pilot hashes precede final permission-dialog
+> cleanup and source-error hardening, which is covered by deterministic composed-terminal tests.
+> Next: measure context relevance and local tool selection against exact project
+> artifacts, then qualify a repeatable useful workflow. Continue UI onboarding,
+> discoverability, heterogeneous-agent work and portable handoff. Do not substitute
+> broader model installs or weaker checks for the failed workflow evidence.
 > Larger models, Unsloth and Hugging Face remain on the candidate list. The prior
-> local response candidate remains rejected (**9/18 versus 14/18 incumbent**);
-> no fallback or improvement activation was enabled. Automatic adoption policy
-> remains unanswered; continue implementation without assuming approval.
-> M0–M4 remain in progress; M5–M6 pending. Memory and agent-swarm stay plugins.
-> The user authorized commits, PRs and continued implementation. User `.claude/`,
-> `.context/`, private memory and user-managed services are preserved. The
-> inventory below is historical, not a restoration instruction.
+> local response candidate remains rejected (9/18 versus 14/18 incumbent).
+> Automatic adoption policy remains unanswered; no fallback or improvement
+> activation is enabled. M0–M4 remain in progress; M5–M6 pending.
+> Memory and agent-swarm stay plugins. The user authorized commits, PRs and
+> continued implementation. User `.claude/`, `.context/`, private memory and
+> user-managed services are preserved. The inventory below is historical.
 
 ## Historical pre-reboot inventory
 

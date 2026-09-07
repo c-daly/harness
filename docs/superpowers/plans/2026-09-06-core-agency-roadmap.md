@@ -12,6 +12,14 @@ and validation; the roadmap's gates are not claims of completed behavior.
 existing provider, frontend, and plugin extension points while changing what
 the core owns.
 
+> **September 7 resident-workflow addition:** core now fetches explicitly
+> configured context through normal tool dispatch before each root attempt,
+> retains a previous-attempt brief, and joins task/context/local status. See the
+> [resident workflow](../../resident-workflow.md). Offline retrieval, interruption
+> and restart continuity passed their narrow real-model checks. The write-artifact
+> pilot failed; local tool choice and context relevance remain qualification gaps.
+> This does not finish M3, qualify automatic fallback or authorize improvement adoption.
+
 ## Direction and review map
 
 Harness should be the consistent assistant and work surface across changing

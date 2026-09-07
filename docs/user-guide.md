@@ -67,6 +67,9 @@ tool calls, and answer permission prompts inline. Key bindings:
   record your review, and `/task accept NOTE` to accept the checked attempt.
   Further work invalidates the earlier checks and acceptance. `/task list`,
   `/task use ID` and `/task off` switch task context without erasing records.
+- `/status` — inspect task requirements, configured context results and local
+  runtime snapshots together, without starting a probe or model. See
+  [resident continuity](resident-workflow.md) for context sources and restart behavior.
   See [task evidence](task-evidence.md) for exact checks and headless inspection.
 - `/thoughts [collapse|full|off]` — control how a reasoning model's thinking
   is shown while it streams. `collapse` (the default) streams the live

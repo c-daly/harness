@@ -134,6 +134,8 @@ The source is flat under `src/harness/`. Grouped by role:
 **Surface**
 - `cli.py` — `build_kernel`, `run_once`, and the `harness` CLI.
 - `task_cli.py` — read-only task inspection outside the TUI.
+- `resident.py` — configured context retrieval and joined task/context/readiness inspection.
+- `status_cli.py` — read-only saved resident status outside the TUI.
 - `tui.py` / `tui_support.py` — the Textual UI (subscriber + decision provider).
 - `redaction.py` — the day-one redaction seam (identity by default).
 - `errors.py` — shared error types.

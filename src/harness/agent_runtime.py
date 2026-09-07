@@ -68,6 +68,10 @@ class ExternalAgentRuntime:
         self, task: AgentTask, *, on_progress: Callable[[AgentProgress], None] | None = None,
     ) -> AgentResult:
         task = AgentTask.model_validate(task.model_dump())
+        policy = self.dispatcher.scope.context_policy
+        if policy is not None:
+            task = task.model_copy(update={"limits": task.limits.model_copy(update={
+                "max_input_bytes": min(task.limits.max_input_bytes, policy.max_input_bytes)})})
         if self._active:
             raise RuntimeError("an agent task is already running")
         self._active = True
@@ -92,6 +96,9 @@ class ExternalAgentRuntime:
         if task.limits.max_iterations == 0:
             return AgentOutput("[stopped: max iterations (0) reached]", "incomplete", "iteration_limit",
                                Usage(0, 0, 0, 0))
+        if self._prepared_messages is None:
+            from harness.resident import fetch_context
+            messages = (*await fetch_context(self.dispatcher), *messages)
         active = current_agent_run.get()
 
         def progress(phase, chunk=None):

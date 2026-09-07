@@ -98,6 +98,7 @@ class TrackedTask:
     run_id: str | None = None
     run_started_seq: int = 0
     execution: str = "not started"
+    execution_reason: str = ""
     open_runs: set[str] = field(default_factory=set)
     evidence: dict[str, RequirementEvidence] = field(default_factory=dict)
     confirmations: dict[str, tuple[int, str]] = field(default_factory=dict)
@@ -160,6 +161,7 @@ class TaskState:
                 task.invalidate(env.seq)
                 task.run_id, task.run_started_seq = event.run_id, env.seq
                 task.execution = "running"
+                task.execution_reason = ""
             if owner is not None:
                 self.run_owners[event.run_id] = owner
                 self.items[owner].open_runs.add(event.run_id)
@@ -170,6 +172,7 @@ class TaskState:
                 task.open_runs.discard(event.result.run_id)
                 if event.result.run_id == task.run_id:
                     task.execution = event.result.status
+                    task.execution_reason = event.result.reason
                     task.invalidate(env.seq)
         elif isinstance(event, (TaskRequirementAdded, TaskChecked, TaskRequirementConfirmed, TaskAccepted)):
             task = self.items.get(event.task_id)
@@ -269,6 +272,17 @@ class TaskService:
         task = self.selected()
         if task is None:
             return AgentTask(prompt=prompt, context=context)
+        if task.run_id is not None:
+            from harness.messages import Message
+            # This summary is derived before the new attempt invalidates old evidence.
+            import json
+            previous = {"run_id": task.run_id, "execution": task.execution,
+                        "reason": task.execution_reason[:512], "accepted": task.accepted,
+                        "unresolved": list(task.unresolved)}
+            context = (*context, Message.system_text(
+                "Previous task attempt (historical session data):\n" + json.dumps(previous) +
+                "\nThis attempt needs fresh evidence. Inspect current state before repeating uncertain work."
+            ))
         return AgentTask(id=task.definition.id, prompt=prompt, context=context,
                          acceptance_criteria=task.criteria)
 
