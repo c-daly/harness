@@ -67,6 +67,11 @@ durable feedback, and leaves tool permissions unchanged. The default is zero.
 
 ## Inspection and continuation
 
+An optional `[response]` section sets output bounds, inference temperature and
+answer guidance. See [response profiles](response-profiles.md) for the contract,
+resume behavior, and measured limitations. These are conversation settings;
+semantic functions keep their own bounded requests.
+
 TUI `/context` shows the profile and currently available allowed tools. `/tools`
 also reflects the filtered inventory, and the status bar shows the input byte
 cap instead of a percentage calculated from the complete stored history.

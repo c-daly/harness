@@ -1,37 +1,39 @@
 # Core agency implementation — restart handoff
 
-> **Continuation update, September 6:** [PR #15](https://github.com/c-daly/harness/pull/15)
-> merged into `main` at `0a45d43` after Python 3.12/3.13 CI and review passed.
-> Implementation continues on `feat/local-tool-recovery`, created from that merge.
-> This slice adds opt-in `tool_recovery_attempts` (0–2, default 0) to the
-> single-tool context policy. Fully rejected inference batches can receive fixed,
-> durable feedback within the original task/call limits. Tool permissions still
-> apply; external agents and ambiguous failures remain outside recovery.
-> The TUI announces correction and synchronously clears rejected streamed text.
-> The [experiment contract](docs/local-tool-recovery.md) records the paired
-> evaluation and expanded offline TUI journey with the actual normal memory plugin.
-> Initial paired result: baseline **4/8**, candidate **8/8**, review required.
-> Final repeat: baseline **4/8**, candidate **6/8**, verdict **failed**, adoption
-> **refused**. Missing/malformed artifacts remain; an occasional pass is not a
-> qualified fallback. No candidate or automatic routing was activated.
-> Private memory and user services were preserved; assets and earlier reports stay
-> in `.local-runtime/`. Core audit sessions remain in `reports/recovery-audit` there.
-> Read the [implementation record](docs/superpowers/plans/2026-09-06-core-agency-progress.md)
-> for final journey and integration validation. The final journey passed **9/12**;
-> memory-enabled resumed answers still failed visibility. A diagnostic found both
-> facts in a **14 KB** answer, with the project outside the final viewport.
-> Full integration passed **1201 tests, 7 skipped**, with 6 existing MCP warnings.
-> Locked sync, Ruff, packaging and the fresh wheel smoke (58 modules) passed.
-> M0–M4 remain in progress;
-> M5–M6 remain pending. The user authorized commits, PRs, and continued implementation.
-> Next: compare an explicit sampling/runtime profile and a suitable tool-capable
-> model and bounded answer verbosity against these same artifact and final-viewport
-> checks, including repeated normal
-> memory use. Broader model quality, full M3 qualification, semantic context/progress
-> functions, candidate generation, scheduling, fallback, activation and rollback
-> remain outstanding. Memory and agent-swarm stay independent plugins.
+> **Continuation update, September 6:** [PR #16](https://github.com/c-daly/harness/pull/16)
+> merged into `main` at `fb07139` after Python 3.12/3.13 CI and review passed.
+> Implementation continues on `feat/local-response-profiles`, created from that merge.
+> Core response profiles now persist optional sampling, generation limits and
+> answer guidance. Defaults remain unchanged; semantic inference keeps its own
+> settings, and external agents refuse unsupported explicit sampling.
+> Read the [response contract](docs/response-profiles.md) and
+> [implementation record](docs/superpowers/plans/2026-09-06-core-agency-progress.md).
+> Three real four-journey pilots failed, including a separately pinned Qwen3 8B.
+> The final fixed 18-case paired evaluation passed **14/18 incumbent, 9/18 candidate**,
+> with six regressions and one improvement: core verdict **failed**, adoption
+> **refused**. Shorter answers did not preserve reliable artifact creation.
+> No candidate, default model, automatic adoption or fallback was activated.
+> Reports preserve hashes and metadata; private memory output was not copied.
+> Core audit session `b5324774b0e84388be1bf8ba9b79f70e` is under ignored
+> `.local-runtime/reports/response-audit`. Earlier evidence remains preserved.
+> The new 8B weights are `.local-runtime/Qwen3-8B-Q4_K_M.gguf`; the response
+> contract pins the exact revision/hash. The original 4B fixture remains default.
+> Model-process and MCP teardown checks passed, but the longer run emitted
+> unclosed aiohttp client-session warnings. This SDK transport lifecycle gap is
+> unresolved; do not equate existing cleanup checks with complete resource cleanup.
+> Next: reproduce and fix client ownership under concurrent/cancelled inference;
+> then check requested work against execution/artifact evidence and present unmet
+> requirements clearly. Keep semantic assessments advisory and retain exact
+> artifact, fresh-memory and final-viewport gates. More sampling changes alone
+> have not qualified M3. Candidate generation, scheduling, fallback, activation,
+> rollback and broader semantic functions remain outstanding.
+> Integration passed **1222 tests, 7 skipped, 6 warnings in 315.76s**. Locked dev
+> extra sync, Ruff, whitespace, packaging and the fresh wheel smoke (58 modules)
+> passed. All task-owned experiment containers exited.
+> M0–M4 remain in progress; M5–M6 remain pending. Memory and agent-swarm stay
+> independent plugins. The user authorized commits, PRs and continued implementation.
 > User `.claude/` and `.context/` remain preserved and ignored. The inventory
-> below is the historical pre-reboot snapshot, not a restoration instruction.
+> below is historical, not a restoration instruction.
 
 ## Historical pre-reboot inventory
 

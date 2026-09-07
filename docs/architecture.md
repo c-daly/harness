@@ -22,6 +22,9 @@ inventories while retaining canonical history and normal plugin ownership.
 [Bounded tool correction](local-tool-recovery.md) adds durable feedback and
 optional native-agent recovery after an inference batch was rejected before execution.
 
+[Response profiles](response-profiles.md) persist conversation generation bounds,
+sampling and answer guidance while keeping semantic requests separate.
+
 [Semantic evaluation](semantic-evaluation.md) adds shadow observations and paired
 prompt experiments through the same dispatcher, with fixed grading and recovery.
 

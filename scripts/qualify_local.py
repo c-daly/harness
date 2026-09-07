@@ -14,6 +14,7 @@ import os
 import subprocess
 import tempfile
 import time
+import tomllib
 from datetime import datetime, timezone
 from importlib.metadata import version
 from pathlib import Path
@@ -21,7 +22,7 @@ from pathlib import Path
 from harness.agent import AgentTask, TaskLimits
 from harness.catalog import Catalog
 from harness.cli import build_kernel
-from harness.context import ContextPolicy
+from harness.context import ContextPolicy, ResponsePolicy
 from harness.fold import fold
 from harness.errors import MalformedStreamError, ToolCallLimitExceeded
 from harness.log import read_session
@@ -36,6 +37,19 @@ from harness.types import ModelId
 IMAGE = "sha256:841b199aed2649a748875b043b32fed2e8c2d4d87e1d563556817fb7fa44b72b"
 WEIGHTS_SHA256 = "3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597"
 WEIGHTS_BYTES = 2497281120
+MODEL_PROFILES = {
+    "qwen3-4b-instruct": {"repo": "unsloth/Qwen3-4B-Instruct-2507-GGUF",
+        "filename": "Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
+        "revision": "a06e946bb6b655725eafa393f4a9745d460374c9", "bytes": WEIGHTS_BYTES,
+        "sha256": WEIGHTS_SHA256, "runtime_args": []},
+    "qwen3-8b": {"repo": "Qwen/Qwen3-8B-GGUF",
+        "filename": "Qwen3-8B-Q4_K_M.gguf",
+        "revision": "7c41481f57cb95916b40956ab2f0b139b296d974", "bytes": 5027783488,
+        "sha256": "d98cdcbd03e17ce47681435b5150e34c1417f50b5c0019dd560e4882c5745785",
+        "runtime_args": ["--chat-template-kwargs", '{"enable_thinking":false}',
+                         "--temp", "0.7", "--top-p", "0.8", "--top-k", "20", "--min-p", "0",
+                         "--presence-penalty", "1.5"]},
+}
 FACTS = {"project": "harbor", "retry_limit": 3}
 THRESHOLDS = {"project_seconds": 45, "cold_start_seconds": 30,
               "warm_semantic_ms": 2000, "cancel_seconds": 2, "ui_mount_seconds": 3}
@@ -48,7 +62,7 @@ def sha256(path):
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
-def catalog(model_file):
+def catalog(model_file, profile="qwen3-4b-instruct"):
     return Catalog(entries={"local-small": {
         "route": "openai/local-small", "api_base": "http://127.0.0.1:8080/v1",
         "max_input_tokens": 8192, "verified": False,
@@ -60,7 +74,8 @@ def catalog(model_file):
                               "--alias", "local-small", "--host", "127.0.0.1", "--port", "8080",
                               "--n-gpu-layers", "99", "--ctx-size", "8192", "--parallel", "1",
                               "--threads", "4", "--threads-batch", "4", "--flash-attn", "on",
-                              "--jinja", "--cache-ram", "0", "--fit", "off"]}}})
+                              "--jinja", "--cache-ram", "0", "--fit", "off",
+                              *MODEL_PROFILES[profile]["runtime_args"]]}}})
 
 
 def isolation():
@@ -136,7 +151,7 @@ def start_latency(kernel, base):
 
 
 def make_kernel(base, workspace, models, memory_root=None, resume=None, *, parallel_tool_calls=None,
-                tool_recovery_attempts=0):
+                tool_recovery_attempts=0, response=None):
     names = ("read_file", "write_file")
     specs = ()
     if memory_root:
@@ -157,7 +172,8 @@ def make_kernel(base, workspace, models, memory_root=None, resume=None, *, paral
         resume_session_id=resume,
         context_policy=None if resume else ContextPolicy(history_turns=1, tools=names,
                                                          parallel_tool_calls=parallel_tool_calls,
-                                                         tool_recovery_attempts=tool_recovery_attempts))
+                                                         tool_recovery_attempts=tool_recovery_attempts,
+                                                         response=response))
 
 
 async def close(kernel):
@@ -176,12 +192,12 @@ async def close(kernel):
 
 
 async def project_case(root, models, memory_root, *, parallel_tool_calls=None, facts=FACTS,
-                       tool_recovery_attempts=0):
+                       tool_recovery_attempts=0, response=None):
     workspace, base = root / "project", root / "sessions"
     workspace.mkdir(parents=True)
     (workspace / "FACTS.json").write_text(json.dumps(facts))
     kernel = make_kernel(base, workspace, models, memory_root, parallel_tool_calls=parallel_tool_calls,
-                         tool_recovery_attempts=tool_recovery_attempts)
+                         tool_recovery_attempts=tool_recovery_attempts, response=response)
     row = {"mode": "normal-memory" if memory_root else "no-plugins", "checks": {}, "stage": "start"}
     checks = row["checks"]
     try:
@@ -268,7 +284,8 @@ async def until(predicate, seconds=45):
             await asyncio.sleep(0.02)
 
 
-async def tui_case(root, models, memory_root=None, *, parallel_tool_calls=None, tool_recovery_attempts=0):
+async def tui_case(root, models, memory_root=None, *, parallel_tool_calls=None, tool_recovery_attempts=0,
+                   response=None):
     from textual.widgets import Input
     from harness.tui import HarnessApp
 
@@ -277,7 +294,7 @@ async def tui_case(root, models, memory_root=None, *, parallel_tool_calls=None, 
     workspace.mkdir(parents=True)
     (workspace / "FACTS.json").write_text(json.dumps(FACTS))
     kernel = make_kernel(base, workspace, models, memory_root, parallel_tool_calls=parallel_tool_calls,
-                         tool_recovery_attempts=tool_recovery_attempts)
+                         tool_recovery_attempts=tool_recovery_attempts, response=response)
     app = HarnessApp(kernel, native_tools=True, workspace_root=workspace)
     row = {"mode": "tui-normal-memory" if memory_root else "tui-no-plugins", "checks": {}, "stage": "mount"}
     checks = row["checks"]
@@ -394,8 +411,12 @@ async def tui_case(root, models, memory_root=None, *, parallel_tool_calls=None, 
             await until(lambda: app.controller.active is None)
             await pilot.pause(0.2)
             last = [e for e in events(app.kernel, base) if e.type == "agent_run_finished"][-1]
+            resume_text = last.result.read_text(app.kernel.session.blobs)
+            row["resume_answer"] = {"status": last.result.status, "bytes": len(resume_text.encode()),
+                "contains_project": "harbor" in resume_text, "project_visible": "harbor" in screen(),
+                "sha256": hashlib.sha256(resume_text.encode()).hexdigest()}
             checks["resume_answer"] = (last.result.status == "completed" and
-                "harbor" in last.result.read_text(app.kernel.session.blobs) and "harbor" in screen())
+                row["resume_answer"]["contains_project"] and row["resume_answer"]["project_visible"])
             checks["resume_settled"] = settled(app.kernel, base)
             if memory_root:
                 checks["resume_normal_memory_used"] = sum(e["tool"] == "mcp__memory__memory_list"
@@ -443,8 +464,9 @@ async def tui_case(root, models, memory_root=None, *, parallel_tool_calls=None, 
     return row
 
 
-async def run(root, models, memory_root, *, parallel_tool_calls=None, tool_recovery_attempts=0):
-    policy = {"parallel_tool_calls": parallel_tool_calls, "tool_recovery_attempts": tool_recovery_attempts}
+async def run(root, models, memory_root, *, parallel_tool_calls=None, tool_recovery_attempts=0, response=None):
+    policy = {"parallel_tool_calls": parallel_tool_calls, "tool_recovery_attempts": tool_recovery_attempts,
+              "response": response}
     rows = [await project_case(root / "no-plugins", models, None,
                                **policy)]
     if memory_root:
@@ -459,26 +481,32 @@ async def run(root, models, memory_root, *, parallel_tool_calls=None, tool_recov
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model-file", type=Path, default=Path("/models/local.gguf"))
+    parser.add_argument("--model-profile", choices=MODEL_PROFILES, default="qwen3-4b-instruct")
     parser.add_argument("--memory-root", type=Path)
     parser.add_argument("--runs", type=int, choices=range(1, 11), default=3)
     parser.add_argument("--single-tool", action="store_true",
                         help="Opt in to one tool proposal per response through the context profile.")
     parser.add_argument("--tool-recovery-attempts", type=int, choices=range(3), default=0)
+    parser.add_argument("--response-profile", type=Path, help="TOML response settings for this explicit experiment")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
+    response = (ResponsePolicy.model_validate(tomllib.loads(args.response_profile.read_text()))
+                if args.response_profile else None)
     if args.tool_recovery_attempts and not args.single_tool:
         parser.error("tool recovery requires --single-tool")
     # Use installed SDK metadata; no import-time remote price-map request.
     os.environ["LITELLM_LOCAL_MODEL_COST_MAP"] = "True"
     caps = isolation()
-    if args.model_file.stat().st_size != WEIGHTS_BYTES or sha256(args.model_file) != WEIGHTS_SHA256:
+    pin = MODEL_PROFILES[args.model_profile]
+    if args.model_file.stat().st_size != pin["bytes"] or sha256(args.model_file) != pin["sha256"]:
         parser.error("model artifact differs from the pinned qualification profile")
     if args.memory_root and not os.environ.get("MEMORY_VAULT_DIR"):
         parser.error("normal-memory mode requires an explicit, read-only mounted MEMORY_VAULT_DIR")
-    models = catalog(args.model_file)
+    models = catalog(args.model_file, args.model_profile)
     source = Path(__file__).resolve().parents[1] / "src/harness"
     report = {"schema_version": 1, "observed_at": datetime.now(timezone.utc).isoformat(),
-        "driver_sha256": sha256(Path(__file__)), "weights_sha256": WEIGHTS_SHA256,
+        "driver_sha256": sha256(Path(__file__)), "weights_sha256": pin["sha256"],
+        "model_profile": args.model_profile, "model_pin": pin,
         "source_tree_sha256": hashlib.sha256(json.dumps(
             {str(p.relative_to(source)): sha256(p) for p in sorted(source.rglob("*.py"))},
             sort_keys=True).encode()).hexdigest(),
@@ -495,12 +523,14 @@ def main():
     report["runs"] = args.runs
     report["parallel_tool_calls"] = False if args.single_tool else None
     report["tool_recovery_attempts"] = args.tool_recovery_attempts
+    report["response"] = response.model_dump(mode="json") if response else None
     report["cases"] = []
     for repeat in range(args.runs):
         with tempfile.TemporaryDirectory(prefix="harness-real-local-") as temp:
             rows = asyncio.run(run(Path(temp), models, args.memory_root,
                                    parallel_tool_calls=report["parallel_tool_calls"],
-                                   tool_recovery_attempts=args.tool_recovery_attempts))
+                                   tool_recovery_attempts=args.tool_recovery_attempts,
+                                   response=response))
         report["cases"].extend({"repeat": repeat, **row} for row in rows)
     report["memory_peak_bytes"] = int(Path("/sys/fs/cgroup/memory.peak").read_text())
     report["passed"] = all(row["passed"] for row in report["cases"])
