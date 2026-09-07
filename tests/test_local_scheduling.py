@@ -398,6 +398,52 @@ async def test_endpoint_alias_reuses_owned_process_and_stop_invalidates_all_alia
         await resources.close(emit=events.append)
 
 
+async def test_stop_idle_runtime_while_an_independent_group_is_active(tmp_path, unused_tcp_port_factory):
+    resources, events = LocalResources(max_owned_processes=2), []
+    first = owned_catalog(tmp_path, unused_tcp_port_factory(), resource_group="first-device").resolve("local")
+    other = tmp_path / "other"
+    other.mkdir()
+    second = replace(owned_catalog(other, unused_tcp_port_factory(), resource_group="other-device").resolve("local"),
+                     alias="second")
+    try:
+        async with resources.use(first, emit=events.append):
+            pass
+        first_pid = int((tmp_path / "runtime.pid").read_text())
+        async with resources.use(second, emit=events.append):
+            second_pid = int((other / "runtime.pid").read_text())
+            assert await resources.stop(first.alias, emit=events.append)
+            with pytest.raises(ProcessLookupError):
+                os.kill(first_pid, 0)
+            os.kill(second_pid, 0)
+            assert (await resources.check(second, emit=events.append)).status == "ready"
+            assert resources.scheduler.activity("other-device") == ("second", 0)
+            assert resources._reserved == 1 and list(resources._owned) == ["second"]
+    finally:
+        await resources.close(emit=events.append)
+
+
+@pytest.mark.parametrize("borrowed", [False, True])
+async def test_stop_rejects_active_runtime_including_a_borrowing_alias(tmp_path, unused_tcp_port, borrowed):
+    from harness.errors import ProviderError
+    resources, events = LocalResources(), []
+    owned = owned_catalog(tmp_path, unused_tcp_port).resolve("local")
+    active = replace(owned, alias="borrower") if borrowed else owned
+    try:
+        async with resources.use(owned, emit=events.append):
+            pass
+        pid = int((tmp_path / "runtime.pid").read_text())
+        async with resources.use(active, emit=events.append):
+            with pytest.raises(ProviderError, match="in use"):
+                await resources.stop(owned.alias, emit=events.append)
+            os.kill(pid, 0)
+            assert resources.scheduler.activity("local") == (active.alias, 0)
+        assert await resources.stop(owned.alias, emit=events.append)
+        with pytest.raises(ProcessLookupError):
+            os.kill(pid, 0)
+    finally:
+        await resources.close(emit=events.append)
+
+
 async def test_owned_endpoint_can_switch_models_after_inventory_mismatch(tmp_path, unused_tcp_port):
     resources, events = LocalResources(), []
     cat = owned_catalog(tmp_path, unused_tcp_port)

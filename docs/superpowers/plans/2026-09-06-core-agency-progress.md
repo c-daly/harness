@@ -1172,3 +1172,18 @@ activation/rollback cycle, then the remaining held-out semantic and explicit
 external-agent reconciliation/handoff gates. M4 remains in progress. Memory
 and agent-swarm remain plugins, while the scheduler and improvement machinery
 belong to core.
+
+## PR24 review — independent groups do not block explicit stops
+
+The review identified that `LocalResources.stop` still checked activity across
+all aliases. It now checks the owned target's scheduler group, so unrelated
+groups can continue working while an idle runtime is stopped. Group activity
+also protects aliases borrowing the same runtime and requests in readiness.
+
+A real two-process regression reproduced the rejection before the fix and now
+confirms that the target is reaped while the other process stays live and its
+HTTP readiness check succeeds. Two further cases retain stop denial for an
+active target and a borrowing alias. **111 focused scheduling, local-resource,
+resource-TUI and fallback tests passed in 22.31s**; Ruff and whitespace checks
+passed. The earlier full suite, wheel and GPU reports remain evidence for
+`6d5366a`; they were not rerun for this scoped stop correction.

@@ -4,6 +4,10 @@ This slice starts from PR23's merge (`f8b7c1c`) on `feat/local-scheduling`.
 The [configuration and behavior](../../local-scheduling.md) describe its
 session-tree boundary. M4 remains in progress.
 
+The runtime reports and packaging evidence below describe `6d5366a`, before
+the PR24 review correction to explicit stops. Validation of that correction
+is recorded in the implementation progress log; the GPU gates were not rerun.
+
 ## Real scheduling gate
 
 The first [scheduling run](scheduling-before-cleanup-guard.json) passed both fixed
@@ -81,7 +85,7 @@ The [unchanged scheduling repeat](scheduling-final.json) passed both complete
 journeys on the final source. This establishes the measured scheduling workflow
 with normal memory as well as without plugins. The first-stream timeout remains
 part of the evidence; a successful repeat does not establish reliable cold-start
-latency. All final report core/helper hashes match the files in this branch.
+latency. All final report core/helper hashes match the files at `6d5366a`.
 
 Final-source scheduling measurements:
 
@@ -116,14 +120,14 @@ writes, six real stream cancellations, restart with fresh project records,
 normal memory and visible context/task status. Cancellation took 0.122–0.135s;
 cold readiness was 10.64–13.31s. The reported device was an RTX 5070 with
 12,227 MiB and driver 596.36; peak whole-device memory was 11,255 MiB, including
-other applications. All recorded core/driver hashes match the final source.
+other applications. All recorded core/driver hashes match `6d5366a`.
 This passing repeat does not erase the earlier latency failures or establish
 consistent latency under uncontrolled external GPU activity.
 
 The [final-source fallback run](fallback-final.json) passed all four journeys,
 with one assignment, one exact native write, retained criteria, recorded/visible
 switching, normal memory, settled replay and owned-runtime cleanup. Its recorded
-source hashes also match the final core and qualification drivers.
+source hashes also match the core and qualification drivers at `6d5366a`.
 
 ## Scope and continuation
 
@@ -131,7 +135,7 @@ Final repository validation: **1468 passed, 7 skipped, 6 warnings in 328.32s**.
 The seven existing skips are the unavailable Anthropic/Ollama recorded fixtures
 and opt-in live Antigravity test. Locked offline sync, Ruff, whitespace checks,
 sdist/wheel build and a clean Python 3.13 wheel smoke importing 65 modules passed.
-The built wheel's core module bytes were checked against the current source.
+The built wheel's core module bytes were checked against the source at `6d5366a`.
 The full suite ran after the GPU qualification containers exited.
 
 The scheduler coordinates a single live Harness session tree and declared

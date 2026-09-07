@@ -58,6 +58,10 @@ owned server after an inventory mismatch; externally owned servers are never
 stopped or adopted. Stopping an owned server invalidates cached readiness for
 aliases that may have borrowed its endpoint.
 
+An explicit `/resources stop` requires the target's device group to be idle,
+including any alias borrowing its runtime. Activity in an independent group
+does not block the stop.
+
 The existing global limit of one Harness-owned runtime still applies by default,
 even across distinct device groups. This is session-tree admission and owned
 process management. It does not measure GPU free memory, arbitrate between

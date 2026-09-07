@@ -415,10 +415,12 @@ class LocalResources:
 
     async def stop(self, alias, *, emit) -> bool:
         async with self._locks.setdefault(alias, asyncio.Lock()):
-            if any(self._active.values()):
-                raise ProviderError("local runtime is in use; interrupt its task before stopping")
-            if alias not in self._owned:
+            owned = self._owned.get(alias)
+            if owned is None:
                 return False
+            # Protect the target group, including aliases borrowing this process.
+            if self.scheduler.activity(owned[1].local.resource_group)[0] is not None:
+                raise ProviderError("local runtime is in use; interrupt its task before stopping")
             await self._terminate(alias, emit)
             return True
 
