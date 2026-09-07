@@ -83,6 +83,8 @@ class _Observation(BaseModel):
 
 class SemanticObservation(_Observation):
     kind: MessageKind = "uncertain"
+    selection_id: str | None = None
+    selection_status: str = "explicit"
 
 
 class AssessmentObservation(_Observation):
@@ -127,7 +129,13 @@ class SemanticService:
         limits: SemanticLimits | None = None, enabled: bool = True,
     ) -> SemanticObservation:
         session = self.dispatcher.session
-        prompt = prompt or session.blobs.put(DEFAULT_MESSAGE_PROMPT.model_dump_json().encode())
+        selection, change = "explicit", None
+        if prompt is None:
+            from harness.prompt_improvement import prompt_selection
+            prompt, selection, change = prompt_selection(session, self.provider(), model, limits=limits)
+            if change is not None and change.configuration is not None and selection == change.action:
+                from harness.semantic_evaluation import EvaluatorConfig
+                limits = EvaluatorConfig.model_validate_json(session.blobs.get(change.configuration)).limits
         profile = load_prompt(session.blobs, prompt)
 
         def classify(raw):
@@ -138,7 +146,8 @@ class SemanticService:
         return await self._observe(text, model=model, prompt=prompt, profile=profile,
             schema=MessageInterpretation.model_json_schema(), validate=classify,
             limits=limits or SemanticLimits(), enabled=enabled,
-            observation_type=SemanticObservation, fields={"function_version": FUNCTION_VERSION})
+            observation_type=SemanticObservation, fields={"function_version": FUNCTION_VERSION,
+                "selection_status": selection, "selection_id": change.id if change else None})
 
     async def select_context(self, data: ContextSelectionInput, *, model: ModelId,
                              limits: SemanticLimits | None = None, enabled=True):
@@ -270,6 +279,8 @@ def render_semantics(observations) -> str:
         label = item.function if isinstance(item, AssessmentObservation) else item.kind
         lines.append(_safe(f"{label}: {item.reason}; {item.duration_ms:.0f} ms; "
                            f"model={item.model}; prompt={item.prompt.sha256[:12]}"))
+        if isinstance(item, SemanticObservation):
+            lines.append(_safe(f"  Prompt selection: {item.selection_status}; change={item.selection_id or 'none'}"))
         if isinstance(item, AssessmentObservation):
             if item.source_seq is not None:
                 lines.append(f"  Recorded evidence as of event {item.source_seq}; later changes are not included.")

@@ -70,6 +70,11 @@ class Kernel:
         from harness.semantics import SemanticService
         return SemanticService(self.loop.dispatcher, lambda: self.provider)
 
+    @cached_property
+    def improvement_service(self):
+        from harness.prompt_improvement import PromptImprovementService
+        return PromptImprovementService(self)
+
     def set_provider(self, provider: ModelProvider) -> None:
         """Single point for retargeting the model provider mid-session. The
         loop, the subagent runner, and this kernel share one provider instance
@@ -389,10 +394,22 @@ def _subcommand(argv: list[str]) -> None:
         "--base-dir", type=Path, default=Path.home() / ".local" / "share" / "harness"
     )
     if command == "improvements":
-        from harness.improvement_journal import read_improvements, render_improvements
+        from harness.blobs import BlobStore
+        from harness.improvement_journal import inspect_improvement, read_improvements, render_improvements
         parser.add_argument("session_id")
+        parser.add_argument("--show", metavar="RECORD_ID")
         args = parser.parse_args(rest)
-        print(render_improvements(read_improvements(args.base_dir, SessionId(args.session_id))))
+        state = read_improvements(args.base_dir, SessionId(args.session_id))
+        if args.show:
+            root = args.base_dir / "sessions" / args.session_id / "blobs"
+            if not root.is_dir():
+                parser.error("session blob directory is missing")
+            try:
+                print(inspect_improvement(state, BlobStore(root), args.show))
+            except ValueError as exc:
+                parser.error(str(exc))
+        else:
+            print(render_improvements(state))
     elif command == "stats":
         parser.add_argument("--tag", default=None)
         args = parser.parse_args(rest)
@@ -944,6 +961,10 @@ def _resources_subcommand(argv: list[str]) -> None:
 
 def main() -> None:
     argv = sys.argv[1:]
+    if argv and argv[0] == "improve":
+        from harness.improvement_cli import main as improve_main
+        improve_main(argv[1:])
+        return
     if argv and argv[0] == "status":
         from harness.status_cli import main as status_main
         status_main(argv[1:])

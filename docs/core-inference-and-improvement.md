@@ -3,7 +3,8 @@
 This describes the implemented M2 foundation and subsequent core additions. The complete
 [core agency roadmap](superpowers/plans/2026-09-06-core-agency-roadmap.md) remains
 active. Native agent tasks now have distinct results; external runtime migration,
-live local-model qualification, broader experiment runners, activation, and rollback remain subsequent work.
+broader experiment runners and source-change activation remain subsequent work.
+The measured local profile and a supervised shadow-prompt loop are now implemented.
 
 [Semantic evaluation](semantic-evaluation.md) adds explicit shadow message
 interpretation and a bounded paired prompt evaluator with fixed grades and
@@ -241,7 +242,14 @@ an explicit versioned `AdoptionPolicy`. The default has no automatic targets.
 Eligibility **does not activate changes**. The message-prompt runner now executes
 paired inference with a core-owned fixed grader; candidates supply only prompt
 data. External evaluator authority, source experiments, safe activation, and
-rollback remain required M4/M5 work. No candidate authorizes its own adoption.
+rollback for broader targets remain required M4/M5 work. No candidate authorizes its own adoption.
+
+[Supervised message-prompt improvement](supervised-improvement.md) adds failure
+discovery, bounded proposal generation, explicit paired evaluation, and operator
+adoption/rollback at an idle session boundary. Immutable `PromptChange` records
+bind the preceding and selected prompt, model, result, configuration and policy.
+Selection is session-local and remains shadow-only; changed evaluation declarations
+suspend it. The default automatic policy stays empty, and replay never reruns inference.
 
 Inspect the same records in either interface:
 

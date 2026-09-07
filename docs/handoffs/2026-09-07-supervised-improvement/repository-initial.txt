@@ -1,0 +1,56 @@
+.ss.ss.ss............................................................... [  4%]
+........................................................................ [  9%]
+........................................................................ [ 14%]
+........................................................................ [ 19%]
+........................................................................ [ 23%]
+........................................................................ [ 28%]
+........................................................................ [ 33%]
+........................................................F............... [ 38%]
+........................................................................ [ 43%]
+........................................................................ [ 47%]
+........................................................................ [ 52%]
+........................................................................ [ 57%]
+.........................................................s.............. [ 62%]
+........................................................................ [ 67%]
+........................................................................ [ 71%]
+........................................................................ [ 76%]
+........................................................................ [ 81%]
+........................................................................ [ 86%]
+........................................................................ [ 91%]
+........................................................................ [ 95%]
+.............................................................            [100%]
+=================================== FAILURES ===================================
+_________ test_complex_inline_math_wraps_with_prose_in_document_order __________
+
+    def test_complex_inline_math_wraps_with_prose_in_document_order():
+        source = (
+            r"For the quadratic equation \(ax^2+bx+c=0\), the solutions are "
+            r"\(x=\frac{-b\pm\sqrt{b^2-4ac}}{2a}\). In calculus, the Gaussian "
+            r"integral satisfies \(\int_{-\infty}^{\infty}e^{-x^2}\,dx=\sqrt{\pi}\)."
+        )
+        console = Console(width=78, force_terminal=True, no_color=False)
+
+        lines = console.render_lines(MathMarkdown(source, color="#ffffff"), console.options)
+        rendered = "\n".join("".join(segment.text for segment in line) for line in lines)
+        prose = re.sub(r"[\u2800-\u28ff]", "", rendered)
+        prose = " ".join(prose.split())
+
+        phrases = (
+            "For the quadratic equation",
+            "the solutions are",
+            "In calculus",
+            "the Gaussian integral satisfies",
+        )
+        positions = [prose.index(phrase) for phrase in phrases]
+        assert positions == sorted(positions)
+>       assert all(sum(segment.cell_length for segment in line) <= 78 for line in lines)
+E       assert False
+E        +  where False = all(<generator object test_complex_inline_math_wraps_with_prose_in_document_order.<locals>.<genexpr> at 0x7b4db10daa40>)
+
+tests/test_math_markdown.py:325: AssertionError
+=========================== short test summary info ============================
+SKIPPED [3] tests/conformance/test_conformance.py:34: no anthropic fixtures recorded (run scripts/record_fixtures.py anthropic)
+SKIPPED [3] tests/conformance/test_conformance.py:34: no ollama fixtures recorded (run scripts/record_fixtures.py ollama)
+SKIPPED [1] tests/test_provider_antigravity.py:922: set HARNESS_LIVE=1 with a real agy binary and ~/.gemini auth to run
+FAILED tests/test_math_markdown.py::test_complex_inline_math_wraps_with_prose_in_document_order
+1 failed, 1493 passed, 7 skipped, 6 warnings in 342.42s (0:05:42)
