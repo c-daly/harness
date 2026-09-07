@@ -8,6 +8,7 @@ from pathlib import Path
 from harness.catalog import Catalog, UnknownAliasError
 from harness.provider_litellm import CatalogProvider
 from harness.semantic_evaluation import EvaluatorConfig, run_evaluation
+from harness.semantic_assessment import ContextSelectionInput
 from harness.semantics import MessagePrompt, SemanticLimits, read_semantics, render_semantics
 from harness.types import ModelId, SessionId
 
@@ -32,12 +33,20 @@ def main(argv):
     classify.add_argument("--model", required=True)
     classify.add_argument("--prompt", type=Path, help="Versioned MessagePrompt JSON artifact.")
     classify.add_argument("--timeout", type=float, default=5)
+    context = actions.add_parser("context", parents=[common], help="Suggest from supplied context candidates.")
+    context.add_argument("input", type=Path, help="Bounded ContextSelectionInput JSON; no retrieval occurs.")
+    progress = actions.add_parser("progress", parents=[common], help="Assess recorded task evidence in a session.")
+    progress.add_argument("session_id")
+    progress.add_argument("--task-id", help="Defaults to the selected tracked task.")
+    for action in (context, progress):
+        action.add_argument("--model", required=True)
+        action.add_argument("--timeout", type=float, default=5)
     evaluate = actions.add_parser("evaluate", parents=[common], help="Run an existing fixed evaluation plan.")
     evaluate.add_argument("session_id")
     evaluate.add_argument("plan_id")
     evaluate.add_argument("--incumbent", type=Path, required=True, help="Exact incumbent prompt artifact.")
     evaluate.add_argument("--config", type=Path, required=True, help="EvaluatorConfig JSON fixed by the plan.")
-    for action in (classify, evaluate):
+    for action in (classify, context, progress, evaluate):
         action.add_argument("--catalog", type=Path, default=Path.home() / ".config/harness/models.toml")
         action.add_argument("--allow", action="append", default=[])
     args = parser.parse_args(argv)
@@ -47,9 +56,14 @@ def main(argv):
     try:
         config = EvaluatorConfig.model_validate_json(_read(args.config, 8192)) if args.action == "evaluate" else None
         model = config.model if config else ModelId(args.model)
-        limits = config.limits if config else SemanticLimits(timeout_seconds=args.timeout)
+        from harness.semantics import ASSESSMENT_LIMITS
+        limits = config.limits if config else (SemanticLimits(timeout_seconds=args.timeout)
+            if args.action == "classify" else SemanticLimits.model_validate(
+                {**ASSESSMENT_LIMITS.model_dump(), "timeout_seconds": args.timeout}))
         prompt_data = _read(args.incumbent, 32768) if config else (
-            _read(args.prompt, 32768) if args.prompt else None)
+            _read(args.prompt, 32768) if getattr(args, "prompt", None) else None)
+        context_input = ContextSelectionInput.model_validate_json(_read(args.input, 16384)) \
+            if args.action == "context" else None
         if prompt_data is not None:
             MessagePrompt.model_validate_json(prompt_data)
         catalog = Catalog.load(args.catalog)
@@ -65,7 +79,8 @@ def main(argv):
         engine = PermissionEngine([])
     _apply_allow_flags(engine, args.allow)
     kernel = build_kernel(base_dir=args.base_dir, model=model, provider=CatalogProvider(catalog),
-        permissions=engine, resume_session_id=SessionId(args.session_id) if config else None)
+        permissions=engine, resume_session_id=SessionId(args.session_id)
+        if args.action in {"evaluate", "progress"} else None)
 
     async def run():
         try:
@@ -80,10 +95,16 @@ def main(argv):
                 report["verdict"] = verdict(kernel.improvements.state.plans[args.plan_id], result)
                 print(json.dumps(report, indent=2))
                 return report["verdict"] == "passed"
-            observation = await kernel.semantics.interpret(args.text, model=model, prompt=ref, limits=limits)
+            if args.action == "context":
+                observation = await kernel.semantics.select_context(context_input, model=model, limits=limits)
+            elif args.action == "progress":
+                observation = await kernel.semantics.assess_progress(
+                    model=model, task_id=args.task_id, limits=limits)
+            else:
+                observation = await kernel.semantics.interpret(args.text, model=model, prompt=ref, limits=limits)
             print(f"Session: {kernel.session.id}")
             print(render_semantics([observation]))
-            return observation.reason in {"classified", "uncertain"}
+            return observation.reason in {"classified", "assessed", "no_match", "uncertain"}
         finally:
             try:
                 await kernel.resources.close(emit=kernel.session.append)
@@ -98,6 +119,6 @@ def main(argv):
     except KeyboardInterrupt:
         raise SystemExit(130) from None
     except (ValueError, KeyError) as exc:
-        raise SystemExit(f"evaluation refused: {exc}") from None
+        raise SystemExit(f"semantic operation refused: {exc}") from None
     if not successful:
         raise SystemExit(1)

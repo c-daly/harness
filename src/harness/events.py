@@ -14,7 +14,7 @@ from harness.agent import AgentResult
 from harness.resources import ResourceObservation
 from harness.context import ContextPolicy
 from harness.improvement import ImprovementRecord
-from harness.semantics import SemanticObservation
+from harness.semantics import AssessmentObservation, SemanticObservation
 from harness.tasks import RequirementEvidence, TaskDefinition, TaskRequirement
 from harness.types import SCHEMA_VERSION, AgentId, CallId, ModelId, SessionId, ToolName
 
@@ -433,6 +433,11 @@ class SemanticObserved(_Event):
     observation: SemanticObservation
 
 
+class AssessmentObserved(_Event):
+    type: Literal["assessment_observed"] = "assessment_observed"
+    observation: AssessmentObservation
+
+
 class ImprovementRecorded(_Event):
     """Core evidence/candidate/experiment fact. It never authorizes activation."""
 
@@ -494,6 +499,7 @@ Event = Annotated[
         TodoListUpdated,
         ImprovementRecorded,
         SemanticObserved,
+        AssessmentObserved,
         EvaluationRunStarted,
         EvaluationRunFinished,
         UnknownEvent,

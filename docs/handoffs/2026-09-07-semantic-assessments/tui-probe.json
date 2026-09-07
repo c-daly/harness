@@ -1,0 +1,16 @@
+{
+  "provider": "scripted invalid progress suggestion",
+  "terminal_size": [
+    140,
+    45
+  ],
+  "final_compositor_checks": {
+    "Passed: output": true,
+    "Failed checks: test": true,
+    "Remaining: test, review": true,
+    "invalid_output": true,
+    "shadow mode": true,
+    "Suggestions do not accept tasks": true,
+    "task_not_accepted": true
+  }
+}

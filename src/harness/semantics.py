@@ -4,12 +4,17 @@ import asyncio
 import hashlib
 import json
 import time
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from harness.blobs import BlobRef
+from harness.semantic_assessment import (
+    CONTEXT_PROMPT, PROGRESS_PROMPT, ContextSelection,
+    ContextSelectionInput, ProgressAssessment, ProgressEvidence, ProgressInput, function_version, progress_snapshot,
+    validate_progress, validate_selection,
+)
 from harness.types import CallId, ModelId
 
 MessageKind = Literal[
@@ -56,7 +61,7 @@ FUNCTION_VERSION = hashlib.sha256(json.dumps(
 ).encode()).hexdigest()
 
 
-class SemanticObservation(BaseModel):
+class _Observation(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid", allow_inf_nan=False)
     id: str
     mode: Literal["shadow"] = "shadow"
@@ -67,13 +72,29 @@ class SemanticObservation(BaseModel):
     model: ModelId
     effective_model: ModelId | None = None
     call_id: CallId | None = None
-    kind: MessageKind = "uncertain"
     status: Literal["ok", "abstained"] = "abstained"
     reason: Literal[
         "classified", "uncertain", "disabled", "busy", "input_limit", "timeout",
         "denied", "budget", "invalid_output", "provider_error", "cancelled", "model_changed",
+        "assessed", "no_match",
     ]
     duration_ms: float = Field(ge=0)
+
+
+class SemanticObservation(_Observation):
+    kind: MessageKind = "uncertain"
+
+
+class AssessmentObservation(_Observation):
+    function: Literal["context_selection", "progress_assessment"]
+    input: BlobRef | None = None  # Only bounded accepted inputs are saved.
+    source_seq: int | None = Field(default=None, ge=1)
+    evidence: ProgressEvidence | None = None
+    result: Annotated[ContextSelection | ProgressAssessment, Field(discriminator="function")] | None = None
+
+
+ASSESSMENT_LIMITS = SemanticLimits(max_message_bytes=16384, max_input_bytes=32768,
+    max_output_bytes=2048, max_output_tokens=256, max_stream_chunks=512)
 
 
 def load_prompt(blobs, ref: BlobRef) -> MessagePrompt:
@@ -105,31 +126,78 @@ class SemanticService:
         self, text: str, *, model: ModelId, prompt: BlobRef | None = None,
         limits: SemanticLimits | None = None, enabled: bool = True,
     ) -> SemanticObservation:
+        session = self.dispatcher.session
+        prompt = prompt or session.blobs.put(DEFAULT_MESSAGE_PROMPT.model_dump_json().encode())
+        profile = load_prompt(session.blobs, prompt)
+
+        def classify(raw):
+            kind = MessageInterpretation.model_validate(raw).kind
+            return dict(reason="uncertain" if kind == "uncertain" else "classified", kind=kind,
+                        status="abstained" if kind == "uncertain" else "ok")
+
+        return await self._observe(text, model=model, prompt=prompt, profile=profile,
+            schema=MessageInterpretation.model_json_schema(), validate=classify,
+            limits=limits or SemanticLimits(), enabled=enabled,
+            observation_type=SemanticObservation, fields={"function_version": FUNCTION_VERSION})
+
+    async def select_context(self, data: ContextSelectionInput, *, model: ModelId,
+                             limits: SemanticLimits | None = None, enabled=True):
+        data = ContextSelectionInput.model_validate(data.model_dump())
+        return await self._assess(data, model=model, profile=CONTEXT_PROMPT,
+            schema=ContextSelection, validator=validate_selection, limits=limits, enabled=enabled)
+
+    async def assess_progress(self, *, model: ModelId, task_id=None,
+                              limits: SemanticLimits | None = None, enabled=True):
+        data = progress_snapshot(self.dispatcher.session, task_id)
+        return await self._assess(data, model=model, profile=PROGRESS_PROMPT,
+            schema=ProgressAssessment, validator=validate_progress, limits=limits, enabled=enabled)
+
+    async def _assess(self, data, *, model, profile, schema, validator, limits, enabled):
+        prompt = self.dispatcher.session.blobs.put(profile.model_dump_json().encode())
+
+        def assess(raw):
+            result = schema.model_validate(raw)
+            validator(data, result)
+            reason = result.reason if isinstance(result, ContextSelection) else result.next_action
+            return dict(result=result, status="abstained" if reason == "uncertain" else "ok",
+                        reason=reason if reason in {"uncertain", "no_match"} else "assessed")
+
+        return await self._observe(data.model_dump_json(), model=model, prompt=prompt, profile=profile,
+            schema=schema.model_json_schema(), validate=assess, limits=limits or ASSESSMENT_LIMITS,
+            enabled=enabled, observation_type=AssessmentObservation,
+            fields={"function": profile.function, "function_version": function_version(profile.function),
+                    "source_seq": getattr(data, "source_seq", None),
+                    "evidence": ProgressEvidence.from_snapshot(data) if isinstance(data, ProgressInput) else None},
+            save_input=True)
+
+    async def _observe(self, text, *, model, prompt, profile, schema, validate, limits, enabled,
+                       observation_type, fields, save_input=False):
         from harness.dispatcher import ModelDispatchBlocked
         from harness.errors import ContextOverflow, MalformedStreamError, ProviderError
-        from harness.events import SemanticObserved
+        from harness.events import AssessmentObserved, SemanticObserved
         from harness.execution import BudgetExceeded
         from harness.inference import InferenceRequest
         from harness.messages import Message
 
-        limits = SemanticLimits.model_validate((limits or SemanticLimits()).model_dump())
+        limits = SemanticLimits.model_validate(limits.model_dump())
         session = self.dispatcher.session
-        prompt = prompt or session.blobs.put(DEFAULT_MESSAGE_PROMPT.model_dump_json().encode())
-        profile = load_prompt(session.blobs, prompt)
         started = time.monotonic()
         # A character overflow already proves UTF-8 overflow. Avoid allocating
         # an unbounded copy merely to hash rejected input. The remaining encoding
         # is at most four times the configured message-byte limit.
         data = text.encode() if len(text) <= limits.max_message_bytes else None
         oversized = data is None or len(data) > limits.max_message_bytes
-        fields = dict(id=str(uuid4()), function_version=FUNCTION_VERSION, prompt=prompt,
+        fields = dict(fields, id=str(uuid4()), prompt=prompt,
                       input_sha256=None if oversized else hashlib.sha256(data).hexdigest(),
                       limits=limits, model=model)
+        if save_input and not oversized:
+            fields["input"] = session.blobs.put(data)
 
         def record(reason, **extra):
-            observation = SemanticObservation(**fields, reason=reason,
+            observation = observation_type(**fields, reason=reason,
                 duration_ms=(time.monotonic() - started) * 1000, **extra)
-            session.append(SemanticObserved(observation=observation))
+            event = AssessmentObserved if save_input else SemanticObserved
+            session.append(event(observation=observation))
             return observation
 
         if not enabled:
@@ -138,19 +206,24 @@ class SemanticService:
             return record("input_limit")
         if self._lock.locked():
             return record("busy")
+        provider = self.provider()
+        catalog = getattr(provider, "catalog", None)
+        resolved = catalog.resolve(str(model)) if catalog else None
+        if resolved and resolved.local:
+            resource = self.dispatcher.scope.resources.snapshot(resolved)
+            if resource.status == "busy" and not resource.stale:
+                return record("busy")
         async with self._lock:
             request = InferenceRequest(
                 model=model, purpose=f"semantic:{fields['id']}",
                 messages=(Message.system_text(profile.instructions), Message.user_text(text)),
-                response_schema=MessageInterpretation.model_json_schema(), temperature=0,
+                response_schema=schema, temperature=0,
                 **limits.model_dump(exclude={"max_message_bytes"}),
             )
             try:
                 # Include permission/readiness waits in the semantic deadline.
                 async with asyncio.timeout(limits.timeout_seconds):
-                    provider = self.provider()
-                    catalog = getattr(provider, "catalog", None)
-                    pricing = catalog.resolve(str(model)).pricing_dict() if catalog else None
+                    pricing = resolved.pricing_dict() if resolved else None
                     result = await self.dispatcher.dispatch_inference(
                         provider=provider, request=request, pinned=True, pricing=pricing,
                     )
@@ -172,16 +245,18 @@ class SemanticService:
             fields.update(effective_model=result.model, call_id=result.call_id)
             if result.model != model:
                 return record("model_changed")
-            kind = MessageInterpretation.model_validate(result.structured).kind
-            return record("uncertain" if kind == "uncertain" else "classified", kind=kind,
-                          status="abstained" if kind == "uncertain" else "ok")
+            try:
+                assessment = validate(result.structured)
+            except ValueError:
+                return record("invalid_output")
+            return record(**assessment)
 
 
-def read_semantics(base, session_id) -> list[SemanticObservation]:
-    from harness.events import SemanticObserved
+def read_semantics(base, session_id) -> list[SemanticObservation | AssessmentObservation]:
+    from harness.events import AssessmentObserved, SemanticObserved
     from harness.log import read_session
     return [e.event.observation for e in read_session(base, session_id, repair=False)
-            if isinstance(e.event, SemanticObserved)]
+            if isinstance(e.event, (SemanticObserved, AssessmentObserved))]
 
 
 def render_semantics(observations) -> str:
@@ -190,7 +265,22 @@ def render_semantics(observations) -> str:
     if len(observations) > 10:
         lines.append(f"Showing the latest 10 of {len(observations)} observations.")
     for item in observations[-10:]:
-        lines.append(_safe(f"{item.kind}: {item.reason}; {item.duration_ms:.0f} ms; "
+        label = item.function if isinstance(item, AssessmentObservation) else item.kind
+        lines.append(_safe(f"{label}: {item.reason}; {item.duration_ms:.0f} ms; "
                            f"model={item.model}; prompt={item.prompt.sha256[:12]}"))
+        if isinstance(item, AssessmentObservation):
+            if item.source_seq is not None:
+                lines.append(f"  Recorded evidence as of event {item.source_seq}; later changes are not included.")
+            if item.evidence is not None:
+                lines.append(_safe("  Passed: " + (", ".join(item.evidence.passed_ids) or "none")))
+                lines.append(_safe("  Failed checks: " + (", ".join(item.evidence.failed_ids) or "none")))
+                lines.append(_safe("  Remaining: " + (", ".join(item.evidence.remaining_ids) or "none")))
+            if isinstance(item.result, ContextSelection):
+                lines.append(_safe("  Suggested context: " + (", ".join(item.result.selected_ids) or "none")))
+            elif isinstance(item.result, ProgressAssessment):
+                if item.evidence is None:
+                    lines.append(_safe("  Remaining: " + (", ".join(item.result.remaining_ids) or "none")))
+                lines.append(_safe(f"  Suggested next step: {item.result.next_action}; "
+                                   f"focus: {', '.join(item.result.focus_ids) or 'none'}"))
     lines.append("Suggestions do not accept tasks, change routing, or activate candidates.")
     return "\n".join(lines)

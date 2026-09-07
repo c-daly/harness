@@ -90,3 +90,113 @@ async def test_final_terminal_shows_shadow_and_interrupted_evaluation_records(tm
         assert "shadow mode" in visible and "uncertain: disabled" in visible
         assert "Evaluation run interrupted: aborted" in visible
         assert "do not activate" in visible
+
+
+def test_context_cli_uses_only_explicit_candidates(tmp_path, monkeypatch, capsys):
+    from tests.test_semantic_assessment import candidates, selection
+    provider = FakeProvider([text_turn(json.dumps(selection()))])
+    source = tmp_path / "candidates.json"
+    source.write_text(candidates().model_dump_json())
+    monkeypatch.setattr("harness.semantic_cli.CatalogProvider", lambda catalog: provider)
+    monkeypatch.setattr("sys.argv", ["harness", "semantic", "context", str(source),
+        "--model", "fake", "--base-dir", str(tmp_path), "--catalog", str(catalog_file(tmp_path)),
+        "--allow", "model:fake"])
+    main()
+    assert "Suggested context: current" in capsys.readouterr().out
+    assert len(provider.calls) == 1
+
+
+def test_progress_cli_resumes_task_and_never_checks_or_accepts_it(tmp_path, monkeypatch, capsys):
+    import asyncio
+    from tests.test_semantic_assessment import assessment
+    from tests.test_task_evidence import add_review, finish, start
+    provider = FakeProvider([text_turn(json.dumps(assessment(["review"], ["review"], "review")))])
+
+    async def setup():
+        kernel = await kernel_for(tmp_path, provider)
+        task = kernel.tasks.create("Review output")
+        add_review(kernel.tasks)
+        start(kernel, task.id)
+        finish(kernel, task.id)
+        kernel.session.close()
+        return kernel.session.id
+
+    session_id = asyncio.run(setup())
+    monkeypatch.setattr("harness.semantic_cli.CatalogProvider", lambda catalog: provider)
+    monkeypatch.setattr("sys.argv", ["harness", "semantic", "progress", session_id,
+        "--model", "fake", "--base-dir", str(tmp_path), "--catalog", str(catalog_file(tmp_path)),
+        "--allow", "model:fake"])
+    main()
+    assert "Suggested next step: review" in capsys.readouterr().out
+    events = read_session(tmp_path, session_id)
+    assert not any(e.event.type in {"task_checked", "task_accepted", "task_requirement_confirmed"} for e in events)
+    assert len(provider.calls) == 1
+
+
+async def test_progress_tui_displays_remaining_obligations_and_historical_basis(tmp_path):
+    from tests.test_semantic_assessment import assessment
+    from tests.test_task_evidence import add_review, finish, start
+    from tests.test_tui import make_app
+    from tests.test_tui_queue import screen_text
+    app = make_app(tmp_path, provider=FakeProvider([
+        text_turn(json.dumps(assessment(["review"], ["review"], "review")))]))
+    async with app.run_test(size=(150, 45)) as pilot:
+        task = app.kernel.tasks.create("Review output")
+        add_review(app.kernel.tasks)
+        start(app.kernel, task.id)
+        finish(app.kernel, task.id)
+        await pilot.click("#prompt")
+        await pilot.press(*"/semantics progress", "enter")
+        await pilot.pause(0.1)
+        visible = screen_text(app)
+        assert "Remaining: review" in visible and "Suggested next step: review" in visible
+        assert "Recorded evidence as of event" in visible and "shadow mode" in visible
+        assert not app.kernel.tasks.selected().accepted
+
+
+@pytest.mark.parametrize("interrupt", ["escape", "prompt", "clear", "quit"])
+async def test_semantic_worker_settles_before_foreground_or_session_teardown(tmp_path, interrupt):
+    import asyncio
+    from harness.fold import fold
+    from harness.semantics import read_semantics
+    from tests.test_task_evidence import add_review
+    from tests.test_tui import make_app
+    from tests.test_tui_queue import screen_text
+    entered, closed = asyncio.Event(), asyncio.Event()
+
+    class Hanging(FakeProvider):
+        async def infer(self, request):
+            if not request.purpose.startswith("semantic:"):
+                assert closed.is_set()  # Foreground waits for cancellation to settle.
+                async for chunk in super().infer(request):
+                    yield chunk
+                return
+            try:
+                entered.set()
+                await asyncio.Event().wait()
+                yield
+            finally:
+                closed.set()
+
+    app = make_app(tmp_path, provider=Hanging([text_turn("New request answered")]))
+    async with app.run_test(size=(150, 45)) as pilot:
+        app.kernel.tasks.create("Work")
+        add_review(app.kernel.tasks)
+        session_id = app.kernel.session.id
+        await pilot.click("#prompt")
+        await pilot.press(*"/semantics progress", "enter")
+        await asyncio.wait_for(entered.wait(), 2)
+        if interrupt == "escape":
+            await pilot.press("escape")
+        else:
+            text = {"prompt": "New request", "clear": "/clear", "quit": "/quit"}[interrupt]
+            await pilot.press(*text, "enter")
+        await asyncio.wait_for(closed.wait(), 2)
+        await pilot.pause(0.1)
+        observations = read_semantics(tmp_path, session_id)
+        assert observations[-1].reason == "cancelled"
+        events = read_session(tmp_path, session_id)
+        assert not fold(events).open_model_intents
+        assert not any(e.event.type == "user_interrupt" for e in events)
+        if interrupt == "prompt":
+            assert "New request answered" in screen_text(app)
