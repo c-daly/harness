@@ -14,6 +14,7 @@ from harness.agent import AgentResult
 from harness.resources import ResourceObservation
 from harness.context import ContextPolicy
 from harness.improvement import ImprovementRecord
+from harness.fallback import FallbackDecision, FallbackPolicy
 from harness.semantics import AssessmentObservation, SemanticObservation
 from harness.tasks import RequirementEvidence, TaskDefinition, TaskRequirement
 from harness.types import SCHEMA_VERSION, AgentId, CallId, ModelId, SessionId, ToolName
@@ -82,6 +83,17 @@ class LocalRuntimeRequested(_Event):
 class ContextPolicyConfigured(_Event):
     type: Literal["context_policy_configured"] = "context_policy_configured"
     policy: ContextPolicy | None = None
+
+
+class FallbackConfigured(_Event):
+    type: Literal["fallback_configured"] = "fallback_configured"
+    policy: FallbackPolicy | None = None
+
+
+class FallbackDecided(_Event):
+    type: Literal["fallback_decided"] = "fallback_decided"
+    is_intent: ClassVar[bool] = True  # Persist the choice before dispatch can begin.
+    decision: FallbackDecision
 
 
 class ContextPrepared(_Event):
@@ -482,6 +494,8 @@ Event = Annotated[
         ResourceObserved,
         LocalRuntimeRequested,
         ContextPolicyConfigured,
+        FallbackConfigured,
+        FallbackDecided,
         ContextPrepared,
         ContextSourceObserved,
         CompactionApplied,

@@ -28,6 +28,8 @@ from harness.events import (
     ModelCallProposed,
     ResourceObserved,
     ContextPolicyConfigured,
+    FallbackConfigured,
+    FallbackDecided,
     TodoListUpdated,
     ToolCallAborted,
     ToolCallCancelled,
@@ -37,6 +39,7 @@ from harness.events import (
 )
 from harness.messages import Message
 from harness.context import ContextPolicy
+from harness.fallback import FallbackDecision, FallbackPolicy
 from harness.improvement import ExperimentResult
 from harness.agent import AgentResult
 from harness.types import CallId
@@ -55,6 +58,8 @@ class FoldedState:
     # Historical observations are evidence only; live readiness must recheck.
     resources: dict = field(default_factory=dict)
     context_policy: ContextPolicy | None = None
+    fallback_policy: FallbackPolicy | None = None
+    fallback_decisions: list[FallbackDecision] = field(default_factory=list)
     open_evaluations: dict[str, EvaluationRunStarted] = field(default_factory=dict)
     evaluation_results: dict[str, ExperimentResult] = field(default_factory=dict)
     last_seq: int = 0
@@ -93,6 +98,10 @@ def fold(envelopes: list[Envelope]) -> FoldedState:
             state.open_agent_runs[ev.run_id] = ev
         elif isinstance(ev, ContextPolicyConfigured):
             state.context_policy = ev.policy
+        elif isinstance(ev, FallbackConfigured):
+            state.fallback_policy = ev.policy
+        elif isinstance(ev, FallbackDecided):
+            state.fallback_decisions.append(ev.decision)
         elif isinstance(ev, EvaluationRunStarted):
             state.open_evaluations[ev.run_id] = ev
         elif isinstance(ev, EvaluationRunFinished):

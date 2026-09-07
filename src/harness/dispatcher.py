@@ -10,7 +10,7 @@ from typing import Callable
 
 from harness.blobs import INLINE_THRESHOLD, BlobRef, BlobStore
 from harness.agent import current_agent_run
-from harness.errors import ProviderError, ToolCallLimitExceeded
+from harness.errors import ProviderError
 from harness.events import (
     DispatchResolved,
     HookDecided,
@@ -271,11 +271,13 @@ class Dispatcher:
         pricing: dict[str, float] | None = None,
         pricing_for: Callable[[ModelId], dict[str, float]] | None = None,
         pinned: bool = False, on_chunk: Callable[[Chunk], None] | None = None,
+        exact_model: bool = False,
     ) -> InferenceResult:
         """Bounded, audited inference; routing cannot replace it with an agent."""
         return await self._dispatch_generation(
             provider=provider, request=request, allow_agent=False,
             pricing=pricing, pricing_for=pricing_for, pinned=pinned, on_chunk=on_chunk,
+            exact_model=exact_model,
         )
 
     async def dispatch_agent_response(
@@ -292,7 +294,7 @@ class Dispatcher:
 
     async def _dispatch_generation(
         self, *, provider, request: InferenceRequest, allow_agent: bool,
-        pricing, pricing_for, pinned, on_chunk, required_runtime=None,
+        pricing, pricing_for, pinned, on_chunk, required_runtime=None, exact_model=False,
     ) -> InferenceResult:
         request = InferenceRequest.model_validate(request.model_dump())
         policy = self.scope.context_policy
@@ -332,6 +334,7 @@ class Dispatcher:
             ModelCallProposed(call_id=call.call_id, model=model, purpose=purpose, **lineage)
         )
         effective_model = model
+        execution_kind = None
         started: int | None = None
 
         def elapsed() -> int:
@@ -344,6 +347,8 @@ class Dispatcher:
             if not isinstance(effective, ProposedModelCall):
                 raise ModelDispatchBlocked("rewrite changed action type — refused")
             effective_model = effective.model
+            if exact_model and effective_model != model:
+                raise ModelDispatchBlocked("routing changed the required inference model")
             execution_kind = kind_for(effective_model)
             if execution_kind == "agent" and (request.temperature is not None or request.response_schema is not None):
                 raise ProviderError("sampling and structured response settings require an inference model")
@@ -377,6 +382,8 @@ class Dispatcher:
             check_input(request)
             deadline = time.monotonic() + request.timeout_seconds
             attempt = 0
+            budget = self.scope.budget
+            activity_before = (budget.tool_calls, budget.children)
             token = current_dispatch_tool.set(self.dispatch_tool)
             scope_token = current_scope.set(self.scope)
             try:
@@ -406,7 +413,11 @@ class Dispatcher:
                             message, usage, stop_reason = result.message, result.usage, result.stop_reason
                         break
                     except ProviderError as exc:
-                        if execution_kind == "agent" or not exc.retryable or attempt >= len(self.retry_delays):
+                        # Even a provider declared as inference can dispatch a
+                        # tool or child. Never repeat it after observed activity.
+                        activity_changed = (budget.tool_calls, budget.children) != activity_before
+                        if (execution_kind == "agent" or activity_changed or not exc.retryable
+                                or attempt >= len(self.retry_delays)):
                             raise
                         delay = self.retry_delays[attempt]
                         attempt += 1
@@ -440,8 +451,8 @@ class Dispatcher:
                     duration_ms=elapsed(),
                 )
             )
-            if isinstance(exc, ToolCallLimitExceeded):
-                exc.call_id = call.call_id
+            if isinstance(exc, ProviderError):
+                exc.call_id, exc.model, exc.execution_kind = call.call_id, effective_model, execution_kind
             raise
         # Outside the exception scope: a failing log write cannot emit a second terminal fact.
         self.session.append(

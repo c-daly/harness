@@ -75,6 +75,17 @@ def map_exception(exc: Exception) -> ProviderError:
     lowered = str(exc).lower()
     if any(s in lowered for s in ("missing credentials", "api key", "authentication")):
         return AuthFailed(str(exc))
+    if isinstance(exc, litellm.InternalServerError):
+        import httpx
+
+        # LiteLLM can wrap an SDK transport failure in a synthetic HTTP 500.
+        # Preserve the typed cause rather than guessing from provider prose.
+        cause, seen = exc, set()
+        while cause is not None and id(cause) not in seen and len(seen) < 16:
+            seen.add(id(cause))
+            if isinstance(cause, (httpx.NetworkError, httpx.TimeoutException, httpx.RemoteProtocolError)):
+                return NetworkFailed(str(exc))
+            cause = cause.__cause__ or cause.__context__
     mapping = (
         (litellm.RateLimitError, RateLimited),
         (litellm.ContextWindowExceededError, ContextOverflow),
