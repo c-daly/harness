@@ -936,6 +936,10 @@ def _resources_subcommand(argv: list[str]) -> None:
 
 def main() -> None:
     argv = sys.argv[1:]
+    if argv and argv[0] == "status":
+        from harness.status_cli import main as status_main
+        status_main(argv[1:])
+        return
     if argv and argv[0] == "tasks":
         from harness.task_cli import main as tasks_main
         tasks_main(argv[1:])

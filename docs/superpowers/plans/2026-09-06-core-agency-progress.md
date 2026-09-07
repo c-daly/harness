@@ -1,7 +1,7 @@
 # Core agency implementation record
 
-Current implementation branch: `feat/task-completion-evidence`, based on merged `main`
-at `02420aa`. Previous branches: `fix/inference-client-lifecycle`, `feat/local-response-profiles`, `feat/local-tool-recovery`, `feat/local-tool-planning`, `feat/local-qualification`, `feat/semantic-evaluation`, `feat/local-context`, `feat/local-readiness`, `feat/agent-runtimes`,
+Current implementation branch: `feat/resident-workflow`, based on merged `main`
+at `eb77885`. Previous branches: `feat/task-completion-evidence`, `fix/inference-client-lifecycle`, `feat/local-response-profiles`, `feat/local-tool-recovery`, `feat/local-tool-planning`, `feat/local-qualification`, `feat/semantic-evaluation`, `feat/local-context`, `feat/local-readiness`, `feat/agent-runtimes`,
 and `feat/core-agency`.
 
 Committed checkpoints: `0351b75` (roadmap, lifecycle, and storage/result integrity),
@@ -58,6 +58,10 @@ qualification. Milestone completion requires its roadmap gates, not just code.
 | M4 bounded semantic agency | In progress | Shadow message interpretation, paired prompt evaluation, and real context-policy/correction experiments use core improvement records. Repeated correction and response-profile evaluations refused adoption; the larger response plan now includes real TUI journeys. Context/progress functions, broader held-out qualification, scheduling, fallback, candidate generation, activation, and rollback remain. |
 | M5 heterogeneous work / plugins | Pending | Supervision, plugin reconciliation, portable continuation, isolated improvement patches and rollback. |
 | M6 daily-use qualification | Pending | Measured UI, live adapter boundaries, offline and human dogfood gates. |
+
+`4a98d3f` added durable task requirements and recorded evidence in
+[PR #19](https://github.com/c-daly/harness/pull/19), merged at `eb77885` after
+Python 3.12/3.13 CI and automated review passed.
 
 ## Baseline observations
 
@@ -802,3 +806,96 @@ On September 6 the user made self-improvement a first-class requirement.
 The roadmap now includes evidence, candidate and experiment records, evaluation,
 adoption policy, safe activation, and rollback throughout M0–M6. Automatic
 adoption policy is an outstanding product preference; foundation work continues.
+
+
+## September 7 — resident context and continuation
+
+**Addition to M1–M3:** [Resident continuity](../../resident-workflow.md) adds
+explicit repeatable context sources to the existing saved context profile.
+Root attempts fetch once before inference through the normal dispatcher;
+external-agent bridges do not fetch twice and child scopes do not implicitly
+query normal memory. Sources respect effective registry restrictions, argument
+validation, rewrites, permissions, cumulative tool budgets, source and task
+deadlines, result caps and total request limits. Optional failure supplies a
+visible unavailable notice; required failure stops before inference. An oversized
+sidecar is not materialized, and storage/journal failures remain fatal.
+
+Typed source observations retain run/policy/call provenance and a reference to
+the existing session blob store. A context purpose separates those tool facts
+from conversation tool turns. The cached task projection supplies a bounded
+previous-attempt brief before new execution invalidates old evidence. No recovery
+step replays side effects. `/status` joins task, context and runtime snapshots;
+`harness status SESSION` reads historical records without a provider or repair.
+Drafts, queue interruption and literal compositor rendering retain their behavior.
+
+Validation started with 12 red source-configuration regressions. The expanded
+focused set passed 65 checks with localhost access. The first restricted run
+had 61 passes and four MCP socket-bind failures plus four associated teardown
+errors; it was not an implementation pass. A complete suite then passed 1317
+tests, 7 skipped, 6 warnings in 311.49s. Review added two more regressions for
+the standalone external-agent input cap and a failed journal write; the new
+resident modules' focused set passed 36 checks. Final full-suite and packaging
+results are recorded below.
+
+The actual offline [pilot report](../../handoffs/2026-09-07-resident-workflow/resident-workflow.json)
+remains **failed overall**. A pinned 4B model and read-only normal memory ran in a
+loopback-only container capped at 4 GiB, zero swap and four CPUs. Both source
+queries succeeded before inference, including after a new kernel reopened the
+session. Status and resumed-answer compositor checks, real stream cancellation
+(123 ms), draft preservation, task/profile continuity and unaccepted requirements
+passed. The resumed answer contained the correct facts (6.0 s). The initial
+write task failed to create the expected artifact or report those facts (10.3 s);
+its model-selected file read failed. The 13,802-byte memory index and these tool
+facts do not establish a cause. The initial failed probe, whose cancellation
+method typo prevented the later stages, is retained separately with source hashes.
+The corrected probe kept model settings, prompts and artifact checks unchanged.
+
+Next: measure and improve context relevance and local tool selection against
+exact project artifacts, then qualify a repeatable useful workflow. Continue UI
+onboarding/discoverability, typed heterogeneous-agent work and portable handoff.
+Automatic fallback and improvement activation stay disabled. Do not infer adoption
+authority, lower the failed gates, or expand model installs as a substitute for
+workflow evidence. Hugging Face, Unsloth and larger models remain candidates.
+Memory and agent-swarm remain plugins. M0–M4 are still in progress; M5–M6 pending.
+
+
+Final review found an expired source permission dialog could outlive its query.
+The new regression reproduced that bug; `AppBoundAsk` now expires its own dialog
+on cancellation, removes it when active, and retires it on reveal if another
+live permission is stacked above it. An expired dialog cannot grant permission.
+The nine focused permission/source checks pass, including the stacked case.
+
+A later full run during severe host load (observed load averages near 200)
+finished with **4 failed, 1315 passed, 7 skipped, 6 warnings in 5186.44s**. Failures
+were the existing resume-picker/rebuild UI tests; a concurrent focused run took
+4174.04s for eight tests and had two timing failures. This is retained as a failed
+run, not counted as validation. After the host recovered, the same focused
+permission tests passed in 11.92s without relaxed assertions. Two read-only
+escalation requests also hit automatic-review timeouts during that slowdown;
+normal access and a later full-test approval succeeded.
+
+The offline pilot's source hashes precede the final permission-dialog cleanup
+and source-error hardening. Those changes are covered by deterministic tests; no new real-model
+quality claim is inferred from the final unit-test result.
+
+
+Storage review further narrowed optional-source error handling to reading an
+already-recorded result. Dispatcher encoding failures, corrupt objects encountered
+during writes, journal failures and unrelated infrastructure timeouts remain
+fatal; they cannot be mistaken for optional context absence while a tool intent
+is unsettled. Two additional regressions cover dispatch encoding/blob failures.
+
+
+After host recovery, the complete suite with permission cleanup passed **1321
+tests, 7 skipped, 6 warnings in 298.15s**. The final focused resident tests,
+including storage failure boundaries, passed **40 tests in 5.25s**. The final
+full suite below includes those two additional storage regressions.
+
+
+**Final validation:** **1323 passed, 7 skipped, 6 warnings in 294.43s**, including
+40 new resident cases. Locked offline sync, Ruff and whitespace checks passed.
+The sdist/wheel build and a fresh wheel smoke passed (`harness --help`, all
+62 installed modules). The wheel smoke resolves cached compatible dependencies
+independently of the lockfile; it is packaging evidence, not another locked
+integration or model-quality run. Skips remain three missing Anthropic fixtures,
+three missing Ollama fixtures and one opt-in live Antigravity test.

@@ -162,10 +162,13 @@ class AgentLoop:
                     pass  # observers do not control execution
 
         try:
+            from harness.resident import fetch_context
+            resident_context = await fetch_context(self.dispatcher) if max_iterations else ()
             for iteration in range(1, max_iterations + 1):
                 prefix = [
                     Message.system_text(self.system_prompt),
                     *task.context,
+                    *resident_context,
                     *([Message.system_text("Task acceptance criteria:\n" +
                                            "\n".join(f"- {c}" for c in task.acceptance_criteria))]
                       if task.acceptance_criteria else []),

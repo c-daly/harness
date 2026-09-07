@@ -136,10 +136,12 @@ class Dispatcher:
                 return None, "denied by user"
         return outcome.effective, None
 
-    async def dispatch_tool(self, call: ProposedToolCall) -> ToolOutcome:
+    async def dispatch_tool(self, call: ProposedToolCall, *, purpose=None) -> ToolOutcome:
         active_run = current_agent_run.get()
         lineage = {"task_id": active_run.task.id, "agent_run_id": active_run.run_id,
                    "purpose": "conversation" if active_run.runtime == "harness" else "agent-task"} if active_run else {}
+        if purpose is not None:
+            lineage["purpose"] = purpose
         self.session.append(
             ToolCallProposed(call_id=call.call_id, tool=call.tool, args=dict(call.args), **lineage)
         )

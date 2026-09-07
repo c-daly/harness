@@ -28,7 +28,8 @@ Implement the change and run the relevant tests.
 belong to that task; the composer and prompt queue keep their existing behavior.
 The compact task indicator shows unresolved counts and execution state. `/task`
 shows every requirement, its evidence and the acceptance note. `/task help`
-lists commands.
+lists commands. `/status` also joins this task with context-source results and
+local runtime snapshots; see [resident continuity](resident-workflow.md).
 
 Use `/task list` to inspect saved tasks, `/task use ID` to select one (a unique
 prefix works), and `/task off` to detach it without erasing its obligations.

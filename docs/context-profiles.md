@@ -97,6 +97,13 @@ advertised tool names. Replay preserves those facts without running selection or
 inference. These events can serve as self-improvement evidence; they do not grade
 a candidate, grant adoption, or activate a change.
 
+## Configured context sources
+
+The optional `[[sources]]` entries retrieve bounded context before the first
+model call of each root attempt. See [resident task continuity](resident-workflow.md)
+for configuration, failure behavior, permissions and offline workflow evidence.
+Source queries are separate from deterministic history-window selection.
+
 ## Normal memory stays a plugin
 
 The sample tool names refer to a separately configured MCP server named `memory`.

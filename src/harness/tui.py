@@ -41,6 +41,7 @@ from harness.events import (
     PermissionResolved,
     ResourceObserved,
     ContextPrepared,
+    ContextSourceObserved,
     RetryAttempted,
     ToolCallCompleted,
     ToolCallProposed,
@@ -354,7 +355,16 @@ class AppBoundAsk:
     async def __call__(self, request: PermissionRequest) -> str:
         if self.app is None:
             return "deny"  # fail closed before the app is up
-        return await self.app.push_screen_wait(PermissionScreen(request))
+        screen = PermissionScreen(request)
+        try:
+            return await self.app.push_screen_wait(screen)
+        except asyncio.CancelledError:
+            # Textual shields the dialog's result future. Expire only this ask;
+            # a different, still-live prompt may be stacked above it.
+            screen.expired = True
+            if self.app.screen is screen:
+                await screen.dismiss("deny")
+            raise
 
 
 def _describe_call(action) -> str:
@@ -388,6 +398,11 @@ class PermissionScreen(ModalScreen[str]):
     def __init__(self, request: PermissionRequest) -> None:
         super().__init__()
         self.request = request
+        self.expired = False
+
+    def on_screen_resume(self) -> None:
+        if self.expired and self.app.screen is self:
+            self.dismiss("deny")
 
     def compose(self) -> ComposeResult:
         from harness.tui_support import grant_pattern
@@ -412,7 +427,7 @@ class PermissionScreen(ModalScreen[str]):
             yield Static(_plain("[y] allow once   [a] always   [n] deny"))
 
     def action_answer(self, result: str) -> None:
-        self.dismiss(result)
+        self.dismiss("deny" if self.expired else result)
 
 
 class ServerChecklistScreen(ModalScreen[set[str]]):
@@ -644,6 +659,7 @@ class HarnessApp(App[None]):
         self._compact_worker = None
         self._resource_worker = None
         self._context_notice = None
+        self._context_calls = set()
         self._interrupting = False
         # True for the full span of a kernel rebuild (/clear, /resume) --
         # set at entry to _rebuild_kernel, cleared in its finally. A turn
@@ -1222,11 +1238,20 @@ class HarnessApp(App[None]):
                 self.controller.phase = (f"local model {status}" if status in ("checking", "loading")
                                          else "waiting for response")
             elif isinstance(event, ToolCallProposed):
-                self.controller.phase = f"tool {event.tool}"
+                if event.purpose != "context":
+                    self.controller.phase = f"tool {event.tool}"
+            elif isinstance(event, ContextSourceObserved) and event.status == "fetching":
+                self.controller.phase = f"reading context {event.source_id}"
             elif isinstance(event, PermissionResolved):
                 self.controller.phase = "working"
             self._refresh_queue()
         match event:
+            case ContextSourceObserved(source_id=source, status=status):
+                if status == "fetching":
+                    self._context_calls.add(event.call_id)
+                else:
+                    self._context_calls.discard(event.call_id)
+                    self.say("", f"Context {source}: {status}" + (f"; {event.reason}" if event.reason else ""))
             case ModelCorrectionRequested(attempt=attempt):
                 self.say("", f"Model proposed too many tools; requesting one next call (correction {attempt}).")
             case ContextPrepared(omitted_turns=count) if count:
@@ -1234,9 +1259,14 @@ class HarnessApp(App[None]):
                 if notice != self._context_notice:
                     self.say("", f"Context: {count} earlier turn(s) omitted; full history remains in the session.")
                     self._context_notice = notice
+            case ToolCallProposed(purpose="context"):
+                pass
             case ToolCallProposed(tool=tool):
                 self.say("\u2699 ", str(tool))
             case ToolCallCompleted(result_text=text, is_error=is_error):
+                if event.call_id in self._context_calls:
+                    self._context_calls.discard(event.call_id)
+                    return
                 snippet = (text or "(blob)")[:_SNIPPET_CAP]
                 self.say("\u2717 " if is_error else "\u2713 ", snippet)
             case CustomEvent(namespace="mcp", name=name, data=data):
@@ -1276,7 +1306,7 @@ class HarnessApp(App[None]):
             return
         command = parse_slash_command(text)
         if command is not None:
-            if command.name in self._plugin_commands and command.name != "task":
+            if command.name in self._plugin_commands and command.name not in {"task", "status"}:
                 expanded = self._plugin_commands[command.name].body.replace("$ARGUMENTS", command.arg)
                 if not self._enqueue_prompt(expanded, expand_mentions=False):
                     return
@@ -1598,7 +1628,7 @@ class HarnessApp(App[None]):
             self.say(
                 "",
                 "/help  /model [alias]  /thoughts [collapse|full|off]  /markdown [on|off]  "
-                "/clear  /compact  /resume  /panel  /tools  /task  /context  /resources  /semantics  /improvements  /quit  — @path mentions a file "
+                "/clear  /compact  /resume  /panel  /tools  /task  /status  /context  /resources  /semantics  /improvements  /quit  — @path mentions a file "
                 "(Tab completes), read for the model only; F2 also toggles the activity panel",
             )
             self.say("", "/queue: inspect, edit, remove, pause, resume, clear; queued prompts are memory only")
@@ -1617,6 +1647,16 @@ class HarnessApp(App[None]):
         elif command.name == "context":
             from harness.context import render_context_policy
             self.say("", render_context_policy(self.kernel.context_policy, self.kernel.loop.registry.specs()))
+        elif command.name == "status":
+            from harness.resident import render_status
+            from harness.log import read_session
+            catalog = getattr(self.kernel.provider, "catalog", None)
+            resources = ([self.kernel.resources.snapshot(catalog.resolve(alias))
+                          for alias in catalog.aliases() if "local" in catalog.entries[alias]]
+                         if catalog is not None else [])
+            events = read_session(self.kernel.session.base, self.kernel.session.id, repair=False)
+            for line in render_status(events, model=self.kernel.loop.model, resources=resources).splitlines():
+                self.say("", line)
         elif command.name == "semantics":
             from harness.semantics import read_semantics, render_semantics
             observations = read_semantics(self.kernel.session.base, self.kernel.session.id)

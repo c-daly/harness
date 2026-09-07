@@ -96,6 +96,21 @@ class ContextPrepared(_Event):
     tools: tuple[str, ...] = ()
 
 
+class ContextSourceObserved(_Event):
+    type: Literal["context_source_observed"] = "context_source_observed"
+    task_id: str = ""
+    run_id: str = ""
+    source_id: str = ""
+    policy_digest: str = ""
+    tool: str = ""
+    call_id: CallId | None = None
+    status: Literal["fetching", "ready", "unavailable", "timeout", "oversized", "cancelled"] = "unavailable"
+    reason: str = ""
+    result: BlobRef | None = None
+    byte_count: int = 0
+    duration_ms: float = 0
+
+
 # --- dispatch: intents ---
 
 
@@ -105,7 +120,7 @@ class ToolCallProposed(_Event):
     call_id: CallId
     tool: ToolName
     args: dict[str, Any]
-    purpose: Literal["conversation", "agent-task"] = "conversation"
+    purpose: Literal["conversation", "agent-task", "context"] = "conversation"
     task_id: str | None = None
     agent_run_id: str | None = None
 
@@ -463,6 +478,7 @@ Event = Annotated[
         LocalRuntimeRequested,
         ContextPolicyConfigured,
         ContextPrepared,
+        ContextSourceObserved,
         CompactionApplied,
         TaskCreated,
         TaskSelected,
