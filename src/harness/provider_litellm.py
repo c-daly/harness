@@ -4,12 +4,14 @@ Everything provider-specific is contained here. The kernel never imports
 litellm except through catalog (cost map) and this module.
 """
 
+import ipaddress
 import json
 import os
 import time
 from contextlib import aclosing
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, AsyncIterator, Sequence
+from urllib.parse import urlsplit
 
 from harness.catalog import Catalog, UnknownAliasError
 from harness.errors import (
@@ -66,7 +68,48 @@ def _quiet(litellm_module) -> None:
     _QUIETED = True
 
 
-def map_exception(exc: Exception) -> ProviderError:
+def _network_failure(exc: Exception, api_base: str | None) -> NetworkFailed:
+    try:
+        endpoint = urlsplit(api_base or "")
+        host = endpoint.hostname
+    except ValueError:
+        return NetworkFailed(
+            "Inference connection failed or timed out. Check the configured endpoint."
+        )
+    # Route-only aliases need not satisfy the stricter owned-runtime validator.
+    # Identify loopback independently so credentials/query strings cannot send
+    # a local failure back to the raw SDK diagnostic.
+    try:
+        address = ipaddress.ip_address("127.0.0.1" if host in ("localhost", "localhost.") else host)
+    except ValueError:
+        return NetworkFailed(str(exc))
+    if not address.is_loopback:
+        return NetworkFailed(str(exc))
+    # Describe the configured local transport, not the SDK's OpenAI branding.
+    # Reconstruct only a numeric origin; omit credentials, paths, query/fragment
+    # data, IPv6 scope identifiers, and upstream bodies. Invalid ports/schemes
+    # still get local guidance without echoing the malformed authority.
+    origin = "the configured local endpoint"
+    try:
+        port = endpoint.port
+    except ValueError:
+        pass
+    else:
+        if endpoint.scheme in ("http", "https"):
+            host = str(address).split("%", 1)[0]
+            authority = f"[{host}]" if address.version == 6 else host
+            if port is not None:
+                authority += f":{port}"
+            origin = f"{endpoint.scheme}://{authority}"
+    return NetworkFailed(
+        f"Local inference connection failed or timed out at {origin}. "
+        "Check that the local model server is running and responsive. "
+        "A catalog alias alone does not start a server; configure a local runtime "
+        "profile for on-demand startup."
+    )
+
+
+def map_exception(exc: Exception, *, api_base: str | None = None) -> ProviderError:
     import litellm
 
     _quiet(litellm)
@@ -85,7 +128,7 @@ def map_exception(exc: Exception) -> ProviderError:
         while cause is not None and id(cause) not in seen and len(seen) < 16:
             seen.add(id(cause))
             if isinstance(cause, (httpx.NetworkError, httpx.TimeoutException, httpx.RemoteProtocolError)):
-                return NetworkFailed(str(exc))
+                return _network_failure(exc, api_base)
             cause = cause.__cause__ or cause.__context__
     mapping = (
         (litellm.RateLimitError, RateLimited),
@@ -98,6 +141,8 @@ def map_exception(exc: Exception) -> ProviderError:
     )
     for litellm_type, ours in mapping:
         if isinstance(exc, litellm_type):
+            if ours is NetworkFailed:
+                return _network_failure(exc, api_base)
             return ours(str(exc))
     return ProviderError(str(exc))
 
@@ -291,7 +336,7 @@ async def _acomplete(
     except ProviderError:
         raise
     except Exception as exc:
-        raise map_exception(exc) from exc
+        raise map_exception(exc, api_base=api_base) from exc
     finally:
         from anyio import CancelScope
 

@@ -6,6 +6,34 @@ tasks, normal-memory retrieval, cancellation and continuation in the existing
 terminal interface. Memory remains a separately installed plugin. No plugin is
 required for the project-only workflow.
 
+## Ordinary `/model local` sessions
+
+The qualification launcher uses its own catalog. It does **not** install its
+runtime profile into `~/.config/harness/models.toml`. `/model local` reads that
+normal catalog; an alias with only a route and `api_base` expects a server that
+someone has already started. Tags such as `local` and `verified = true` do not
+start a process or establish current availability.
+
+To use on-demand startup in an ordinary session, provision a native llama.cpp
+server and its GPU libraries, then add a `local` runtime profile to the chosen
+alias in the normal catalog. Use the actual model ID, absolute binary/weight
+paths, and a working directory in the
+[owned-process example](local-runtime-readiness.md#harness-owned-process).
+Each distinct model needs its own model file and matching server ID; renaming
+an alias does not load different weights. Profiles in the same resource group
+share the owned-process limit and unload an idle model when another needs it.
+
+After saving the catalog, `/model local` reloads it. The next message starts the
+configured model; `/resources` shows startup/readiness and `/resources stop local`
+can stop a runtime owned by this session. A long cloud-model history or large
+plugin tool inventory may still need an explicit
+[context profile](context-profiles.md); local setup does not silently discard
+conversation history or tools.
+
+The [normal-session repair evidence](handoffs/2026-09-08-normal-local-session/README.md)
+records the missing-startup configuration found during actual use. The original
+M3 workflow below did not test this installation path.
+
 ## Use the measured profile
 
 On the provisioned Linux/WSL CUDA setup, from this repository:
