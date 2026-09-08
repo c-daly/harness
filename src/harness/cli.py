@@ -141,6 +141,7 @@ def build_kernel(
     routing_rules: "RoutingRuleSet | None" = None,
     model_pinned: bool = False,
     inherit_model_selection: bool = False,
+    explicit_model_selection: bool = False,
     catalog_path: Path | None = None,
     execution_limits: ExecutionLimits | None = None,
     resources=None,
@@ -162,7 +163,7 @@ def build_kernel(
     if resume_session_id is not None:
         def configure(state):
             nonlocal provider, model, model_pinned, pricing, pricing_for, context_policy
-            if inherit_model_selection and state.model_selection is not None:
+            if inherit_model_selection and not explicit_model_selection and state.model_selection is not None:
                 from harness.model_selection import load_selected_catalog
                 catalog, resolved = load_selected_catalog(state.model_selection, catalog_path)
                 provider = _catalog_provider(catalog, provider)
@@ -270,7 +271,10 @@ def build_kernel(
     if transcript is not None:
         loop_kwargs["history"] = transcript
     loop = AgentLoop(**loop_kwargs)
-    if resumed:
+    # A resume baseline (including a departing TUI pin) is not new selection
+    # intent. Restored preferences are already durable. Only a conversational
+    # override may establish/replace one; administrative model choices may not.
+    if resumed and explicit_model_selection:
         loop.record_model_selection()
     from harness.resources import LocalResources
     scope = ExecutionScope(session, effective_registry,
@@ -698,6 +702,7 @@ def _run_main() -> None:
             routing_rules=routing_rules,
             model_pinned=model_pinned,
             inherit_model_selection=args.model is None,
+            explicit_model_selection=args.model is not None,
             catalog_path=args.catalog,
             context_policy=context_policy,
             inherit_context_policy=not args.no_context_profile,
@@ -722,6 +727,7 @@ def _run_main() -> None:
         routing_rules=routing_rules,
         model_pinned=model_pinned,
         inherit_model_selection=args.model is None,
+        explicit_model_selection=args.model is not None,
         catalog_path=args.catalog,
         context_policy=context_policy,
         inherit_context_policy=not args.no_context_profile,

@@ -12,7 +12,7 @@ from harness.fold import fold
 from harness.log import read_session
 from harness.provider import StreamStop, TextDelta
 from harness.provider_litellm import CatalogProvider
-from harness.types import CallId, ModelId
+from harness.types import CallId, ModelId, new_session_id
 from tests.test_tui import MODELS_TOML_TWO_ALIASES, make_app
 from tests.test_tui_queue import screen_text
 
@@ -31,6 +31,108 @@ async def seed_session(base, catalog_path, *, pinned=True):
     await kernel.loop.end()
     kernel.session.close()
     return kernel.session.id
+
+
+def seed_legacy_session(base):
+    from harness.events import SessionEnded
+    from harness.session import Session
+
+    # Real pre-selection event shape, including a historical default that
+    # cannot establish pin intent or describe later unrecorded /model changes.
+    with Session(base, new_session_id(), default_model=ModelId("historical")) as session:
+        session.start()
+        session.append(SessionEnded())
+    return session.id
+
+
+@pytest.mark.parametrize("resume_flag", ["--continue", "--resume"])
+@pytest.mark.parametrize("headless", [False, True])
+def test_legacy_cli_resume_keeps_defaults_until_explicit_selection(
+    tmp_path, catalog_path, monkeypatch, resume_flag, headless,
+):
+    from harness.routing import RoutingRuleSet
+    sid = seed_legacy_session(tmp_path)
+    routing = RoutingRuleSet(default="alias-a")
+    captured = []
+
+    async def launch(kernel, *args, **kwargs):
+        captured.append((str(kernel.loop.model), kernel.loop.model_pinned))
+        kernel.session.close()
+        return "inspected"
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("harness.routing.load_routing", lambda **kwargs: routing)
+    monkeypatch.setattr("harness.tui.run_tui", launch)
+    monkeypatch.setattr("harness.cli._amain", launch)
+    resume_args = [resume_flag] + ([str(sid)] if resume_flag == "--resume" else [])
+    argv = ["harness", *resume_args, "--base-dir", str(tmp_path), "--catalog", str(catalog_path),
+            "--no-mcp", "--no-plugins"]
+    if headless:
+        argv += ["-p", "continue"]
+    monkeypatch.setattr("sys.argv", argv)
+    main()
+    assert captured == [("alias-a", False)]
+    assert fold(read_session(tmp_path, sid)).model_selection is None
+
+    # An incidental default can disappear without poisoning the next resume.
+    catalog_path.write_text('[models.alias-b]\nroute = "local/model-b"\n')
+    routing.default = "alias-b"
+    main()
+    assert captured[-1] == ("alias-b", False)
+    assert fold(read_session(tmp_path, sid)).model_selection is None
+
+    # Only an explicit conversational choice establishes durable preference.
+    monkeypatch.setattr("sys.argv", [*argv, "--model", "alias-b"])
+    main()
+    selection = ModelSelected(model=ModelId("alias-b"), pinned=True)
+    assert fold(read_session(tmp_path, sid)).model_selection == selection
+    monkeypatch.setattr("sys.argv", argv)
+    routing.default = "missing"
+    main()
+    assert captured[-1] == ("alias-b", True)
+    assert fold(read_session(tmp_path, sid)).model_selection == selection
+
+
+@pytest.mark.parametrize("departing_pin", [True, False])
+async def test_legacy_tui_resume_does_not_save_departing_choice(tmp_path, catalog_path, departing_pin):
+    sid = seed_legacy_session(tmp_path)
+    app = make_app(tmp_path, catalog_path=catalog_path,
+                   provider=CatalogProvider(Catalog.load(catalog_path)),
+                   model=ModelId("alias-b"), model_pinned=departing_pin)
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        assert fold(read_session(tmp_path, app.kernel.session.id)).model_selection is not None
+        await app._rebuild_kernel(resume_session_id=sid)
+        await pilot.pause(0.05)
+        assert app.kernel.loop.model == "alias-b"
+        assert app.kernel.loop.model_pinned is departing_pin
+        assert fold(read_session(tmp_path, sid)).model_selection is None
+        # Reopening the same legacy log must remain free of inferred intent.
+        await app._rebuild_kernel(resume_session_id=sid)
+        await pilot.pause(0.05)
+        assert fold(read_session(tmp_path, sid)).model_selection is None
+        await app._switch_model("alias-a")
+        selection = ModelSelected(model=ModelId("alias-a"), pinned=True)
+        assert fold(read_session(tmp_path, sid)).model_selection == selection
+        await app._rebuild_kernel(resume_session_id=sid)
+        await pilot.pause(0.05)
+        assert app.kernel.loop.model == "alias-a" and app.kernel.loop.model_pinned
+        assert fold(read_session(tmp_path, sid)).model_selection == selection
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+async def test_administrative_model_override_is_not_a_conversation_preference(tmp_path, catalog_path, legacy):
+    sid = seed_legacy_session(tmp_path) if legacy else await seed_session(tmp_path, catalog_path)
+    selection = fold(read_session(tmp_path, sid)).model_selection
+    # The shape used by improvement/semantic/handoff commands: a provider and
+    # model to operate with, sometimes pinned, but no conversation selection.
+    kernel = build_kernel(base_dir=tmp_path, provider=CatalogProvider(Catalog.load(catalog_path)),
+                          model=ModelId("alias-b"), model_pinned=True, resume_session_id=sid)
+    try:
+        assert kernel.loop.model == "alias-b"
+        assert fold(read_session(tmp_path, sid)).model_selection == selection
+    finally:
+        kernel.session.close()
 
 
 @pytest.mark.parametrize("pinned", [True, False])

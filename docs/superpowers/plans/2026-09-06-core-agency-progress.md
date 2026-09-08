@@ -1661,3 +1661,34 @@ semantic improvement, run a bounded larger-model capacity experiment, then
 extend mixed-agent continuity and isolated source-improvement workflows. The
 current self-improvement mechanisms still have no demonstrated useful local
 quality gain. This continuity fix does not close that gate.
+
+## PR32 review — keep legacy resume baselines out of saved preferences
+
+The review identified an unconditional selection write during kernel resume.
+For legacy logs, it turned a routing default or departing TUI selection into
+durable preference. Administrative improvement/assessment commands could also
+replace the conversation's saved model. Both original CI versions failed two
+improvement-command tests when this unintended write encountered their injected
+provider factory.
+
+Resume now writes a preference only when the caller explicitly marks a
+conversational model selection. Both ordinary CLI paths set that intent for
+`--model`; the TUI's `/model` already records its own applied selection.
+Inherited preferences remain in the log without another write. Routing pins
+alone, repeated legacy resumes and administrative model overrides do not
+establish or replace preference. Explicit selection also takes precedence over
+inheritance inside kernel construction.
+
+Six new regressions failed on the reviewed code before the fix. The final
+coverage also exercises headless and terminal CLI paths, changing/removing an
+incidental routing default, repeated TUI resumes with pinned/unpinned departing
+models, explicit selection after legacy resume, and administrative overrides of
+both legacy and already-recorded preferences. The terminal driver yields to
+subscription workers between rebuilds, as ordinary UI commands do.
+
+**Review validation:** **155 affected tests passed on Python 3.13 in 60.36
+seconds**, and **64 continuation/improvement/resume tests passed on Python 3.12
+in 22.78 seconds**, using the separate environment. Both previously failing CI
+cases passed. Ruff, whitespace checks and offline source/wheel builds passed.
+Full-suite PR checks for the review correction are separate from these local
+results and the original `52e719f` CI failures.

@@ -88,3 +88,20 @@ The initial three failing regressions are the before-change evidence. An early
 expanded-test run had two fixture errors; the final groups above include the
 corrected cases. Full provider and platform qualification remains in the core
 roadmap; these scoped checks do not close M6.
+
+## PR32 review correction
+
+The original `52e719f` implementation wrote a selection on every resumed kernel,
+including legacy routing defaults, departing TUI models and administrative
+model overrides. The review correction restricts resume-time persistence to an
+explicit conversational selection. Existing preferences need no new event;
+legacy sessions retain their old startup/default behavior until `--model` or
+`/model` establishes a preference. Improvement and assessment commands preserve
+the conversation's selection.
+
+Six new regressions reproduced the problem; additional coverage includes both
+headless and terminal CLI entry points. The original CI failures in two
+improvement-command tests came from the same unconditional write and are part
+of the affected verification group. The real local inference reports above
+remain evidence from `52e719f`; the review correction's checks are tracked in
+the [implementation record](../../superpowers/plans/2026-09-06-core-agency-progress.md).
