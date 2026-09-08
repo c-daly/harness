@@ -119,6 +119,28 @@ def map_exception(exc: Exception, *, api_base: str | None = None) -> ProviderErr
     lowered = str(exc).lower()
     if any(s in lowered for s in ("missing credentials", "api key", "authentication")):
         return AuthFailed(str(exc))
+    if isinstance(exc, litellm.BadRequestError):
+        # llama.cpp's typed context rejection can arrive as a generic SDK 400.
+        # Inspect structured evidence, not phrases that a bad argument may quote.
+        cause, seen = exc, set()
+        while cause is not None and id(cause) not in seen and len(seen) < 16:
+            seen.add(id(cause))
+            body = getattr(cause, "body", None)
+            response = getattr(cause, "response", None)
+            if body is None and response is not None:
+                try:
+                    if len(response.content) <= 16384:
+                        body = response.json()
+                except (ValueError, AttributeError, RuntimeError):
+                    pass
+            if isinstance(body, dict):
+                error = body.get("error", body)
+                if isinstance(error, dict) and error.get("type") == "exceed_context_size_error":
+                    return ContextOverflow(
+                        "Model context limit exceeded. Use /compact <inference-alias> "
+                        "or select a model with a larger context window."
+                    )
+            cause = cause.__cause__ or cause.__context__
     if isinstance(exc, litellm.InternalServerError):
         import httpx
 
