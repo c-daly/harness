@@ -331,22 +331,23 @@ def extract_math(markup: str) -> tuple[str, dict[str, Formula]]:
 
         if opener:
             content_start = index + len(opener)
+            close = _find_closer(markup, content_start, closer, multiline=display)
             # A dollar followed by digits at a word boundary is overwhelmingly
-            # currency.  Still permit the unambiguous compact math form `$5$`,
-            # but do not let `$10. some prose ...` consume a later dollar from
-            # an inline-code span as its closing delimiter.
+            # currency unless the bounded span contains explicit math notation.
+            # Scientific notation commonly starts with a number and contains
+            # spaces. Do not let currency consume a dollar inside code instead.
             if opener == "$" and markup[content_start : content_start + 1].isdigit():
                 previous = markup[index - 1] if index else " "
-                next_dollar = markup.find("$", content_start)
-                whitespace = next(
-                    (pos for pos in range(content_start, len(markup)) if markup[pos].isspace()),
-                    len(markup),
+                candidate = markup[content_start:close] if close >= 0 else ""
+                explicit_math = "`" not in candidate and re.search(
+                    r"\\[A-Za-z]+|[_^=+<>]|(?<!\S)[*/-](?!\S)|(?<=\d)\s*[*/-]\s*(?=\d)",
+                    candidate,
                 )
-                if previous.isspace() and (next_dollar < 0 or whitespace < next_dollar):
+                if (previous.isspace() and not explicit_math
+                        and (close < 0 or any(char.isspace() for char in candidate))):
                     output.append(markup[index])
                     index += 1
                     continue
-            close = _find_closer(markup, content_start, closer, multiline=display)
             if close >= 0:
                 source = markup[content_start:close]
                 after = close + len(closer)
