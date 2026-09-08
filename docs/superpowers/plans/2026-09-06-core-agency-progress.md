@@ -1525,7 +1525,7 @@ provider, catalog, inference/client, local-resource and fallback tests pass in
 
 ## September 8 — numeric inline LaTeX in normal replies
 
-The user's local-model Jupiter reply contained valid `$1.898 \\times 10^{27}$`
+The user's local-model Jupiter reply contained valid `$1.898 \times 10^{27}$`
 source. The renderer's currency guard rejected numeric spans containing spaces,
 so it never reached the existing Unicode math renderer. The guard now recognizes
 explicit mathematical notation inside a bounded inline span while preserving
