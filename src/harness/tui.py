@@ -616,6 +616,7 @@ class HarnessApp(App[None]):
     #stats { height: 1; }
     #statusbar { height: 1; }
     #queue { height: auto; max-height: 4; }
+    #model-progress { height: auto; max-height: 2; display: none; }
     #task-status { height: auto; max-height: 3; }
     """
     BINDINGS = [
@@ -724,6 +725,7 @@ class HarnessApp(App[None]):
                 )
             yield Static(id="live")
         with Vertical(id="input-area"):
+            yield Static(id="model-progress")
             yield Static(id="queue")
             yield Static(id="task-status")
             yield Static(id="stats")
@@ -1329,7 +1331,7 @@ class HarnessApp(App[None]):
             return
         command = parse_slash_command(text)
         if command is not None:
-            if command.name in self._plugin_commands and command.name not in {"task", "status", "semantics", "improvements", "handoff"}:
+            if command.name in self._plugin_commands and command.name not in {"task", "status", "semantics", "improvements", "handoff", "models"}:
                 expanded = self._plugin_commands[command.name].body.replace("$ARGUMENTS", command.arg)
                 if not self._enqueue_prompt(expanded, expand_mentions=False):
                     return
@@ -1653,7 +1655,7 @@ class HarnessApp(App[None]):
             self.say(
                 "",
                 "/help  /model [alias]  /thoughts [collapse|full|off]  /markdown [on|off]  "
-                "/clear  /compact  /resume  /panel  /tools  /task  /status  /context  /resources  /semantics  /improvements  "
+                "/clear  /compact  /resume  /panel  /tools  /task  /status  /context  /resources  /models  /semantics  /improvements  "
                 "/handoff inspect|record|show|run  /quit  — @path mentions a file "
                 "(Tab completes), read for the model only; F2 also toggles the activity panel",
             )
@@ -1757,14 +1759,15 @@ class HarnessApp(App[None]):
             self.say("", "Controls: /improvements propose [message|context|progress] | show ID | "
                 "evaluate CANDIDATE EXPERIMENT.json | compare ASSESSMENT.json | "
                 "adopt RESULT [message|context|progress] | rollback [message|context|progress]")
-        elif command.name == "resources":
+        elif command.name in ("resources", "models"):
             if self._rebuild_in_progress:
                 self.say("! ", "session rebuild in progress; try again in a moment")
                 return
             if self._resource_worker is not None and not self._resource_worker.is_finished:
-                self.say("", "local resource check already running; Esc cancels it when no task is active")
+                self.say("", "model or resource operation already running; Esc cancels it when no task is active")
                 return
-            self._resource_worker = self.run_worker(self._resource_command(command.arg),
+            action = self._models_command(command.arg) if command.name == "models" else self._resource_command(command.arg)
+            self._resource_worker = self.run_worker(action,
                                                     group="resources", exit_on_error=False)
         elif command.name == "quit":
             await self._finish()
@@ -2022,6 +2025,37 @@ class HarnessApp(App[None]):
             except (WorkerCancelled, WorkerFailed):
                 pass
         self._resource_worker = None
+
+    async def _models_command(self, arg: str) -> None:
+        import shlex
+        from harness.model_management import ModelSetupError
+        from harness.models_cli import perform
+        widget = self.query_one("#model-progress", Static)
+
+        def progress(text):
+            widget.display = True
+            widget.update(_plain(text))
+
+        try:
+            words = shlex.split(arg)
+            if "--catalog" in words or any(word.startswith("--catalog=") for word in words):
+                raise ModelSetupError("The terminal uses its current catalog; use the CLI to edit another catalog.")
+            path = Path(self.catalog_path) if self.catalog_path else Path.home()/".config/harness/models.toml"
+            result = await perform(words, catalog_path=path, progress=progress)
+            self.catalog_path = path
+            for line in result.splitlines():
+                self.say("", line)
+            self._catalog_cache = None
+            self._refresh_statusbar()
+        except asyncio.CancelledError:
+            self.say("", "Model operation cancelled.")
+            raise
+        except (ValueError, OSError) as exc:
+            detail = str(exc) if isinstance(exc, ModelSetupError) else type(exc).__name__
+            self.say("! ", f"Model operation failed: {detail}")
+        finally:
+            widget.update("")
+            widget.display = False
 
     async def _resource_command(self, arg: str) -> None:
         from harness.resources import render_resources

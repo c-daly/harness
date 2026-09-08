@@ -1,0 +1,18 @@
+[
+  {
+    "session_id": "cfff02f4f2c6442487c2a142434d8c71",
+    "model_durations_ms": [
+      14012,
+      9351,
+      3697
+    ],
+    "runtime_actions": [
+      "start",
+      "stop"
+    ],
+    "artifact": {
+      "project": "lantern",
+      "retry_limit": 7
+    }
+  }
+]

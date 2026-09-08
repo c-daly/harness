@@ -15,8 +15,10 @@ someone has already started. Tags such as `local` and `verified = true` do not
 start a process or establish current availability.
 
 To use on-demand startup in an ordinary session, provision a native llama.cpp
-server and its GPU libraries, then add a `local` runtime profile to the chosen
-alias in the normal catalog. Use the actual model ID, absolute binary/weight
+server and its GPU libraries, then use
+[`/models add`](model-management.md) to register the installed GGUF under a new
+alias. For an existing alias, edit its `local` runtime profile in the normal
+catalog. Use the actual model ID, absolute binary/weight
 paths, and a working directory in the
 [owned-process example](local-runtime-readiness.md#harness-owned-process).
 Each distinct model needs its own model file and matching server ID; renaming

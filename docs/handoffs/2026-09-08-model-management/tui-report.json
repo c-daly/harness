@@ -1,0 +1,13 @@
+{
+  "progress_visible": true,
+  "typed_during_verification": true,
+  "registration_seconds": 4.868,
+  "turn_seconds": 12.573,
+  "model_calls": 1,
+  "session_id": "af15d484d4454933864edfd1e1e01ca9",
+  "runtime_actions": [
+    "start",
+    "stop"
+  ],
+  "user_catalog_unchanged": true
+}

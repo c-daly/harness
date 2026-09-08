@@ -966,6 +966,10 @@ def _resources_subcommand(argv: list[str]) -> None:
 
 def main() -> None:
     argv = sys.argv[1:]
+    if argv and argv[0] == "models":
+        from harness.models_cli import main as models_main
+        models_main(argv[1:])
+        return
     if argv and argv[0] == "handoff":
         from harness.handoff_cli import main as handoff_main
         handoff_main(argv[1:])

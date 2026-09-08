@@ -1,8 +1,13 @@
 """Durable file publication shared by session repair, blobs, and core state."""
 
+import ctypes
+import errno
 import os
 import uuid
 from pathlib import Path
+
+_AT_FDCWD = -100
+_RENAME_EXCHANGE = 2
 
 
 def sync_directory(path: Path) -> None:
@@ -11,6 +16,25 @@ def sync_directory(path: Path) -> None:
         os.fsync(fd)
     finally:
         os.close(fd)
+
+
+def exchange_paths(first: Path, second: Path) -> None:
+    """Atomically exchange two existing names, retaining both files.
+
+    Linux/WSL2 renameat2(RENAME_EXCHANGE); fail closed when unsupported. In
+    particular, never emulate this with a sequence of destructive renames.
+    Callers must retain the displaced name and sync its directory on success.
+    """
+    try:
+        rename = ctypes.CDLL(None, use_errno=True).renameat2
+    except AttributeError:
+        raise OSError(errno.ENOTSUP, "Atomic file exchange is unavailable") from None
+    rename.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p,
+                       ctypes.c_uint]
+    rename.restype = ctypes.c_int
+    if rename(_AT_FDCWD, os.fsencode(first), _AT_FDCWD, os.fsencode(second), _RENAME_EXCHANGE) != 0:
+        code = ctypes.get_errno()
+        raise OSError(code, os.strerror(code), str(second))
 
 
 def atomic_write(path: Path, data: bytes, *, replace: bool = True) -> None:
