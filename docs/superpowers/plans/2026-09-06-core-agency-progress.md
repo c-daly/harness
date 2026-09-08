@@ -1244,3 +1244,28 @@ width failure reproduced from merged main; Rich forced 80 columns despite the
 test requesting 78. No math code, assertion or dependency changed. Both the
 initial failure and successful repeat are retained. The focused improvement/
 semantic suite passed all 59 tests, including provider-exception body redaction.
+
+## PR25 review — catalog upgrades suspend adopted prompts
+
+The review identified that the evaluator fingerprint included catalog data but
+omitted `catalog.py`, whose resolution logic selects the inference route and
+endpoint. The fingerprint now includes that implementation. A regression first
+reproduced the missing suspension, then verified resume with changed catalog
+source: the builtin prompt is selected, the old evaluation cannot authorize
+adoption, and rollback remains available without inference.
+
+PR25's Python 3.12 CI also exposed the context-cap status bar waiting for its
+one-second statistics timer. The status bar now renders at mount. A regression
+pauses periodic statistics updates and checks the actual terminal compositor,
+so the fix does not depend on a longer test sleep. Both new regressions failed
+before the fixes. The 69 focused improvement, semantic, catalog and context-TUI
+tests pass on Python 3.13, and Ruff and whitespace checks pass.
+
+The earlier full-suite, wheel and GPU reports describe `55c1367`, before these
+review corrections. They remain retained as evidence for that revision.
+
+**Python 3.12 validation:** 165 tests passed in 201.05s across the same focused
+suites plus the full main TUI suite, including its localhost MCP cases and the
+previously failing context-status journey. The Python 3.12 environment was
+installed from the existing lockfile separately from the project's Python 3.13
+environment. No dependency or lockfile changes were required.

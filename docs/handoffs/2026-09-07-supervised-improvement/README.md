@@ -6,6 +6,11 @@ improvement loop for shadow message prompts. The
 [operator guide](../../supervised-improvement.md) describes the controls and
 limits. M4 remains in progress; no automatic semantic decision is qualified.
 
+The reports below describe `55c1367`, before PR25's review corrections to the
+catalog-source fingerprint and initial status-bar rendering. Validation of
+those corrections is recorded in the implementation progress log. The GPU
+gate and earlier local full suite were not rerun for this scoped correction.
+
 ## Real offline smoke
 
 The [final report](supervised-improvement-final.json) passes both technical journeys

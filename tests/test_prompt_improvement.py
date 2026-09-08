@@ -204,6 +204,49 @@ async def test_changed_configuration_suspends_selection_and_rollback_needs_no_pr
         kernel.session.close()
 
 
+async def test_catalog_source_upgrade_suspends_resumed_selection_without_inference(tmp_path, monkeypatch):
+    from pathlib import Path
+    import harness.catalog
+
+    kernel = await kernel_for(tmp_path, LearningProvider())
+    try:
+        candidate, result = await passing_candidate(kernel)
+        adopted = kernel.improvement_service.adopt(result.id, model=ModelId("fake"))
+        incumbent = adopted.previous
+        session_id = kernel.session.id
+    finally:
+        kernel.session.close()
+
+    # Simulate an installed catalog implementation upgrade, leaving the model
+    # configuration and all other fingerprint inputs unchanged.
+    catalog_path = Path(harness.catalog.__file__)
+    read_bytes = Path.read_bytes
+
+    def upgraded_source(path):
+        source = read_bytes(path)
+        return source.replace(b'route = entry["route"]', b'route = "openai/new-target"') \
+            if path == catalog_path else source
+
+    monkeypatch.setattr(Path, "read_bytes", upgraded_source)
+    provider = LearningProvider()
+    resumed = build_kernel(base_dir=tmp_path, model=ModelId("fake"), provider=provider,
+                           resume_session_id=session_id)
+    try:
+        selected, status, change = prompt_selection(resumed.session, provider, ModelId("fake"))
+        assert status.startswith("suspended")
+        assert selected == incumbent and selected != candidate.artifact and change == adopted
+        assert not provider.requests
+        with pytest.raises(ValueError, match="configuration"):
+            resumed.improvement_service.adopt(result.id, model=ModelId("fake"))
+        observed = await resumed.semantics.interpret(HELD_OUT, model=ModelId("fake"))
+        assert observed.prompt == incumbent and observed.selection_status.startswith("suspended")
+        assert len(provider.requests) == 1
+        rollback = resumed.improvement_service.rollback(model=ModelId("fake"))
+        assert rollback.prompt == incumbent and len(provider.requests) == 1
+    finally:
+        resumed.session.close()
+
+
 async def test_explicit_prompt_or_different_limits_do_not_use_adopted_configuration(tmp_path):
     provider = LearningProvider()
     kernel = await kernel_for(tmp_path, provider)

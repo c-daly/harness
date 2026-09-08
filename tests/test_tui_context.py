@@ -8,6 +8,23 @@ from tests.test_tui import make_app
 from tests.test_tui_queue import screen_text
 
 
+async def test_context_cap_is_visible_before_the_first_stats_tick(tmp_path, monkeypatch):
+    app = make_app(tmp_path, context_policy=ContextPolicy(history_turns=1, tools=()))
+    set_interval = app.set_interval
+
+    def pause_stats(interval, callback, *args, **kwargs):
+        timer = set_interval(interval, callback, *args, **kwargs)
+        if callback == app.refresh_stats:
+            timer.pause()
+        return timer
+
+    monkeypatch.setattr(app, "set_interval", pause_stats)
+    async with app.run_test(size=(140, 45)) as pilot:
+        await pilot.pause(0.1)
+        assert "ctx cap 32,768B" in screen_text(app)
+        assert not app.kernel.loop.history
+
+
 async def test_profile_inspection_omission_notice_and_clear_preserve_draft_and_policy(tmp_path):
     policy = ContextPolicy(history_turns=1, tools=("read_file",))
     app = make_app(tmp_path, context_policy=policy, native_tools=True, workspace_root=tmp_path)

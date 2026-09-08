@@ -808,6 +808,7 @@ class HarnessApp(App[None]):
 
     async def on_mount(self) -> None:
         self.query_one("#prompt", HistoryInput).focus()
+        self._refresh_statusbar()
         self.run_worker(self._session_driver(), group="driver", exit_on_error=False)
 
     async def _session_driver(self) -> None:
@@ -1205,7 +1206,7 @@ class HarnessApp(App[None]):
         return ctx_segment, cost_segment
 
     def _refresh_statusbar(self, rollup: "dict | None" = None) -> None:
-        """Recompute the persistent #statusbar. Called at turn end (reusing
+        """Recompute the persistent #statusbar. Called at mount, turn end (reusing
         the rollup refresh_stats already computed -- no second telemetry
         query), from /model (no turn required), after a kernel rebuild
         (/clear, /resume), and after /compact (history shrinks, ctx% moves)."""
