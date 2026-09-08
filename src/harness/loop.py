@@ -19,6 +19,7 @@ from harness.events import (
     FallbackConfigured,
     ErrorRaised,
     ModelCorrectionRequested,
+    ModelSelected,
     SessionEnded,
     ToolCallCancelled,
     UserInterrupt,
@@ -114,6 +115,7 @@ class AgentLoop:
 
     async def start(self) -> None:
         self.session.start()
+        self.record_model_selection()
         if self.dispatcher.scope.context_policy is not None:
             self.session.append(ContextPolicyConfigured(policy=self.dispatcher.scope.context_policy))
         if self.fallback_policy is not None:
@@ -121,6 +123,12 @@ class AgentLoop:
         await self._apply_contributions(
             LifecyclePoint.SESSION_START, {"session_id": self.session.id}
         )
+
+    def record_model_selection(self) -> None:
+        from harness.provider_litellm import CatalogProvider
+
+        if isinstance(self.provider, CatalogProvider):
+            self.session.append(ModelSelected(model=self.model, pinned=self.model_pinned))
 
     async def run_turn(self, user_text: str) -> str:
         result = await self.run_task(AgentTask(prompt=user_text, context=tuple(self.turn_context)))

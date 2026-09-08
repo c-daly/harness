@@ -60,6 +60,15 @@ class SessionResumed(_Event):
     type: Literal["session_resumed"] = "session_resumed"
 
 
+class ModelSelected(_Event):
+    """The session's catalog preference, independent of routing/fallback calls."""
+
+    type: Literal["model_selected"] = "model_selected"
+    is_intent: ClassVar[bool] = True
+    model: ModelId
+    pinned: bool
+
+
 class UserMessage(_Event):
     type: Literal["user_message"] = "user_message"
     text: str
@@ -485,6 +494,7 @@ Event = Annotated[
         SessionStarted,
         SessionEnded,
         SessionResumed,
+        ModelSelected,
         UserMessage,
         UserInterrupt,
         ToolCallProposed,

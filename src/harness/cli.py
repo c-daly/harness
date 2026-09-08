@@ -106,6 +106,21 @@ def _make_pricing_for(catalog) -> "Callable[[ModelId], dict[str, float]]":
     return _pricing
 
 
+def _catalog_provider(catalog, previous=None):
+    from harness.provider_antigravity import AntigravityProvider
+    from harness.provider_claude_code import ClaudeCodeProvider
+    from harness.provider_codex import CodexProvider
+    from harness.provider_litellm import CatalogProvider
+
+    # Keep adapter configuration on an in-app resume, without mutating the
+    # old session's catalog while the new selection is being validated.
+    if isinstance(previous, CatalogProvider):
+        from dataclasses import replace
+        return replace(previous, catalog=catalog)
+    return CatalogProvider(catalog, claude_code=ClaudeCodeProvider(),
+                           codex=CodexProvider(), antigravity=AntigravityProvider())
+
+
 def build_kernel(
     *,
     provider: ModelProvider,
@@ -125,6 +140,8 @@ def build_kernel(
     pricing_for: "Callable[[ModelId], dict[str, float]] | None" = None,
     routing_rules: "RoutingRuleSet | None" = None,
     model_pinned: bool = False,
+    inherit_model_selection: bool = False,
+    catalog_path: Path | None = None,
     execution_limits: ExecutionLimits | None = None,
     resources=None,
     context_policy: ContextPolicy | None = None,
@@ -143,12 +160,22 @@ def build_kernel(
     read_state = None  # set below when native tools are on; used by routing signals
     resumed = False
     if resume_session_id is not None:
-        session, transcript = resume_session(base_dir, resume_session_id, default_model=model)
+        def configure(state):
+            nonlocal provider, model, model_pinned, pricing, pricing_for, context_policy
+            if inherit_model_selection and state.model_selection is not None:
+                from harness.model_selection import load_selected_catalog
+                catalog, resolved = load_selected_catalog(state.model_selection, catalog_path)
+                provider = _catalog_provider(catalog, provider)
+                model = state.model_selection.model
+                model_pinned = state.model_selection.pinned
+                pricing = resolved.pricing_dict() or None
+                pricing_for = _make_pricing_for(catalog)
+            if context_policy is None and inherit_context_policy:
+                context_policy = state.context_policy
+
+        session, transcript = resume_session(base_dir, resume_session_id, default_model=model,
+                                             configure=configure)
         resumed = True
-        if context_policy is None and inherit_context_policy:
-            from harness.fold import fold
-            from harness.log import read_session
-            context_policy = fold(read_session(base_dir, resume_session_id)).context_policy
     else:
         session = Session(base_dir, new_session_id(), default_model=model)
         transcript = None
@@ -243,6 +270,8 @@ def build_kernel(
     if transcript is not None:
         loop_kwargs["history"] = transcript
     loop = AgentLoop(**loop_kwargs)
+    if resumed:
+        loop.record_model_selection()
     from harness.resources import LocalResources
     scope = ExecutionScope(session, effective_registry,
                            ExecutionBudget(execution_limits or ExecutionLimits()),
@@ -537,11 +566,22 @@ def _run_main() -> None:
     except RoutingConfigError as exc:
         raise SystemExit(f"routing config error: {exc}")
     pricing_for: Callable[[ModelId], dict[str, float]] | None = None
-    model_pinned = False
+    model_pinned = args.model is not None
+    selected_alias = args.model
+    if resume_session_id is not None and args.model is None:
+        from harness.model_selection import read_model_selection, load_selected_catalog
+        from harness.log import SessionLockedError, TornLogError
+        try:
+            selection = read_model_selection(args.base_dir, resume_session_id)
+            if selection is not None:
+                load_selected_catalog(selection, args.catalog)
+                selected_alias = str(selection.model)
+                model_pinned = selection.pinned
+        except (OSError, ValueError, SessionLockedError, TornLogError) as exc:
+            raise SystemExit(f"cannot resume {resume_session_id}: {exc}") from None
 
-    if args.model is not None:
+    if selected_alias is not None:
         from harness.catalog import Catalog, UnknownAliasError
-        from harness.provider_litellm import CatalogProvider
 
         try:
             catalog = Catalog.load(args.catalog)
@@ -550,33 +590,22 @@ def _run_main() -> None:
                 f"catalog not found at {args.catalog}; create it or pass --catalog <path>"
             )
         try:
-            resolved = catalog.resolve(args.model)
+            resolved = catalog.resolve(selected_alias)
         except UnknownAliasError:
             raise SystemExit(
-                f"unknown model alias {args.model!r}; known aliases: "
+                f"unknown model alias {selected_alias!r}; known aliases: "
                 f"{', '.join(catalog.aliases()) or '(none)'}"
             )
         # the catalog-aware provider resolves endpoint+key per call from the alias,
         # so the model string carried through dispatch is the ALIAS, not the route
-        from harness.provider_antigravity import AntigravityProvider
-        from harness.provider_claude_code import ClaudeCodeProvider
-        from harness.provider_codex import CodexProvider
-
-        provider: ModelProvider = CatalogProvider(
-            catalog,
-            claude_code=ClaudeCodeProvider(),
-            codex=CodexProvider(),
-            antigravity=AntigravityProvider(),
-        )
-        model = ModelId(args.model)
+        provider: ModelProvider = _catalog_provider(catalog)
+        model = ModelId(selected_alias)
         pricing = resolved.pricing_dict() or None
         pricing_for = _make_pricing_for(catalog)
-        model_pinned = True  # an explicit --model is a pin (routing-exempt)
     elif routing_rules is not None and routing_rules.default is not None:
         # no explicit --model, but a routing config declares a routable baseline:
         # run the default alias UNpinned so per-turn rules can rewrite it
         from harness.catalog import Catalog, UnknownAliasError
-        from harness.provider_litellm import CatalogProvider
 
         try:
             catalog = Catalog.load(args.catalog)
@@ -592,16 +621,7 @@ def _run_main() -> None:
                 f"routing default {routing_rules.default!r} is not a known alias; "
                 f"known aliases: {', '.join(catalog.aliases()) or '(none)'}"
             )
-        from harness.provider_antigravity import AntigravityProvider
-        from harness.provider_claude_code import ClaudeCodeProvider
-        from harness.provider_codex import CodexProvider
-
-        provider = CatalogProvider(
-            catalog,
-            claude_code=ClaudeCodeProvider(),
-            codex=CodexProvider(),
-            antigravity=AntigravityProvider(),
-        )
+        provider = _catalog_provider(catalog)
         model = ModelId(routing_rules.default)
         pricing = resolved.pricing_dict() or None
         pricing_for = _make_pricing_for(catalog)
@@ -677,6 +697,8 @@ def _run_main() -> None:
             pricing_for=pricing_for,
             routing_rules=routing_rules,
             model_pinned=model_pinned,
+            inherit_model_selection=args.model is None,
+            catalog_path=args.catalog,
             context_policy=context_policy,
             inherit_context_policy=not args.no_context_profile,
         )
@@ -699,6 +721,8 @@ def _run_main() -> None:
         pricing_for=pricing_for,
         routing_rules=routing_rules,
         model_pinned=model_pinned,
+        inherit_model_selection=args.model is None,
+        catalog_path=args.catalog,
         context_policy=context_policy,
         inherit_context_policy=not args.no_context_profile,
         resume_session_id=resume_session_id,
@@ -1002,4 +1026,8 @@ def main() -> None:
     if argv and argv[0] == "import":
         _import_subcommand(argv[1:])
         return
-    _run_main()
+    from harness.model_selection import ModelSelectionError
+    try:
+        _run_main()
+    except ModelSelectionError as exc:
+        raise SystemExit(str(exc)) from None

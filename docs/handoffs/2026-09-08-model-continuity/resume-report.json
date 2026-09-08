@@ -1,0 +1,24 @@
+{
+  "stage": "resume",
+  "restored_before_dispatch": true,
+  "turn_seconds": 10.611,
+  "session_id": "31f4ff57264541cdb6efdec42fc9855b",
+  "model": "continuity-cpu",
+  "answer": "amberfern",
+  "draft_preserved": true,
+  "compositor_verified": true,
+  "runtime_actions": [
+    "start",
+    "stop",
+    "start",
+    "stop",
+    "start",
+    "stop"
+  ],
+  "selection": {
+    "type": "model_selected",
+    "model": "continuity-cpu",
+    "pinned": true
+  },
+  "user_catalog_unchanged": true
+}

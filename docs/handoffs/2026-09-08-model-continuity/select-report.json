@@ -1,0 +1,20 @@
+{
+  "stage": "select",
+  "restored_before_dispatch": false,
+  "turn_seconds": 42.015,
+  "session_id": "31f4ff57264541cdb6efdec42fc9855b",
+  "model": "continuity-cpu",
+  "answer": "CONTINUITY_SET",
+  "draft_preserved": true,
+  "compositor_verified": true,
+  "runtime_actions": [
+    "start",
+    "stop"
+  ],
+  "selection": {
+    "type": "model_selected",
+    "model": "continuity-cpu",
+    "pinned": true
+  },
+  "user_catalog_unchanged": true
+}

@@ -291,10 +291,11 @@ secrets — consistent with the harness's never-store-literals rule.
 unverified until a conformance suite has passed against recorded real streams.
 You can run an unverified model; the flag just records what's been checked.
 
-If you don't pass `--model`, the harness runs a built-in **echo provider** (a
-deterministic stand-in for demos and tests), not a real model — so a real
-session always needs `--model <alias>`. An unknown alias or a missing catalog
-file fails with a message telling you how to fix it.
+For a new session, `--model <alias>` selects and pins a catalog entry. Without
+it, a configured routing default supplies the unpinned baseline; otherwise
+Harness uses the built-in **echo provider** for demos and tests. `/model alias`
+can select a real model from the interface. An unknown alias or missing catalog
+fails with a message telling you how to fix it.
 
 > Switching providers is a first-class operation, not a workaround. The same
 > applies inside plugins and subagents — model choice is data, not code.
@@ -534,6 +535,25 @@ Override the session/data root with `--base-dir`. Resume a past session with
 `--base-dir` without looking up its id via `--continue` (errors clearly if
 there are no sessions to continue; mutually exclusive with `--resume`). Tag a
 run for later querying with `--tag NAME` (repeatable).
+
+Catalog selections are saved when they take effect, including `/model` changes
+made before sending another prompt. `--continue`, `--resume` and the `/resume`
+picker restore the target session's saved alias and whether it was pinned against
+routing. An explicit `--model` overrides the saved preference and becomes the
+new selection. `/clear` carries the current choice into the fresh session.
+Selections deferred during a turn are saved only when they actually apply;
+an unapplied selection is lost if the process exits first.
+
+The current catalog supplies endpoints, credentials, runtime settings and prices.
+If the saved alias is unavailable or invalid, resume refuses with recovery
+instructions; the picker leaves the current session open. Restore the catalog
+entry or use `--resume SESSION_ID --model <available-alias>`. Routing and fallback
+results, subagent calls and internal assessments never replace the saved choice.
+Permissions and fallback rules still come from the current configuration.
+
+Older logs without a `model_selected` record retain the previous startup/default
+behavior: pass `--model` once to establish a resumable preference. The old starting
+model and last observed call cannot reliably reconstruct `/model` choices or pins.
 
 ---
 

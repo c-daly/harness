@@ -6,9 +6,10 @@ the rebuilt transcript into AgentLoop(history=...) and do not call start().
 """
 
 from pathlib import Path
+from typing import Callable
 
 from harness.events import SessionResumed
-from harness.fold import fold, resume_repairs
+from harness.fold import FoldedState, fold, resume_repairs
 from harness.log import EventLogWriter, SessionLock, read_session
 from harness.messages import Message
 from harness.session import Session
@@ -62,6 +63,7 @@ def resume_session(
     session_id: SessionId,
     *,
     default_model: ModelId | None = None,
+    configure: Callable[[FoldedState], None] | None = None,
 ) -> tuple[Session, list[Message]]:
     """Reopen a session for continued writing.
 
@@ -71,11 +73,16 @@ def resume_session(
     the returned transcript."""
     session, envelopes, state = _reopen(base, session_id, default_model=default_model)
     try:
+        # Configuration must be chosen from the replay held by this writer,
+        # before a resumed boundary or repair is published. A failed choice
+        # releases ownership without appending a misleading run boundary.
+        if configure is not None:
+            configure(state)
         session.append(SessionResumed())
         appended = [session.append(repair) for repair in resume_repairs(state)]
         if appended:
             state = fold(envelopes + appended)
-    except Exception:
+    except BaseException:
         session.close()
         raise
     return session, state.messages
