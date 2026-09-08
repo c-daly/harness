@@ -54,6 +54,7 @@ optional normal memory, checked file work, cancellation and task continuation.
 | Doc | For |
 |---|---|
 | **[docs/user-guide.md](docs/user-guide.md)** | Running and configuring: models, permissions, MCP, plugins, importing, telemetry |
+| **[docs/model-management.md](docs/model-management.md)** | Inspect public Hugging Face GGUFs and register installed local models with on-demand startup |
 | **[docs/architecture.md](docs/architecture.md)** | How it works: the event spine, kernel loop, dispatcher, hooks, the module map |
 | **[docs/plugin-authoring.md](docs/plugin-authoring.md)** | Writing a plugin: the eight primitives, the manifest, worked examples |
 | **[docs/contributing.md](docs/contributing.md)** | Modifying the harness: the invariants, extension recipes, testing discipline |

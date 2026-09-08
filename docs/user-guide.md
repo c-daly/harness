@@ -60,6 +60,9 @@ tool calls, and answer permission prompts inline. Key bindings:
   before it's attached; use offset/limit on `read_file` yourself (or ask
   the model to) for more.
 - `/help` — list slash commands, including any your plugins add.
+- `/models` — list configured models and agents; `/models hub OWNER/REPO`
+  inspects public GGUF metadata and `/models add` registers installed weights
+  with on-demand startup. See [model setup](model-management.md).
 - `/task` — inspect the selected objective and its unresolved requirements.
   `/task new OBJECTIVE` selects a durable task; `/task require TEXT` adds a
   requirement for user review. Submit ordinary prompts to work on it. Use
@@ -213,7 +216,7 @@ input_cost_per_token = 0.0            # this model isn't in LiteLLM's cost map,
 output_cost_per_token = 0.0           #   so state its pricing here
 max_input_tokens = 8192
 tags = ["local", "cheap"]
-verified = true
+verified = false                     # configuration alone is not conformance
 ```
 
 Then:
@@ -223,31 +226,38 @@ uv run harness --model sonnet -p "..."
 uv run harness --model gpt -p "..."
 ```
 
-The `route` is a [LiteLLM](https://docs.litellm.ai/) model string, so any
-provider LiteLLM supports works: Anthropic, OpenAI-compatible endpoints, local
-servers, and so on. Point at a different catalog with `--catalog PATH`.
+The `route` is a [LiteLLM](https://docs.litellm.ai/) model string. It selects
+Anthropic, OpenAI-compatible endpoints, local servers, or another supported
+adapter; actual compatibility still requires a working endpoint and suitable
+model. Point at a different catalog with `--catalog PATH`.
 
 ### Running local models
 
-To run a local model on your hardware, use `scripts/serve-local.sh` to launch a containerized llama.cpp server with GPU acceleration. The script defaults to **Qwen3.6-35B-A3B** (Mixture of Experts), a 35B-parameter model where only ~3.5B params activate per token — fast and VRAM-efficient on a 12 GB GPU:
+For installed native llama.cpp and single-file GGUF weights, register a new
+alias through the terminal:
 
-```bash
-bash scripts/serve-local.sh   # launches on http://localhost:8080
+```text
+/models add my-local --file /path/to/model.gguf --runtime /path/to/llama-server --port 8082
+/model my-local
 ```
 
-Then configure your `~/.config/harness/models.toml` to route through it (same `[models.local]` section above, but with `route = "openai/qwen"` and `api_base = "http://localhost:8080/v1"` to match llama.cpp's OpenAI-compatible endpoint).
+Registration verifies the file and writes an on-demand startup profile; the
+next turn starts its server. See [model setup](model-management.md) for library
+paths, context, CPU/GPU settings and optional verification against cached Hub
+metadata. The [local assistant](local-assistant.md) guide describes the measured
+8B CUDA task profile. Weight size, model loading and useful task quality require
+separate checks.
 
-**Quantization options** for Qwen3.6-35B-A3B (all from `unsloth/Qwen3.6-35B-A3B-GGUF`):
+An alias containing only `route` and `api_base`, like the example above, requires
+a separately running server. The route must identify its served model; changing
+the alias does not load different weights. Owned startup profiles additionally
+check server identity before inference.
 
-| Quantization | Size | Notes |
-|---|---|---|
-| `UD-IQ4_XS` | 17.7 GB | Default; balanced quality and speed. |
-| `UD-Q4_K_M` | 22.1 GB | Higher quality, slower; use if you have VRAM headroom. |
-| `UD-Q3_K_XL` | 16.8 GB | Tighter fit for 12 GB cards; quality trade-off for speed. |
-
-Set a different model with `HARNESS_LOCAL_MODEL` (e.g., `HARNESS_LOCAL_MODEL=unsloth/Qwen3.6-35B-A3B-GGUF:UD-Q4_K_M bash scripts/serve-local.sh`). The old Qwen3-Coder-30B-A3B is still available the same way: `HARNESS_LOCAL_MODEL=unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF:IQ4_XS`.
-
-**Key point:** The `[models.local]` catalog entry defines the *route* your harness uses to call the server; the actual model running inside is whatever `scripts/serve-local.sh` launched (controlled by `HARNESS_LOCAL_MODEL`). The route name is advisory to llama.cpp — the server responds correctly to any OpenAI-compatible request, regardless of whether you named it `llama3` or `qwen`.
+`scripts/serve-local.sh` remains an optional externally managed Docker launcher.
+It can download weights on first start. Its 35B default is not the measured M3
+profile; earlier configurations were too slow for resident decisions. Larger
+models and quantization comparisons remain on the
+[candidate list](local-model-candidates.md).
 
 ### Catalog fields
 
@@ -261,6 +271,8 @@ Set a different model with `HARNESS_LOCAL_MODEL` (e.g., `HARNESS_LOCAL_MODEL=uns
 | `input_cost_per_token` / `output_cost_per_token` | Pricing overrides. |
 | `max_input_tokens` | Context-window override. |
 | `verified` | Whether this model has passed a conformance run (default `false`). |
+| `local` | Explicit local readiness and optional on-demand startup profile; see [runtime controls](local-runtime-readiness.md). |
+| `artifact` | Registration-time file digest, size and optional pinned Hub provenance; recorded by `/models add`. |
 
 **Pricing and context windows are not your job to maintain.** When you give only
 `route`, the harness looks the model up in **LiteLLM's maintained cost map** and

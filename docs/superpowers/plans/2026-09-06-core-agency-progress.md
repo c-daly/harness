@@ -1,7 +1,7 @@
 # Core agency implementation record
 
-Current implementation branch: `feat/assessment-improvement`, based on merged `main`
-at `d33b4e2` (PR27). Previous branches: `feat/external-handoff`, `feat/assessment-evaluation`, `feat/supervised-improvement`, `feat/local-scheduling`, `feat/task-fallback`, `feat/semantic-context-progress`, `feat/local-assistant-m3`, `feat/resident-workflow`, `feat/task-completion-evidence`, `fix/inference-client-lifecycle`, `feat/local-response-profiles`, `feat/local-tool-recovery`, `feat/local-tool-planning`, `feat/local-qualification`, `feat/semantic-evaluation`, `feat/local-context`, `feat/local-readiness`, `feat/agent-runtimes`,
+Current implementation branch: `feat/local-model-management`, based on merged `main`
+at `c15fac9` (PR30, numeric inline LaTeX). Previous branches: `feat/assessment-improvement`, `feat/external-handoff`, `feat/assessment-evaluation`, `feat/supervised-improvement`, `feat/local-scheduling`, `feat/task-fallback`, `feat/semantic-context-progress`, `feat/local-assistant-m3`, `feat/resident-workflow`, `feat/task-completion-evidence`, `fix/inference-client-lifecycle`, `feat/local-response-profiles`, `feat/local-tool-recovery`, `feat/local-tool-planning`, `feat/local-qualification`, `feat/semantic-evaluation`, `feat/local-context`, `feat/local-readiness`, `feat/agent-runtimes`,
 and `feat/core-agency`.
 
 Committed checkpoints: `0351b75` (roadmap, lifecycle, and storage/result integrity),
@@ -54,7 +54,7 @@ qualification. Milestone completion requires its roadmap gates, not just code.
 | M0 baseline and feasibility | In progress | Local feasibility is now established by the M3 8B CUDA workflow. Earlier 4B and 8B profiles failed; 30B/35B probes were too slow. Bounded local fallback is implemented; broader baseline qualification remains open. |
 | M1 correctness and interaction | In progress | Storage, delegation, controller/UI, MCP capability and explicit-endpoint HTTP cleanup changes are implemented. Durable task obligations and explicit review are visible through the TUI and headless inspection. Broader enforcement/redaction, provider lifecycles and fault qualification remain. |
 | M2 inference / agent contracts | In progress | Bounded inference, native tasks, Codex task binding, explicit execution kinds, nullable usage, core improvement records and recorded task-evidence checks implemented. Remaining adapters, richer artifact predicates and live capability qualification remain. |
-| M3 local core assistant | Complete for the measured CUDA profile | Qwen3-8B passes six full offline project journeys: twelve exact native file writes, changed-record answers after restart, real cancellation, normal memory, and visible task/context status. Four missing-assets/startup-exit recovery cases pass. Shipped profiles and a launcher reproduce the workflow. Actual use exposed missing startup configuration in the normal catalog; the provisioned host's local aliases are now connected, with separate ordinary CLI/TUI smoke evidence. General installation, CPU-only operation and broader daily-use qualification remain outside this gate. |
+| M3 local core assistant | Complete for the measured CUDA profile | Qwen3-8B passes six full offline project journeys: twelve exact native file writes, changed-record answers after restart, real cancellation, normal memory, and visible task/context status. Four missing-assets/startup-exit recovery cases pass. Shipped profiles and a launcher reproduce the workflow. Actual use exposed missing startup configuration in the normal catalog; the provisioned host's local aliases are now connected. Core `/models` now inspects public GGUF metadata and registers installed weights with startup profiles, with ordinary CLI/TUI CPU smoke evidence. Runtime installation, weight downloads and broader CPU/daily-use qualification remain outside this gate. |
 | M4 bounded semantic agency | In progress | All three shadow functions now exist with explicit CLI/TUI access and evidence validation. The public 8B comparison failed context/progress gates; deterministic behavior remains. Bounded task-preserving fallback and session-tree local scheduling are implemented. Message-prompt pairing and earlier context/correction experiments use core improvement records. Supervised message-prompt proposal/evaluation/adoption/rollback is implemented. Paired context/progress candidate evaluation is implemented with explicit operator controls. Explicit external-to-native reconciliation and bounded handoff are implemented. Supervised assessment proposal/adoption/rollback is implemented per function/model. Held-out quality and broader handoff qualification remain. |
 | M5 heterogeneous work / plugins | Pending | Supervision, plugin reconciliation, portable continuation, isolated improvement patches and rollback. |
 | M6 daily-use qualification | Pending | Measured UI, live adapter boundaries, offline and human dogfood gates. |
@@ -1536,3 +1536,54 @@ failure before the change. **34 math tests passed in 0.93 seconds** and **five
 terminal math/Sixel tests passed in 6.12 seconds**, including final-compositor
 assertions for `1.898 × 10²⁷` and its surrounding prose. Ruff and whitespace checks
 pass. The model response and stored conversation were not rewritten.
+
+## September 8 — core local-model discovery and registration
+
+After PR29's local connection repair and PR30's numeric LaTeX fix merged, the
+next tranche addresses the manual setup gap. `/models` and `harness models`
+list configured models/agents, inspect public Hugging Face GGUF metadata, and
+register an installed single-file GGUF with on-demand native llama.cpp startup.
+Metadata is bounded, revision-pinned and cached for offline use. Optional source
+verification compares the entire local file's SHA-256 and size with the selected
+Hub artifact. Registration records provenance, preserves existing catalog bytes,
+saves a backup and publishes a new alias atomically. It refuses duplicate aliases,
+detected concurrent edits, invalid files and cancelled verification.
+
+The terminal keeps the composer available, displays verification progress and
+uses existing cancellation/rebuild/shutdown ownership. Registration does not
+change the current model; ordinary `/model` selection applies the new catalog.
+These are operator controls in core, independent of inference, memory and
+agent-swarm. No model-download or runtime-install service is introduced.
+
+The [setup guide](../../model-management.md), updated user guide and
+[evidence record](../../handoffs/2026-09-08-model-management/README.md) distinguish
+registration from hardware fit and model quality. The old user-guide claim that
+the 35B launcher was fast on this GPU is removed; prior failures remain evidence.
+
+**Real check:** public Hub inspection returned five 8B GGUF variants and the
+expected Q4_K_M hash. Offline registration against that cached commit produced a
+working CPU profile using existing assets, leaving the occupied GPU server and
+normal catalog alone. The actual CLI read a project file and wrote independently
+verified JSON. A terminal pilot registered another alias, captured typing during
+visible hashing, switched through `/model`, and received the exact requested
+reply through real inference. Both test-owned runtimes stopped; both ports were
+confirmed closed. The two earlier terminal diagnostic failures are retained as
+driver failures, not complete journeys.
+
+**Validation:** 40 model-management tests and five new terminal journeys are
+included in the suite. Python 3.12 passed **109 affected tests in 31.28 seconds**.
+The restored Python 3.13 full-suite run had **1,683 passes, seven skips and three
+subprocess-fixture failures in 376.77 seconds**. Correcting its invocation so
+child `env python3` processes used the virtual environment passed **all 29
+external-runtime/Codex tests in 6.29 seconds**, including those three failures.
+No source change was required for that rerun. An earlier run was invalidated by
+a shared-environment rebuild; the evidence record retains both environment
+mistakes. Ruff and whitespace checks pass. The sdist/wheel build and clean offline
+wheel command smoke pass; wheel bytes match all 73 core Python files. No
+dependency or lockfile changes were made.
+
+**Remaining:** managed downloads, runtime installation, split GGUFs, capacity
+measurement and larger-model optimization; M4 held-out semantic improvement,
+M5 heterogeneous supervision/portability and M6 sustained daily-use qualification.
+One useful CPU write and terminal reply do not expand the existing measured M3
+gate into general CPU or larger-model qualification.

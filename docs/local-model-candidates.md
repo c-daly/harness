@@ -18,9 +18,11 @@ Tooling options to assess when returning to local capacity work:
   do not establish equivalent inference-memory savings. Fine-tuning remains a
   separate future experiment, not a prerequisite for current core work.
 - [Hugging Face Hub](https://huggingface.co/docs/huggingface_hub/guides/download):
-  discover compatible artifacts, pin revisions/hashes and cache downloads for
-  offline use. A model source is distinct from its inference backend and agent
-  runtime. General Hub discovery/provisioning is still a backlog item.
+  [core model controls](model-management.md) now inspect public GGUF metadata,
+  cache it offline and verify installed files against pinned revisions/hashes
+  before registration. A model source is distinct from its inference backend
+  and agent runtime. Managed weight downloads and runtime installation remain
+  backlog items.
 - [llama.cpp capacity controls](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md):
   bounded context, cache precision, GPU placement and CPU expert offload. Verify
   support in the selected runtime version and measure actual working memory.
