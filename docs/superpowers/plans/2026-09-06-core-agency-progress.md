@@ -1587,3 +1587,27 @@ measurement and larger-model optimization; M4 held-out semantic improvement,
 M5 heterogeneous supervision/portability and M6 sustained daily-use qualification.
 One useful CPU write and terminal reply do not expand the existing measured M3
 gate into general CPU or larger-model qualification.
+
+## PR31 review — retain catalog saves that race publication
+
+The review correctly identified a gap after the final byte comparison: an
+external editor could save before replacement, and the backup still contained
+the older snapshot. Three new regressions reproduced loss of in-place saves,
+editor-style renames and late file creation on the reviewed commit.
+
+Existing-catalog publication now uses Linux/WSL2 atomic file exchange to retain
+the actual displaced inode under a unique backup name. A detected late edit or
+unverifiable backup produces a reconciliation message through the shared CLI/TUI
+path. The retained inode also receives writes completed through an editor's
+already-open descriptor. It is never removed by successful-operation cleanup or
+post-exchange interruption/sync failures. No rollback can overwrite another save.
+Creation uses exclusive publication; unsupported exchange fails closed.
+
+**Validation:** **77 affected model-management, terminal, catalog and log tests
+passed on Python 3.13 in 22.90 seconds**; **55 model-management/terminal tests
+passed on Python 3.12 in 12.50 seconds** using its separate environment. The
+regressions include actual filesystem exchange, the final publication boundary,
+open-descriptor writes, exclusive creation, unsupported exchange, disappearance,
+post-exchange interruption and directory-sync failure. Ruff and whitespace checks
+pass. PR31's original Python 3.12/3.13 CI jobs passed on `8299839`; checks for this
+review correction are separate. No inference/runtime configuration was changed.

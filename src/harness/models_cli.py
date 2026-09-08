@@ -87,8 +87,11 @@ async def perform(words: list[str], *, catalog_path=None, cache_dir=None, progre
         lines.append(f"File matches {inventory.repo}@{inventory.revision} ({'cached' if cached else 'live'} metadata).")
     if result["backup"]:
         lines.append(f"Previous catalog backed up to {result['backup']}.")
-    lines.extend([f"Select with /model {args.alias}; the model starts on the next turn.",
-                  "Registration checks the file and setup; inference quality and hardware fit are untested."])
+    if result["warning"]:
+        lines.append(f"Warning: {result['warning']}")
+    else:
+        lines.append(f"Select with /model {args.alias}; the model starts on the next turn.")
+    lines.append("Registration checks the file and setup; inference quality and hardware fit are untested.")
     return "\n".join(lines)
 
 

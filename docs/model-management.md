@@ -91,11 +91,24 @@ clear, resume and shutdown also cancel pending setup. No alias is published if
 verification is cancelled. Publication is a short atomic step after verification;
 an already completed registration is not undone by a later Escape.
 
-Registration adds new aliases only. Existing entries and comments are preserved,
-and an exact backup is saved next to an existing catalog before atomic replacement.
+Registration adds new aliases only. Existing entries and comments are preserved.
 An advisory lock coordinates registrations; a catalog edit detected during
-verification aborts publication. Symlink catalogs must be addressed by their
-actual path. To undo a new registration, remove its three TOML sections
+verification aborts publication. For an existing catalog, Linux/WSL2
+[atomic file exchange](https://man7.org/linux/man-pages/man2/rename.2.html)
+publishes the new file while retaining the actual displaced file at the reported
+`models.toml.replaced-<unique-id>.bak` path. This retains editor saves made after
+the comparison, including writes completed through an already-open file handle.
+If the retained file differs or cannot be verified, the command reports that
+registration used the earlier snapshot and asks you to reconcile the backup
+before selecting the alias. It does not attempt a rollback that could overwrite
+another save. Writes made after that comparison may still finish in the retained
+file; keep it until any concurrent editing is finished.
+
+A newly created catalog is published exclusively, so another writer's new file
+is never replaced. Existing-catalog registration fails without replacement when
+atomic exchange is unsupported; use a supported Linux filesystem or edit the
+catalog manually. Symlink catalogs must be addressed by their actual path.
+To undo a new registration, remove its three TOML sections
 (`models.ALIAS`, `.local` and `.artifact`) while keeping subsequent catalog edits.
 
 ## Shell use

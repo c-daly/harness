@@ -207,6 +207,133 @@ async def test_interrupted_verification_cannot_publish(setup_files, action):
     assert not list(path.parent.glob("*.bak"))
 
 
+@pytest.mark.parametrize("save", ["in-place", "rename", "create"])
+async def test_save_after_last_catalog_comparison_is_preserved(setup_files, monkeypatch, save):
+    import harness.model_management as management
+
+    path = setup_files["catalog_path"]
+    original = b"[models.existing]\nroute='old/model'\n"
+    changed = b"# late editor save\n[models.changed]\nroute='new/model'\n"
+    if save != "create":
+        path.write_bytes(original)
+    read = management._catalog_bytes
+    calls = 0
+
+    def read_then_edit(p):
+        nonlocal calls
+        raw = read(p)
+        calls += 1
+        if calls == 2:  # Immediately after publication's final comparison read.
+            if save == "rename":
+                replacement = path.with_suffix(".editor")
+                replacement.write_bytes(changed)
+                replacement.replace(path)
+            else:
+                path.write_bytes(changed)
+        return raw
+
+    monkeypatch.setattr(management, "_catalog_bytes", read_then_edit)
+    result = await register_model(**setup_files)
+    assert Path(result["backup"]).read_bytes() == changed
+    assert "test-local" in Catalog.load(path).aliases()
+    assert result["warning"] and str(result["backup"]) in result["warning"]
+
+
+async def test_replaced_inode_keeps_writes_through_an_open_editor_fd(setup_files):
+    path = setup_files["catalog_path"]
+    path.write_bytes(b"[models.existing]\nroute='old/model'\n")
+    with path.open("ab") as editor:
+        before = os.fstat(editor.fileno())
+        result = await register_model(**setup_files)
+        backup = Path(result["backup"])
+        assert (backup.stat().st_dev, backup.stat().st_ino) == (before.st_dev, before.st_ino)
+        editor.write(b"# editor finishes after exchange\n")
+        editor.flush()
+    assert backup.read_bytes().endswith(b"# editor finishes after exchange\n")
+    assert "test-local" in Catalog.load(path).aliases()
+
+
+async def test_exclusive_creation_cannot_overwrite_a_late_save(setup_files, monkeypatch):
+    import harness.model_management as management
+
+    path = setup_files["catalog_path"]
+    changed = b"[models.editor]\nroute='keep/this'\n"
+    write = management.atomic_write
+
+    def save_then_publish(target, data, **kwargs):
+        if target == path:
+            target.write_bytes(changed)
+        return write(target, data, **kwargs)
+
+    monkeypatch.setattr(management, "atomic_write", save_then_publish)
+    with pytest.raises(ModelSetupError, match="created by another writer"):
+        await register_model(**setup_files)
+    assert path.read_bytes() == changed
+    assert not list(path.parent.glob("*.bak"))
+
+
+@pytest.mark.parametrize("failure", ["unsupported", "removed", "sync", "interrupt"])
+async def test_exchange_failures_never_delete_displaced_catalog(setup_files, monkeypatch, failure):
+    import errno
+    import harness.model_management as management
+
+    path = setup_files["catalog_path"]
+    original = b"[models.existing]\nroute='old/model'\n"
+    path.write_bytes(original)
+    exchange = management.exchange_paths
+
+    def interrupted_exchange(first, second):
+        if failure == "unsupported":
+            raise OSError(errno.ENOTSUP, "unsupported")
+        if failure == "removed":
+            path.unlink()
+        exchange(first, second)
+        if failure == "interrupt":
+            raise asyncio.CancelledError
+
+    def sync_failure(directory):
+        raise OSError("sync failure")
+
+    monkeypatch.setattr(management, "exchange_paths", interrupted_exchange)
+    if failure == "sync":
+        monkeypatch.setattr(management, "sync_directory", sync_failure)
+    with pytest.raises(asyncio.CancelledError if failure == "interrupt" else ModelSetupError) as exc:
+        await register_model(**setup_files)
+    backups = list(path.parent.glob("*.bak"))
+    if failure in ("sync", "interrupt"):
+        assert len(backups) == 1 and backups[0].read_bytes() == original
+        assert "test-local" in Catalog.load(path).aliases()
+        if failure == "sync":
+            assert str(backups[0]) in str(exc.value)
+    else:
+        assert not backups
+        assert path.read_bytes() == original if failure == "unsupported" else not path.exists()
+
+
+async def test_cli_reports_edit_saved_at_exchange_boundary(setup_files, monkeypatch):
+    import harness.model_management as management
+
+    path = setup_files["catalog_path"]
+    path.write_bytes(b"[models.original]\nroute='old/model'\n")
+    changed = b"[models.editor]\nroute='keep/this'\n"
+    exchange = management.exchange_paths
+
+    def late_save(first, second):
+        replacement = path.with_suffix(".editor")
+        replacement.write_bytes(changed)
+        replacement.replace(second)
+        exchange(first, second)
+
+    monkeypatch.setattr(management, "exchange_paths", late_save)
+    result = await perform(["add", "test-local", "--file", str(setup_files["model_file"]),
+                            "--runtime", str(setup_files["runtime"])], catalog_path=path)
+    backup, = path.parent.glob("*.bak")
+    assert backup.read_bytes() == changed
+    assert "Warning: A concurrent catalog edit was preserved" in result
+    assert str(backup) in result and "reconcile" in result
+    assert "Select with /model" not in result
+
+
 @pytest.mark.parametrize("kind", ["symlink", "fifo", "invalid", "scalar-models", "scalar-entry", "locked"])
 async def test_catalog_problems_fail_without_replacing_it(setup_files, kind):
     path = setup_files["catalog_path"]

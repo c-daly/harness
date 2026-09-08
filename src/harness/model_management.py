@@ -1,6 +1,7 @@
 """Operator-owned model discovery and registration; never an inference tool."""
 
 import asyncio
+import errno
 import fcntl
 import hashlib
 import json
@@ -10,6 +11,7 @@ import stat
 import struct
 import time
 import tomllib
+import uuid
 from pathlib import Path, PurePosixPath
 from urllib.parse import quote
 
@@ -17,7 +19,7 @@ import httpx
 from pydantic import BaseModel, ConfigDict, Field
 
 from harness.catalog import Catalog
-from harness.persistence import atomic_write
+from harness.persistence import atomic_write, exchange_paths, sync_directory
 
 
 class ModelSetupError(ValueError):
@@ -63,11 +65,13 @@ def _cache_path(directory: Path, repo: str, revision: str) -> Path:
     return directory / f"{key}.json"
 
 
-def _read_regular(path: Path) -> bytes:
+def _read_regular(path: Path, *, sync=False) -> bytes:
     fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     with os.fdopen(fd, "rb") as source:
         if not stat.S_ISREG(os.fstat(source.fileno()).st_mode):
             raise ModelSetupError("Model metadata and catalogs must be regular files.")
+        if sync:
+            os.fsync(source.fileno())
         raw = source.read(_CAP + 1)
     if len(raw) > _CAP:
         raise ModelSetupError("Model metadata or catalog exceeds the 2 MiB limit.")
@@ -248,7 +252,7 @@ def _entry_text(alias: str, entry: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _publish_alias(path: Path, expected: bytes, alias: str, entry: dict) -> Path | None:
+def _publish_alias(path: Path, expected: bytes, alias: str, entry: dict) -> tuple[Path | None, str | None]:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd = os.open(path.with_name(path.name + ".guard"), os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
     with os.fdopen(fd, "r+b") as guard:
@@ -265,16 +269,45 @@ def _publish_alias(path: Path, expected: bytes, alias: str, entry: dict) -> Path
         if rest.pop(alias) != entry or rest != original.get("models", {}):
             raise ModelSetupError("Registration would alter existing catalog entries; no changes published.")
         Catalog(parsed["models"]).resolve(alias)
-        backup = None
-        if path.exists():
-            backup = path.with_name(path.name + ".before-" + hashlib.sha256(expected).hexdigest() + ".bak")
+        if not path.exists():
+            if expected:
+                raise ModelSetupError("The catalog was removed during publication; no replacement was created.")
             try:
-                atomic_write(backup, expected, replace=False)
+                atomic_write(path, candidate, replace=False)
             except FileExistsError:
-                if backup.is_symlink() or _read_regular(backup) != expected:
-                    raise ModelSetupError("The catalog backup path already contains different data.") from None
-        atomic_write(path, candidate)
-        return backup
+                raise ModelSetupError("The catalog was created by another writer; retry to preserve its changes.") from None
+            return None, None
+
+        # The backup must retain the inode actually replaced, not a copy of
+        # expected bytes taken before an editor's last-moment save. Keep it
+        # even when bytes match: a writer with an open fd may still finish there.
+        backup = path.with_name(f"{path.name}.replaced-{uuid.uuid4().hex}.bak")
+        atomic_write(backup, candidate, replace=False)
+        try:
+            exchange_paths(backup, path)
+        except OSError as exc:
+            backup.unlink(missing_ok=True)  # Exchange failed; this is only our candidate.
+            if exc.errno in (errno.ENOSYS, errno.ENOTSUP, errno.EINVAL):
+                raise ModelSetupError("This filesystem/runtime lacks atomic file exchange; "
+                                      "the existing catalog was not replaced. Edit it manually or use a supported Linux filesystem.") from None
+            raise ModelSetupError("The catalog could not be exchanged; no replacement was published. Retry after other writes finish.") from None
+        # No cleanup or rollback after exchange: either would risk deleting a
+        # concurrent save. Even a failed durability check must retain both files.
+        try:
+            changed = _read_regular(backup, sync=True) != expected
+            reason = "A concurrent catalog edit was preserved"
+        except (OSError, ValueError):
+            changed = True
+            reason = "The displaced catalog was retained but could not be verified"
+        try:
+            sync_directory(path.parent)
+        except OSError:
+            raise ModelSetupError(f"Catalog exchange completed but directory sync failed. Inspect {path} "
+                                  f"before retrying; the displaced catalog is retained at {backup}.") from None
+        warning = (f"{reason} at {backup}. Registration used the earlier "
+                   "snapshot; reconcile the retained file with the current catalog before selecting the new alias."
+                   if changed else None)
+        return backup, warning
 
 
 async def register_model(*, catalog_path: Path, alias: str, model_file: Path, runtime: Path,
@@ -324,9 +357,9 @@ async def register_model(*, catalog_path: Path, alias: str, model_file: Path, ru
                        "required_files": [str(runtime), artifact["path"]], "command": command},
              "artifact": artifact}
     await asyncio.sleep(0)  # Last cancellation point before the short atomic publication.
-    backup = _publish_alias(catalog_path, original, alias, entry)
+    backup, warning = _publish_alias(catalog_path, original, alias, entry)
     return {"alias": alias, "catalog": str(catalog_path), "backup": str(backup) if backup else None,
-            "artifact": artifact, "status": "registered; inference not yet checked"}
+            "warning": warning, "artifact": artifact, "status": "registered; inference not yet checked"}
 
 
 def render_catalog(path: Path) -> str:
