@@ -54,7 +54,7 @@ qualification. Milestone completion requires its roadmap gates, not just code.
 | M0 baseline and feasibility | In progress | Local feasibility is now established by the M3 8B CUDA workflow. Earlier 4B and 8B profiles failed; 30B/35B probes were too slow. Bounded local fallback is implemented; broader baseline qualification remains open. |
 | M1 correctness and interaction | In progress | Storage, delegation, controller/UI, MCP capability and explicit-endpoint HTTP cleanup changes are implemented. Durable task obligations and explicit review are visible through the TUI and headless inspection. Broader enforcement/redaction, provider lifecycles and fault qualification remain. |
 | M2 inference / agent contracts | In progress | Bounded inference, native tasks, Codex task binding, explicit execution kinds, nullable usage, core improvement records and recorded task-evidence checks implemented. Remaining adapters, richer artifact predicates and live capability qualification remain. |
-| M3 local core assistant | Complete for the measured CUDA profile | Qwen3-8B passes six full offline project journeys: twelve exact native file writes, changed-record answers after restart, real cancellation, normal memory, and visible task/context status. Four missing-assets/startup-exit recovery cases pass. Shipped profiles and a launcher reproduce the workflow. CPU-only operation, automatic fallback and broader daily-use qualification remain outside this gate. |
+| M3 local core assistant | Complete for the measured CUDA profile | Qwen3-8B passes six full offline project journeys: twelve exact native file writes, changed-record answers after restart, real cancellation, normal memory, and visible task/context status. Four missing-assets/startup-exit recovery cases pass. Shipped profiles and a launcher reproduce the workflow. Actual use exposed missing startup configuration in the normal catalog; the provisioned host's local aliases are now connected, with separate ordinary CLI/TUI smoke evidence. General installation, CPU-only operation and broader daily-use qualification remain outside this gate. |
 | M4 bounded semantic agency | In progress | All three shadow functions now exist with explicit CLI/TUI access and evidence validation. The public 8B comparison failed context/progress gates; deterministic behavior remains. Bounded task-preserving fallback and session-tree local scheduling are implemented. Message-prompt pairing and earlier context/correction experiments use core improvement records. Supervised message-prompt proposal/evaluation/adoption/rollback is implemented. Paired context/progress candidate evaluation is implemented with explicit operator controls. Explicit external-to-native reconciliation and bounded handoff are implemented. Supervised assessment proposal/adoption/rollback is implemented per function/model. Held-out quality and broader handoff qualification remain. |
 | M5 heterogeneous work / plugins | Pending | Supervision, plugin reconciliation, portable continuation, isolated improvement patches and rollback. |
 | M6 daily-use qualification | Pending | Measured UI, live adapter boundaries, offline and human dogfood gates. |
@@ -1472,3 +1472,40 @@ gates, generation settings and core source were unchanged between runs. Final
 hashes match all 71 core files and three qualification scripts. Successful
 selection/rollback is verified with controlled providers; genuine held-out model
 quality remains unproven. No plugins or external networking were used.
+
+## September 8 — ordinary local-session setup and connection diagnostics
+
+Actual use found a gap outside the earlier M3 launcher gate: `/model local`
+and `/model local-instruct` failed with `NetworkFailed`. The normal catalog
+pointed three local aliases at an absent server on port 8080 and contained no
+readiness/startup profiles. The working qualification catalog was separate.
+
+The provisioned host now has explicit on-demand profiles for the existing 8B
+and 4B files in its normal catalog, backed up before editing. The pinned runtime
+and GPU libraries were extracted from the already installed image into ignored
+local assets. Other model entries are unchanged; the old `local36` server is
+still unavailable. This repair does not provide general Hugging Face discovery,
+an installer, additional weights, fine-tuning, or larger-model qualification.
+
+The ordinary CLI performed an independently checked native JSON write. Actual
+terminal `/model` switches then started 8B and 4B inference, returned exact replies,
+replaced the idle owned runtime, and stopped it on exit. No special context
+profile was used. These native-tool checks had MCP/plugins disabled and do not
+qualify large plugin inventories or long cloud-agent histories. The
+[repair evidence](../../handoffs/2026-09-08-normal-local-session/README.md) retains
+results and the diagnostic-driver failure preceding the complete terminal run.
+
+Core now gives typed loopback transport failures a local-server origin and
+startup guidance instead of displaying the SDK's OpenAI-branded body. Failure
+classification, retry/fallback behavior and sanitized event recording remain.
+The local usage/readiness guides explicitly distinguish the launcher catalog
+from the ordinary catalog and explain the required setup.
+
+Validation: **269 affected provider/runtime/fallback/terminal tests passed in
+208.62 seconds** before rebasing onto PR28's merge (`c825622`). On that updated
+base, **59 provider/inference/client tests passed in 2.18 seconds** and **eight
+model-switch/status terminal tests passed in 20.32 seconds**. The first
+post-rebase client invocation lacked localhost socket permission and produced
+12 fixture-bind errors; rerunning with that permission passed without source
+changes. Ruff and whitespace checks pass. The full repository suite is left to
+CI for this scoped error-message/documentation change.

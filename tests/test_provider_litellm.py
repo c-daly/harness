@@ -165,3 +165,62 @@ def test_exception_cause_cycle_is_bounded():
     wrapped.__cause__ = wrapper
     wrapper.__cause__ = wrapped
     assert isinstance(map_exception(wrapped), Overloaded)
+
+
+@pytest.mark.parametrize("endpoint, origin", [
+    ("http://localhost:8080/v1", "http://127.0.0.1:8080"),
+    ("http://127.0.0.1:8080/private-path", "http://127.0.0.1:8080"),
+    ("http://[::1]:8080/v1", "http://[::1]:8080"),
+])
+@pytest.mark.parametrize("failure", ["connection", "wrapped", "timeout"])
+def test_local_transport_error_identifies_server_without_sdk_body(endpoint, origin, failure):
+    import httpx
+    import litellm
+    from harness.errors import NetworkFailed
+
+    upstream = "OpenAIException: private request data"
+    if failure == "wrapped":
+        exc = litellm.InternalServerError(upstream, "openai", "fixture")
+        exc.__cause__ = httpx.ConnectError("refused")
+    elif failure == "timeout":
+        exc = litellm.Timeout(upstream, "fixture", "openai")
+    else:
+        exc = litellm.APIConnectionError(upstream, "openai", "fixture")
+    error = map_exception(exc, api_base=endpoint)
+    assert isinstance(error, NetworkFailed) and error.retryable
+    assert origin in str(error)
+    assert "local model server" in str(error)
+    assert "on-demand startup" in str(error)
+    assert "OpenAI" not in str(error)
+    assert "private" not in str(error)
+
+
+@pytest.mark.parametrize("endpoint", [None, "https://api.example.com/v1", "http://localhost.example.com/v1"])
+def test_remote_transport_error_is_not_described_as_local(endpoint):
+    import litellm
+    from harness.errors import NetworkFailed
+
+    exc = litellm.APIConnectionError("upstream connection failure", "openai", "fixture")
+    error = map_exception(exc, api_base=endpoint)
+    assert isinstance(error, NetworkFailed)
+    assert str(error) == str(exc)
+
+
+async def test_catalog_inference_passes_endpoint_to_error_description(monkeypatch):
+    import litellm
+    from harness.catalog import Catalog
+    from harness.errors import NetworkFailed
+    from harness.inference import InferenceRequest, infer
+    from harness.provider_litellm import CatalogProvider
+    from harness.types import ModelId
+
+    async def unavailable(**kwargs):
+        raise litellm.APIConnectionError("OpenAIException: connection refused", "openai", "fixture")
+
+    monkeypatch.setattr(litellm, "acompletion", unavailable)
+    provider = CatalogProvider(Catalog({"local": {
+        "route": "openai/fixture", "api_base": "http://localhost:8080/v1",
+    }}))
+    with pytest.raises(NetworkFailed, match="Local inference connection failed"):
+        await infer(provider, InferenceRequest(model=ModelId("local"),
+                    messages=(Message.user_text("hello"),), purpose="conversation"))

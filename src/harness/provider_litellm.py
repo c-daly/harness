@@ -10,6 +10,7 @@ import time
 from contextlib import aclosing
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, AsyncIterator, Sequence
+from urllib.parse import urlsplit
 
 from harness.catalog import Catalog, UnknownAliasError
 from harness.errors import (
@@ -66,7 +67,25 @@ def _quiet(litellm_module) -> None:
     _QUIETED = True
 
 
-def map_exception(exc: Exception) -> ProviderError:
+def _network_failure(exc: Exception, api_base: str | None) -> NetworkFailed:
+    from harness.resources import local_endpoint
+
+    try:
+        endpoint = urlsplit(local_endpoint(api_base))
+    except ValueError:
+        return NetworkFailed(str(exc))
+    # Describe the configured local transport, not the SDK's OpenAI branding.
+    # Omit paths and upstream error bodies, which may contain request data.
+    origin = f"{endpoint.scheme}://{endpoint.netloc}"
+    return NetworkFailed(
+        f"Local inference connection failed or timed out at {origin}. "
+        "Check that the local model server is running and responsive. "
+        "A catalog alias alone does not start a server; configure a local runtime "
+        "profile for on-demand startup."
+    )
+
+
+def map_exception(exc: Exception, *, api_base: str | None = None) -> ProviderError:
     import litellm
 
     _quiet(litellm)
@@ -85,7 +104,7 @@ def map_exception(exc: Exception) -> ProviderError:
         while cause is not None and id(cause) not in seen and len(seen) < 16:
             seen.add(id(cause))
             if isinstance(cause, (httpx.NetworkError, httpx.TimeoutException, httpx.RemoteProtocolError)):
-                return NetworkFailed(str(exc))
+                return _network_failure(exc, api_base)
             cause = cause.__cause__ or cause.__context__
     mapping = (
         (litellm.RateLimitError, RateLimited),
@@ -98,6 +117,8 @@ def map_exception(exc: Exception) -> ProviderError:
     )
     for litellm_type, ours in mapping:
         if isinstance(exc, litellm_type):
+            if ours is NetworkFailed:
+                return _network_failure(exc, api_base)
             return ours(str(exc))
     return ProviderError(str(exc))
 
@@ -291,7 +312,7 @@ async def _acomplete(
     except ProviderError:
         raise
     except Exception as exc:
-        raise map_exception(exc) from exc
+        raise map_exception(exc, api_base=api_base) from exc
     finally:
         from anyio import CancelScope
 

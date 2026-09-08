@@ -13,6 +13,25 @@ their behavior until an explicit `local` profile is added.
 [Context profiles](context-profiles.md) separately bound conversation history,
 input bytes, and tool inventories for local or remote execution.
 
+## A local alias fails with an OpenAI connection error
+
+The OpenAI-compatible adapter also carries local inference. Its SDK name does
+not imply that the request went to OpenAI. Check the alias's `api_base` in the
+catalog used by the current session. A route pointing to `localhost:8080` needs
+an actual server there, with the expected model ID.
+
+Without a `[models.ALIAS.local]` section, Harness does not probe or start that
+server. An alias, a local tag, or a past `verified` flag does not supply a startup
+command. The separate local-assistant launcher uses its own catalog and does not
+update the normal one. Add an explicit profile as below, or start the separately
+managed server before sending a message.
+
+Local transport failures now identify the loopback server and explain the startup
+requirement, instead of displaying the upstream SDK's OpenAI error body. Timeout
+and connection failures retain their typed retry/fallback behavior. This message
+does not prove which transport failure occurred or that a listening model can
+complete the task; `/resources check ALIAS` checks configured runtime readiness.
+
 ## Existing server
 
 Use the model ID actually advertised by your server's `/v1/models` inventory.

@@ -1,0 +1,23 @@
+[
+  {
+    "alias": "local",
+    "seconds": 14.864,
+    "completed": true,
+    "exact_reply": true,
+    "reply_visible": true,
+    "tool_count": 11
+  },
+  {
+    "alias": "local-instruct",
+    "seconds": 6.631,
+    "completed": true,
+    "exact_reply": true,
+    "reply_visible": true,
+    "tool_count": 11
+  },
+  {
+    "alias": "local36",
+    "expected_unavailable": true,
+    "actionable_error_visible": true
+  }
+]
