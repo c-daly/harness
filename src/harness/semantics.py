@@ -89,6 +89,8 @@ class SemanticObservation(_Observation):
 
 class AssessmentObservation(_Observation):
     function: Literal["context_selection", "progress_assessment"]
+    selection_id: str | None = None
+    selection_status: str = "explicit"
     evaluation_run_id: str | None = Field(default=None, min_length=1, max_length=128)
     input: BlobRef | None = None  # Only bounded accepted inputs are saved.
     source_seq: int | None = Field(default=None, ge=1)
@@ -182,7 +184,16 @@ class SemanticService:
 
     async def _assess(self, data, *, model, profile, schema, validator, limits, enabled,
                       prompt=None, evaluation_run_id=None):
-        prompt = prompt or self.dispatcher.session.blobs.put(profile.model_dump_json().encode())
+        selection, change = "explicit", None
+        if prompt is None:
+            from harness.prompt_improvement import prompt_selection
+            from harness.semantic_evaluation import EvaluatorConfig
+            session = self.dispatcher.session
+            prompt, selection, change = prompt_selection(session, self.provider(), model,
+                limits=limits, function=profile.function)
+            profile = load_assessment_prompt(session.blobs, prompt, profile.function)
+            if change is not None and change.configuration is not None and selection == change.action:
+                limits = EvaluatorConfig.model_validate_json(session.blobs.get(change.configuration)).limits
 
         def assess(raw):
             result = schema.model_validate(raw)
@@ -195,6 +206,7 @@ class SemanticService:
             schema=schema.model_json_schema(), validate=assess, limits=limits or ASSESSMENT_LIMITS,
             enabled=enabled, observation_type=AssessmentObservation,
             fields={"function": profile.function, "function_version": function_version(profile.function),
+                    "selection_status": selection, "selection_id": change.id if change else None,
                     "evaluation_run_id": evaluation_run_id,
                     "source_seq": getattr(data, "source_seq", None),
                     "evidence": ProgressEvidence.from_snapshot(data) if isinstance(data, ProgressInput) else None},
@@ -300,8 +312,7 @@ def render_semantics(observations) -> str:
         label = item.function if isinstance(item, AssessmentObservation) else item.kind
         lines.append(_safe(f"{label}: {item.reason}; {item.duration_ms:.0f} ms; "
                            f"model={item.model}; prompt={item.prompt.sha256[:12]}"))
-        if isinstance(item, SemanticObservation):
-            lines.append(_safe(f"  Prompt selection: {item.selection_status}; change={item.selection_id or 'none'}"))
+        lines.append(_safe(f"  Prompt selection: {item.selection_status}; change={item.selection_id or 'none'}"))
         if isinstance(item, AssessmentObservation):
             if item.evaluation_run_id is not None:
                 lines.append(_safe(f"  Evaluation fixture; run={item.evaluation_run_id}. Not live task evidence."))

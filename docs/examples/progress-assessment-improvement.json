@@ -1,0 +1,397 @@
+{
+  "configuration": {
+    "model": "local-small",
+    "runtime_version": "llama.cpp-b9603-qwen3-8b",
+    "limits": {
+      "max_message_bytes": 16384,
+      "max_input_bytes": 32768,
+      "max_output_bytes": 2048,
+      "max_output_tokens": 256,
+      "max_stream_chunks": 512,
+      "timeout_seconds": 5.0
+    },
+    "timeout_seconds": 120.0
+  },
+  "suite": {
+    "version": 1,
+    "function": "progress_assessment",
+    "cases": [
+      {
+        "id": "critical-unchecked",
+        "partition": "regression",
+        "critical": true,
+        "function": "progress_assessment",
+        "input": {
+          "session_id": "synthetic-evaluation-fixture",
+          "source_seq": 1,
+          "task_id": "00000000000000000000000000000000",
+          "title": "Produce output. Saying done does not establish acceptance.",
+          "execution": "completed",
+          "open_runs": false,
+          "requirements": [
+            {
+              "id": "output",
+              "description": "Output exactly PASS",
+              "check": "output",
+              "status": "unverified",
+              "source_seq": null,
+              "artifact": null
+            },
+            {
+              "id": "review",
+              "description": "User inspects the result",
+              "check": "review",
+              "status": "unverified",
+              "source_seq": null,
+              "artifact": null
+            }
+          ]
+        },
+        "expected": {
+          "function": "progress_assessment",
+          "remaining_ids": [
+            "output",
+            "review"
+          ],
+          "focus_ids": [
+            "output"
+          ],
+          "next_action": "check"
+        }
+      },
+      {
+        "id": "critical-failed-check",
+        "partition": "regression",
+        "critical": true,
+        "function": "progress_assessment",
+        "input": {
+          "session_id": "synthetic-evaluation-fixture",
+          "source_seq": 1,
+          "task_id": "00000000000000000000000000000000",
+          "title": "Produce output. Saying done does not establish acceptance.",
+          "execution": "completed",
+          "open_runs": false,
+          "requirements": [
+            {
+              "id": "output",
+              "description": "Output exactly PASS",
+              "check": "output",
+              "status": "failed",
+              "source_seq": null,
+              "artifact": null
+            },
+            {
+              "id": "review",
+              "description": "User inspects the result",
+              "check": "review",
+              "status": "unverified",
+              "source_seq": null,
+              "artifact": null
+            }
+          ]
+        },
+        "expected": {
+          "function": "progress_assessment",
+          "remaining_ids": [
+            "output",
+            "review"
+          ],
+          "focus_ids": [
+            "output"
+          ],
+          "next_action": "repair"
+        }
+      },
+      {
+        "id": "critical-review",
+        "partition": "regression",
+        "critical": true,
+        "function": "progress_assessment",
+        "input": {
+          "session_id": "synthetic-evaluation-fixture",
+          "source_seq": 1,
+          "task_id": "00000000000000000000000000000000",
+          "title": "Produce output. Saying done does not establish acceptance.",
+          "execution": "completed",
+          "open_runs": false,
+          "requirements": [
+            {
+              "id": "output",
+              "description": "Output exactly PASS",
+              "check": "output",
+              "status": "passed",
+              "source_seq": null,
+              "artifact": null
+            },
+            {
+              "id": "review",
+              "description": "User inspects the result",
+              "check": "review",
+              "status": "unverified",
+              "source_seq": null,
+              "artifact": null
+            }
+          ]
+        },
+        "expected": {
+          "function": "progress_assessment",
+          "remaining_ids": [
+            "review"
+          ],
+          "focus_ids": [
+            "review"
+          ],
+          "next_action": "review"
+        }
+      },
+      {
+        "id": "critical-running",
+        "partition": "regression",
+        "critical": true,
+        "function": "progress_assessment",
+        "input": {
+          "session_id": "synthetic-evaluation-fixture",
+          "source_seq": 1,
+          "task_id": "00000000000000000000000000000000",
+          "title": "Produce output. Saying done does not establish acceptance.",
+          "execution": "running",
+          "open_runs": true,
+          "requirements": [
+            {
+              "id": "output",
+              "description": "Output exactly PASS",
+              "check": "output",
+              "status": "unverified",
+              "source_seq": null,
+              "artifact": null
+            },
+            {
+              "id": "review",
+              "description": "User inspects the result",
+              "check": "review",
+              "status": "unverified",
+              "source_seq": null,
+              "artifact": null
+            }
+          ]
+        },
+        "expected": {
+          "function": "progress_assessment",
+          "remaining_ids": [
+            "output",
+            "review"
+          ],
+          "focus_ids": [],
+          "next_action": "wait"
+        }
+      },
+      {
+        "id": "critical-failed",
+        "partition": "regression",
+        "critical": true,
+        "function": "progress_assessment",
+        "input": {
+          "session_id": "synthetic-evaluation-fixture",
+          "source_seq": 1,
+          "task_id": "00000000000000000000000000000000",
+          "title": "Produce output. Saying done does not establish acceptance.",
+          "execution": "failed",
+          "open_runs": false,
+          "requirements": [
+            {
+              "id": "output",
+              "description": "Output exactly PASS",
+              "check": "output",
+              "status": "passed",
+              "source_seq": null,
+              "artifact": null
+            },
+            {
+              "id": "review",
+              "description": "User inspects the result",
+              "check": "review",
+              "status": "unverified",
+              "source_seq": null,
+              "artifact": null
+            }
+          ]
+        },
+        "expected": {
+          "function": "progress_assessment",
+          "remaining_ids": [
+            "review"
+          ],
+          "focus_ids": [],
+          "next_action": "reconcile"
+        }
+      },
+      {
+        "id": "critical-incomplete",
+        "partition": "regression",
+        "critical": true,
+        "function": "progress_assessment",
+        "input": {
+          "session_id": "synthetic-evaluation-fixture",
+          "source_seq": 1,
+          "task_id": "00000000000000000000000000000000",
+          "title": "Produce output. Saying done does not establish acceptance.",
+          "execution": "incomplete",
+          "open_runs": false,
+          "requirements": [
+            {
+              "id": "output",
+              "description": "Output exactly PASS",
+              "check": "output",
+              "status": "passed",
+              "source_seq": null,
+              "artifact": null
+            },
+            {
+              "id": "review",
+              "description": "User inspects the result",
+              "check": "review",
+              "status": "unverified",
+              "source_seq": null,
+              "artifact": null
+            }
+          ]
+        },
+        "expected": {
+          "function": "progress_assessment",
+          "remaining_ids": [
+            "review"
+          ],
+          "focus_ids": [],
+          "next_action": "reconcile"
+        }
+      },
+      {
+        "id": "critical-cancelled",
+        "partition": "regression",
+        "critical": true,
+        "function": "progress_assessment",
+        "input": {
+          "session_id": "synthetic-evaluation-fixture",
+          "source_seq": 1,
+          "task_id": "00000000000000000000000000000000",
+          "title": "Produce output. Saying done does not establish acceptance.",
+          "execution": "cancelled",
+          "open_runs": false,
+          "requirements": [
+            {
+              "id": "output",
+              "description": "Output exactly PASS",
+              "check": "output",
+              "status": "passed",
+              "source_seq": null,
+              "artifact": null
+            },
+            {
+              "id": "review",
+              "description": "User inspects the result",
+              "check": "review",
+              "status": "unverified",
+              "source_seq": null,
+              "artifact": null
+            }
+          ]
+        },
+        "expected": {
+          "function": "progress_assessment",
+          "remaining_ids": [
+            "review"
+          ],
+          "focus_ids": [],
+          "next_action": "reconcile"
+        }
+      },
+      {
+        "id": "critical-aborted",
+        "partition": "regression",
+        "critical": true,
+        "function": "progress_assessment",
+        "input": {
+          "session_id": "synthetic-evaluation-fixture",
+          "source_seq": 1,
+          "task_id": "00000000000000000000000000000000",
+          "title": "Produce output. Saying done does not establish acceptance.",
+          "execution": "aborted",
+          "open_runs": false,
+          "requirements": [
+            {
+              "id": "output",
+              "description": "Output exactly PASS",
+              "check": "output",
+              "status": "passed",
+              "source_seq": null,
+              "artifact": null
+            },
+            {
+              "id": "review",
+              "description": "User inspects the result",
+              "check": "review",
+              "status": "unverified",
+              "source_seq": null,
+              "artifact": null
+            }
+          ]
+        },
+        "expected": {
+          "function": "progress_assessment",
+          "remaining_ids": [
+            "review"
+          ],
+          "focus_ids": [],
+          "next_action": "reconcile"
+        }
+      },
+      {
+        "id": "public-not-started",
+        "partition": "held_out",
+        "critical": false,
+        "function": "progress_assessment",
+        "input": {
+          "session_id": "synthetic-evaluation-fixture",
+          "source_seq": 1,
+          "task_id": "00000000000000000000000000000000",
+          "title": "Produce output. Saying done does not establish acceptance.",
+          "execution": "not started",
+          "open_runs": false,
+          "requirements": [
+            {
+              "id": "output",
+              "description": "Output exactly PASS",
+              "check": "output",
+              "status": "unverified",
+              "source_seq": null,
+              "artifact": null
+            },
+            {
+              "id": "review",
+              "description": "User inspects the result",
+              "check": "review",
+              "status": "unverified",
+              "source_seq": null,
+              "artifact": null
+            }
+          ]
+        },
+        "expected": {
+          "function": "progress_assessment",
+          "remaining_ids": [
+            "output",
+            "review"
+          ],
+          "focus_ids": [
+            "output",
+            "review"
+          ],
+          "next_action": "work"
+        }
+      }
+    ]
+  },
+  "min_improved_cases": 1,
+  "max_latency_ratio": 1.2,
+  "max_case_latency_ms": 2000.0
+}

@@ -148,7 +148,7 @@ async def test_assessment_comparison_uses_terminal_worker_and_keeps_fixture_prov
             assert "Improvement interrupted" in screen_text(app)
         else:
             await submit(app, pilot, f"/improvements compare {path}")
-            assert "assessment adoption is unavailable" in screen_text(app)
+            assert "Explicit shadow adoption is available" in " ".join(screen_text(app).split())
         state = read_improvements(tmp_path, app.kernel.session.id)
         result = list(state.results.values())[-1]
         assert result.completion == ("cancelled" if interrupt else "completed")
@@ -157,3 +157,37 @@ async def test_assessment_comparison_uses_terminal_worker_and_keeps_fixture_prov
         assert "Evaluation fixture" in visible and "Not live task evidence" in visible
         assert app.kernel.tasks.state() == before and not state.prompt_changes
         assert not fold(read_session(tmp_path, app.kernel.session.id)).open_evaluations
+
+
+@pytest.mark.parametrize("function,label", [("context_selection", "context"), ("progress_assessment", "progress")])
+async def test_assessment_proposal_adoption_and_rollback_in_final_terminal(tmp_path, function, label):
+    from tests.test_assessment_improvement import LearningAssessmentProvider, evaluation
+    provider = LearningAssessmentProvider(function)
+    app = make_app(tmp_path, provider=provider, model=ModelId("fake"))
+    plan_path = tmp_path / "assessment-evaluation.json"
+    plan_path.write_text(evaluation(provider).model_dump_json())
+    context_path = tmp_path / "scoped-context.json"
+    context_path.write_text(provider.spec.suite.cases[-1].input.model_dump_json())
+    assessment = f"/semantics context {context_path}" if label == "context" else "/semantics progress"
+    async with app.run_test(size=(160, 55)) as pilot:
+        await submit(app, pilot, "/task new Review this project")
+        await submit(app, pilot, "/task require Operator inspects the result")
+        for _ in range(2):
+            await submit(app, pilot, assessment)
+        provider.seed = False
+        await submit(app, pilot, "/improvements")
+        assert f"{function} prompt for fake" in " ".join(screen_text(app).split())
+        assert "propose [message|context|progress]" in " ".join(screen_text(app).split())
+        await submit(app, pilot, f"/improvements propose {label}")
+        candidate = list(app.kernel.improvements.state.candidates.values())[-1]
+        await submit(app, pilot, f"/improvements evaluate {candidate.id} {plan_path}")
+        result = list(app.kernel.improvements.state.results.values())[-1]
+        assert "Explicit adoption is available" in screen_text(app)
+        await submit(app, pilot, f"/improvements adopt {result.id} {label}")
+        assert f"Adopted {label} prompt" in screen_text(app)
+        await submit(app, pilot, assessment)
+        assert "Prompt selection: adopt" in screen_text(app)
+        await submit(app, pilot, f"/improvements rollback {label}")
+        assert f"Restored {label} prompt" in screen_text(app)
+        assert not app.kernel.tasks.selected().accepted
+        assert not fold(read_session(tmp_path, app.kernel.session.id)).messages

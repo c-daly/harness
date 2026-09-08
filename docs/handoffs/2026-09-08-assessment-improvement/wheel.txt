@@ -1,0 +1,166 @@
+== creating a clean venv
+Using CPython 3.13.13
+Creating virtual environment at: /tmp/tmp.y6qWzMaTBT/venv
+Activate with: source /tmp/tmp.y6qWzMaTBT/venv/bin/activate
+== installing /home/fearsidhe/projects/harness/dist/harness-0.0.1-py3-none-any.whl
+Using Python 3.13.13 environment at: /tmp/tmp.y6qWzMaTBT/venv
+Resolved 83 packages in 229ms
+Prepared 1 package in 11ms
+Installed 83 packages in 58ms
+ + aiohappyeyeballs==2.6.2
+ + aiohttp==3.14.1
+ + aiosignal==1.4.0
+ + annotated-doc==0.0.4
+ + annotated-types==0.7.0
+ + anyio==4.13.0
+ + attrs==26.1.0
+ + certifi==2026.5.20
+ + cffi==2.0.0
+ + charset-normalizer==3.4.7
+ + click==8.4.1
+ + contourpy==1.3.3
+ + cryptography==48.0.1
+ + cycler==0.12.1
+ + distro==1.9.0
+ + fastuuid==0.14.0
+ + filelock==3.29.3
+ + fonttools==4.63.0
+ + frozenlist==1.8.0
+ + fsspec==2026.4.0
+ + h11==0.16.0
+ + harness==0.0.1 (from file:///home/fearsidhe/projects/harness/dist/harness-0.0.1-py3-none-any.whl)
+ + hf-xet==1.5.1
+ + httpcore==1.0.9
+ + httpx==0.28.1
+ + httpx-sse==0.4.3
+ + huggingface-hub==1.18.0
+ + idna==3.18
+ + importlib-metadata==8.9.0
+ + jinja2==3.1.6
+ + jiter==0.15.0
+ + jsonschema==4.26.0
+ + jsonschema-specifications==2025.9.1
+ + kiwisolver==1.5.1
+ + linkify-it-py==2.1.0
+ + litellm==1.88.1
+ + markdown-it-py==4.2.0
+ + markupsafe==3.0.3
+ + matplotlib==3.11.1
+ + mcp==1.27.2
+ + mdit-py-plugins==0.6.1
+ + mdurl==0.1.2
+ + multidict==6.7.1
+ + numpy==2.5.2
+ + openai==2.41.1
+ + packaging==26.2
+ + pillow==12.3.0
+ + platformdirs==4.10.0
+ + propcache==0.5.2
+ + pycparser==3.0
+ + pydantic==2.13.4
+ + pydantic-core==2.46.4
+ + pydantic-settings==2.14.1
+ + pygments==2.20.0
+ + pyjwt==2.13.0
+ + pyparsing==3.3.2
+ + python-dateutil==2.9.0.post0
+ + python-dotenv==1.2.2
+ + python-multipart==0.0.32
+ + pyyaml==6.0.3
+ + referencing==0.37.0
+ + regex==2026.5.9
+ + requests==2.34.2
+ + rich==15.0.0
+ + rpds-py==2026.5.1
+ + shellingham==1.5.4
+ + six==1.17.0
+ + sniffio==1.3.1
+ + sse-starlette==3.4.4
+ + starlette==1.3.0
+ + textual==8.2.7
+ + textual-image==0.13.2
+ + tiktoken==0.13.0
+ + tokenizers==0.23.1
+ + tqdm==4.68.2
+ + typer==0.25.1
+ + typing-extensions==4.15.0
+ + typing-inspection==0.4.2
+ + uc-micro-py==2.0.0
+ + urllib3==2.7.0
+ + uvicorn==0.49.0
+ + yarl==1.24.2
+ + zipp==4.1.0
+== running the console script: harness --help
+ok harness --help
+== importing 70 modules from the installed wheel
+ok harness.agent
+ok harness.agent_runtime
+ok harness.assessment_evaluation
+ok harness.blobs
+ok harness.callctx
+ok harness.catalog
+ok harness.cc_import
+ok harness.cli
+ok harness.context
+ok harness.controller
+ok harness.dispatcher
+ok harness.errors
+ok harness.events
+ok harness.execution
+ok harness.fallback
+ok harness.fold
+ok harness.frontmatter
+ok harness.handoff
+ok harness.handoff_cli
+ok harness.hooks
+ok harness.improvement
+ok harness.improvement_cli
+ok harness.improvement_journal
+ok harness.inference
+ok harness.interaction
+ok harness.log
+ok harness.loop
+ok harness.math_markdown
+ok harness.mcp_config
+ok harness.mcp_host
+ok harness.mcp_import
+ok harness.mcp_serve
+ok harness.messages
+ok harness.mixture
+ok harness.native_tools
+ok harness.parity
+ok harness.permissions
+ok harness.persistence
+ok harness.plugins
+ok harness.prompt_improvement
+ok harness.provider
+ok harness.provider_antigravity
+ok harness.provider_claude_code
+ok harness.provider_codex
+ok harness.provider_litellm
+ok harness.redaction
+ok harness.resident
+ok harness.resources
+ok harness.resume
+ok harness.routing
+ok harness.scheduling
+ok harness.semantic_assessment
+ok harness.semantic_cli
+ok harness.semantic_evaluation
+ok harness.semantics
+ok harness.session
+ok harness.sessions
+ok harness.skills
+ok harness.status_cli
+ok harness.subagent
+ok harness.task_cli
+ok harness.tasks
+ok harness.telemetry
+ok harness.todo
+ok harness.tools
+ok harness.tui
+ok harness.tui_panel
+ok harness.tui_support
+ok harness.types
+ok harness.workspace
+== wheel smoke OK

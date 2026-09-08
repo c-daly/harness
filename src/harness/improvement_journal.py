@@ -41,9 +41,10 @@ def render_improvements(state: ImprovementState) -> str:
         lines.append(f"Showing the latest 10 of {len(state.runs)} evaluation runs.")
     for run_id, status in list(state.runs.items())[-10:]:
         lines.append(_safe(f"Evaluation run {run_id}: {status}"))
-    for change_id in state.active_prompts.values():
+    for change_id in (*state.active_prompts.values(), *state.active_assessment_prompts.values()):
         change = state.prompt_changes[change_id]
-        lines.append(_safe(f"Selected message prompt for {change.model}: {change.prompt.sha256[:12]} "
+        function = "message" if change.function == "message_kind" else change.function
+        lines.append(_safe(f"Selected {function} prompt for {change.model}: {change.prompt.sha256[:12]} "
                            f"({change.action}; change={change.id}); shadow only. Live compatibility not checked."))
     lines.append("Evaluation records do not activate changes. Adoption and rollback require explicit controls.")
     return "\n".join(lines)
@@ -51,7 +52,7 @@ def render_improvements(state: ImprovementState) -> str:
 
 def inspect_improvement(state: ImprovementState, blobs, record_id: str) -> str:
     """Show immutable claims, prompt bytes, gates and measurements without inference."""
-    from harness.semantics import load_prompt
+    from harness.prompt_improvement import load_function_prompt
     from harness.telemetry import _safe
     record = next((records[record_id] for records in (
         state.evidence, state.candidates, state.plans, state.results, state.prompt_changes,
@@ -72,8 +73,8 @@ def inspect_improvement(state: ImprovementState, blobs, record_id: str) -> str:
         prompt = TypeAdapter(MessagePrompt | AssessmentPrompt).validate_json(blobs.get(record.artifact))
         lines += ["Candidate prompt (data):", prompt.model_dump_json(indent=2)]
     elif isinstance(record, PromptChange):
-        lines += ["Previous prompt (data):", load_prompt(blobs, record.previous).model_dump_json(indent=2),
-                  "Selected prompt (data):", load_prompt(blobs, record.prompt).model_dump_json(indent=2)]
+        lines += ["Previous prompt (data):", load_function_prompt(blobs, record.previous, record.function).model_dump_json(indent=2),
+                  "Selected prompt (data):", load_function_prompt(blobs, record.prompt, record.function).model_dump_json(indent=2)]
     return _safe("\n".join(lines))
 
 
@@ -109,9 +110,9 @@ class ImprovementJournal:
             self.session.blobs.get(record.suite)
         if isinstance(record, PromptChange):
             from harness.semantic_evaluation import EvaluatorConfig
-            from harness.semantics import load_prompt
-            load_prompt(self.session.blobs, record.previous)
-            load_prompt(self.session.blobs, record.prompt)
+            from harness.prompt_improvement import load_function_prompt
+            load_function_prompt(self.session.blobs, record.previous, record.function)
+            load_function_prompt(self.session.blobs, record.prompt, record.function)
             if record.configuration is not None:
                 if record.configuration.size > 16384:
                     raise ValueError("prompt evaluation configuration is too large")

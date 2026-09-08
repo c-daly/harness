@@ -1,10 +1,11 @@
 # Compare assessment prompts
 
 Core can now compare proposed context-selection and progress-assessment prompts
-against their built-in versions. Comparisons use the same durable paired runner
+against their currently selected versions (builtin by default). Comparisons use the same durable paired runner
 as message prompts. The operator supplies the candidate instructions, hypothesis,
-frozen cases, expected results, and gates. Neither function is activated by a
-passing comparison; assessment adoption is not implemented.
+frozen cases, expected results, and gates. A comparison does not change prompt selection. The
+[supervised assessment lifecycle](assessment-improvement.md) adds explicit
+shadow proposal/adoption/rollback; task controls remain deterministic.
 
 ## Operator workflow
 
@@ -117,5 +118,5 @@ quality, preserves task state, and stops its owned runtime. It uses no plugins
 and does not measure memory integration or new native-agent task behavior.
 
 See the [measured comparisons](handoffs/2026-09-08-assessment-evaluation/README.md).
-Operator-authored prompt comparison is implemented. Assessment candidate
-generation/adoption and genuine held-out qualification remain M4 work.
+Operator-authored prompt comparison and supervised assessment candidate
+generation/adoption are implemented. Genuine held-out qualification remains M4 work.

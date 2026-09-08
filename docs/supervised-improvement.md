@@ -2,8 +2,9 @@
 
 [Assessment prompt comparison](assessment-evaluation.md) extends the same
 controls with `/improvements compare ASSESSMENT.json`. Context/progress
-candidates are operator-authored and comparison-only; they cannot use the
-message-prompt adoption command.
+candidates now also have a [supervised assessment lifecycle](assessment-improvement.md),
+with explicit function-scoped proposal, adoption and rollback. The default
+message-prompt adoption command still rejects assessment results.
 
 Core can detect repeated classification failures, generate a bounded candidate,
 run its frozen paired experiment, and explicitly select or roll back the result.
@@ -79,7 +80,7 @@ result, evaluation configuration and policy. Selection persists **within this
 session**, per alias. Default interpretation uses the selected prompt and its
 evaluated inference limits. Explicit prompt overrides bypass selection; explicitly
 different limits use the builtin prompt with a suspension reason. Context/progress
-assessment prompts remain unchanged.
+assessments use their own independent selections.
 
 Changed provider endpoint/catalog declarations, evaluator source, Python/package
 versions or other fingerprinted configuration suspend an adopted prompt. Normal

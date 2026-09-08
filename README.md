@@ -63,6 +63,7 @@ optional normal memory, checked file work, cancellation and task continuation.
 | **[docs/local-scheduling.md](docs/local-scheduling.md)** | Local device groups, visible priority queues and owned runtime replacement |
 | **[docs/supervised-improvement.md](docs/supervised-improvement.md)** | Core prompt proposals, fixed experiments, explicit adoption and exact rollback |
 | **[docs/assessment-evaluation.md](docs/assessment-evaluation.md)** | Paired context/progress prompt comparison, frozen oracles and retained failed trials |
+| **[docs/assessment-improvement.md](docs/assessment-improvement.md)** | Supervised context/progress prompt proposals, shadow adoption and rollback |
 
 The complete working reference plugin is [`plugins/memory/`](plugins/memory/).
 The authoritative design record (design doc + per-phase completion notes) lives
