@@ -1402,3 +1402,12 @@ including cold startup (initial revision: **17.505 seconds**). The final report
 matches all 71 core source files plus the driver. No external network, live
 subscription agent, or memory plugin was used; those broader boundaries remain
 unqualified. The existing managed endpoint was left untouched.
+
+## PR27 review — discoverable handoff controls
+
+The review found `/handoff` missing from built-in `/help`. Help now lists
+`/handoff inspect|record|show|run`. Both existing help tests pass, and a
+100-column final-compositor smoke confirms the complete action list is visible
+without adding session events or invoking inference. Ruff and whitespace checks
+pass. The full-suite, wheel and offline handoff reports above remain evidence
+for `0598460`, before this help-text correction.

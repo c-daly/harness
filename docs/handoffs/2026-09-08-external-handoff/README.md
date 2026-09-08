@@ -5,6 +5,11 @@ This bounded M4 slice starts from PR26's merge, `e576a8e`, on
 inspection, reconciliation, explicit destination selection, and continuation.
 M4 remains in progress; this does not qualify portable M5 workflows.
 
+The retained full-suite, wheel and offline reports below describe `0598460`.
+The later PR27 review correction only adds `/handoff inspect|record|show|run`
+to terminal help. Both existing help tests and a final-compositor smoke pass
+for that correction; the earlier runtime reports were not rerun or relabelled.
+
 ## Real offline journey
 
 A controlled Codex-compatible subprocess uses the real Codex adapter and real
