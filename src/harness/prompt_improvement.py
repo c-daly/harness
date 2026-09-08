@@ -181,6 +181,14 @@ class PromptImprovementService:
             kernel.improvements.record(plan)
             return await run_evaluation(kernel, plan.id, incumbent=incumbent, config=config)
 
+    async def compare_assessment(self, experiment):
+        from harness.assessment_evaluation import AssessmentExperiment, prepare_assessment_experiment
+        self._idle()
+        experiment = AssessmentExperiment.model_validate(experiment.model_dump())
+        async with self._lock:
+            incumbent, plan = prepare_assessment_experiment(self.kernel, experiment)
+            return await run_evaluation(self.kernel, plan.id, incumbent=incumbent, config=experiment.configuration)
+
     def adopt(self, result_id, *, model: ModelId):
         self._idle()
         kernel, session = self.kernel, self.kernel.session

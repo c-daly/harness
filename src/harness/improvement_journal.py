@@ -64,7 +64,13 @@ def inspect_improvement(state: ImprovementState, blobs, record_id: str) -> str:
         lines += ["Frozen evaluation plan:", plan.model_dump_json(indent=2)]
         record = state.candidates[plan.candidate_id]
     if isinstance(record, Candidate) and record.target == "prompt":
-        lines += ["Candidate prompt (data):", load_prompt(blobs, record.artifact).model_dump_json(indent=2)]
+        from pydantic import TypeAdapter
+        from harness.semantic_assessment import AssessmentPrompt
+        from harness.semantics import MessagePrompt
+        if record.artifact.size > 32768:
+            raise ValueError("semantic prompt artifact exceeds 32768 bytes")
+        prompt = TypeAdapter(MessagePrompt | AssessmentPrompt).validate_json(blobs.get(record.artifact))
+        lines += ["Candidate prompt (data):", prompt.model_dump_json(indent=2)]
     elif isinstance(record, PromptChange):
         lines += ["Previous prompt (data):", load_prompt(blobs, record.previous).model_dump_json(indent=2),
                   "Selected prompt (data):", load_prompt(blobs, record.prompt).model_dump_json(indent=2)]

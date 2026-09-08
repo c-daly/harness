@@ -8,7 +8,7 @@ from pathlib import Path
 from harness.catalog import Catalog, UnknownAliasError
 from harness.provider_litellm import CatalogProvider
 from harness.semantic_evaluation import EvaluatorConfig, run_evaluation
-from harness.semantic_assessment import ContextSelectionInput
+from harness.semantic_assessment import AssessmentPrompt, ContextSelectionInput
 from harness.semantics import MessagePrompt, SemanticLimits, read_semantics, render_semantics
 from harness.types import ModelId, SessionId
 
@@ -65,7 +65,8 @@ def main(argv):
         context_input = ContextSelectionInput.model_validate_json(_read(args.input, 16384)) \
             if args.action == "context" else None
         if prompt_data is not None:
-            MessagePrompt.model_validate_json(prompt_data)
+            from pydantic import TypeAdapter
+            TypeAdapter(MessagePrompt | AssessmentPrompt if config else MessagePrompt).validate_json(prompt_data)
         catalog = Catalog.load(args.catalog)
         if catalog.resolve(str(model)).execution_kind != "inference":
             parser.error("semantic operations require an inference model alias")

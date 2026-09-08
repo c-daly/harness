@@ -106,6 +106,54 @@ def test_context_cli_uses_only_explicit_candidates(tmp_path, monkeypatch, capsys
     assert len(provider.calls) == 1
 
 
+def test_assessment_compare_cli_and_saved_plan_replay(tmp_path, monkeypatch, capsys):
+    import asyncio
+    from harness.improvement_journal import read_improvements
+    from tests.test_assessment_evaluation import AssessmentProvider, experiment, seed
+    spec = experiment()
+    provider = AssessmentProvider(spec)
+
+    async def setup():
+        kernel = await kernel_for(tmp_path, provider)
+        await seed(kernel, provider)
+        session_id = kernel.session.id
+        kernel.session.close()
+        return session_id
+
+    session_id = asyncio.run(setup())
+    spec_path = tmp_path / "assessment.json"
+    spec_path.write_text(spec.model_dump_json())
+    monkeypatch.setattr("harness.provider_litellm.CatalogProvider", lambda catalog: provider)
+    catalog = catalog_file(tmp_path)
+    monkeypatch.setattr("sys.argv", ["harness", "improve", "--model", "fake", "--base-dir", str(tmp_path),
+        "--catalog", str(catalog), "--allow", "model:fake", session_id, "compare", str(spec_path)])
+    main()
+    assert "assessment adoption is unavailable" in capsys.readouterr().out
+    state = read_improvements(tmp_path, session_id)
+    result = list(state.results.values())[-1]
+    plan = state.plans[result.plan_id]
+    from harness.semantic_assessment import CONTEXT_PROMPT
+    # Re-run the saved plan through the same CLI entry as message experiments.
+    incumbent, configuration = tmp_path / "incumbent.json", tmp_path / "config.json"
+    incumbent.write_text(CONTEXT_PROMPT.model_dump_json())
+    configuration.write_text(spec.configuration.model_dump_json())
+    monkeypatch.setattr("harness.semantic_cli.CatalogProvider", lambda catalog: provider)
+    monkeypatch.setattr("sys.argv", ["harness", "semantic", "evaluate", session_id, plan.id,
+        "--base-dir", str(tmp_path), "--catalog", str(catalog), "--allow", "model:fake",
+        "--incumbent", str(incumbent), "--config", str(configuration)])
+    main()
+    report = json.loads(capsys.readouterr().out)
+    assert report["function"] == "context_selection" and report["verdict"] == "passed"
+    assert len(read_improvements(tmp_path, session_id).results) == 2
+    before = read_session(tmp_path, session_id)
+    calls = len(provider.requests)
+    monkeypatch.setattr("sys.argv", ["harness", "improvements", session_id, "--base-dir", str(tmp_path),
+                                    "--show", report["result_id"]])
+    main()
+    assert '"function": "context_selection"' in capsys.readouterr().out
+    assert read_session(tmp_path, session_id) == before and len(provider.requests) == calls
+
+
 def test_progress_cli_resumes_task_and_never_checks_or_accepts_it(tmp_path, monkeypatch, capsys):
     import asyncio
     from tests.test_semantic_assessment import assessment

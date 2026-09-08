@@ -6,9 +6,11 @@ rollback. `/semantics classify TEXT` records observations in the current termina
 session using its compatible selected prompt. All functions remain advisory.
 
 Core supplies explicit message interpretation, scoped context selection, recorded
-progress assessment, and a paired message-prompt evaluator. They use the existing inference dispatcher, permission engine, shared
+progress assessment, and paired prompt evaluators for all three functions.
+[Assessment comparison](assessment-evaluation.md) accepts operator-authored
+context/progress prompts through the same improvement controls. They use the existing inference dispatcher, permission engine, shared
 call budget, local-readiness service, session log, and verified artifact store.
-Both work with all plugins absent. Memory and agent-swarm retain their own roles.
+These work with all plugins absent. Memory and agent-swarm retain their own roles.
 
 This is a partial M4 implementation following the measured M3 local workflow gate.
 Normal submission, queueing, task acceptance, cancellation, routing, and recovery
@@ -125,9 +127,9 @@ unchecked/failed/review/interrupted task, stop/pause/ambiguous-thanks cases.
 Three repetitions, 90% accuracy, every critical case correct, and a two-second
 maximum warm call latency are fixed before execution. Reports retain failures
 and public-fixture outputs for diagnosis. These are public regression cases,
-not held-out evidence or an activation gate. The existing paired evaluator
-supports message prompt candidates only; assessment candidate evaluation and
-promotion remain later M4 work.
+not held-out evidence or an activation gate. The paired evaluator also supports
+[assessment prompt candidates](assessment-evaluation.md); assessment adoption
+and held-out qualification remain M4 work.
 
 The [first measured comparison](handoffs/2026-09-07-semantic-assessments/README.md)
 failed both new functions' gates: context 83.3%, progress 42.9% versus a 100%
@@ -179,7 +181,8 @@ the prompt. Fixed critical stop and ambiguous-thanks cases cannot be removed,
 relabelled, or made noncritical. There must also be held-out cases. Set thresholds
 before scoring, preserve failed trials, and use fresh held-out evidence after
 candidate development; repeatedly tuning against the same cases is not held-out
-qualification. Automatic candidate discovery/generation remains future work.
+qualification. Message-prompt proposals use the separate supervised service;
+assessment proposals are currently operator-authored.
 
 Prompt artifacts contain only the fixed `message_kind` function/version and
 instruction text. They cannot provide executable code, schemas, expected labels,
@@ -233,5 +236,6 @@ Scripted providers qualify the evaluator's control paths. Subsequent local
 reports distinguish measured runtime behavior from model-quality qualification.
 Context/progress shadow functions, local scheduling and bounded fallback now
 exist, along with the separate supervised message-prompt adoption/rollback
-service. Automatic evidence-driven proposals, assessment candidate evaluation,
-held-out semantic qualification and isolated source experiments remain open.
+service. Assessment candidate comparison is available with operator-authored
+prompts. Automatic proposals, assessment adoption, held-out semantic qualification
+and isolated source experiments remain open.

@@ -13,7 +13,7 @@ from harness.blobs import BlobRef
 from harness.semantic_assessment import (
     CONTEXT_PROMPT, PROGRESS_PROMPT, ContextSelection,
     ContextSelectionInput, ProgressAssessment, ProgressEvidence, ProgressInput, function_version, progress_snapshot,
-    validate_progress, validate_selection,
+    load_assessment_prompt, validate_progress, validate_selection,
 )
 from harness.types import CallId, ModelId
 
@@ -89,6 +89,7 @@ class SemanticObservation(_Observation):
 
 class AssessmentObservation(_Observation):
     function: Literal["context_selection", "progress_assessment"]
+    evaluation_run_id: str | None = Field(default=None, min_length=1, max_length=128)
     input: BlobRef | None = None  # Only bounded accepted inputs are saved.
     source_seq: int | None = Field(default=None, ge=1)
     evidence: ProgressEvidence | None = None
@@ -161,8 +162,27 @@ class SemanticService:
         return await self._assess(data, model=model, profile=PROGRESS_PROMPT,
             schema=ProgressAssessment, validator=validate_progress, limits=limits, enabled=enabled)
 
-    async def _assess(self, data, *, model, profile, schema, validator, limits, enabled):
-        prompt = self.dispatcher.session.blobs.put(profile.model_dump_json().encode())
+    async def evaluate_assessment(self, data: ContextSelectionInput | ProgressInput, *, model: ModelId,
+                                  prompt: BlobRef, limits: SemanticLimits, run_id: str):
+        """Evaluate frozen fixture data; never present it as this session's task evidence."""
+        from harness.fold import fold
+        from harness.log import read_session
+        session = self.dispatcher.session
+        if run_id not in fold(read_session(session.base, session.id)).open_evaluations:
+            raise ValueError("assessment fixture requires a recorded open evaluation run")
+        if isinstance(data, ContextSelectionInput):
+            data = ContextSelectionInput.model_validate(data.model_dump())
+            function, schema, validator = "context_selection", ContextSelection, validate_selection
+        else:
+            data = ProgressInput.model_validate(data.model_dump())
+            function, schema, validator = "progress_assessment", ProgressAssessment, validate_progress
+        profile = load_assessment_prompt(session.blobs, prompt, function)
+        return await self._assess(data, model=model, profile=profile, prompt=prompt,
+            schema=schema, validator=validator, limits=limits, enabled=True, evaluation_run_id=run_id)
+
+    async def _assess(self, data, *, model, profile, schema, validator, limits, enabled,
+                      prompt=None, evaluation_run_id=None):
+        prompt = prompt or self.dispatcher.session.blobs.put(profile.model_dump_json().encode())
 
         def assess(raw):
             result = schema.model_validate(raw)
@@ -175,6 +195,7 @@ class SemanticService:
             schema=schema.model_json_schema(), validate=assess, limits=limits or ASSESSMENT_LIMITS,
             enabled=enabled, observation_type=AssessmentObservation,
             fields={"function": profile.function, "function_version": function_version(profile.function),
+                    "evaluation_run_id": evaluation_run_id,
                     "source_seq": getattr(data, "source_seq", None),
                     "evidence": ProgressEvidence.from_snapshot(data) if isinstance(data, ProgressInput) else None},
             save_input=True)
@@ -282,7 +303,9 @@ def render_semantics(observations) -> str:
         if isinstance(item, SemanticObservation):
             lines.append(_safe(f"  Prompt selection: {item.selection_status}; change={item.selection_id or 'none'}"))
         if isinstance(item, AssessmentObservation):
-            if item.source_seq is not None:
+            if item.evaluation_run_id is not None:
+                lines.append(_safe(f"  Evaluation fixture; run={item.evaluation_run_id}. Not live task evidence."))
+            elif item.source_seq is not None:
                 lines.append(f"  Recorded evidence as of event {item.source_seq}; later changes are not included.")
             if item.evidence is not None:
                 lines.append(_safe("  Passed: " + (", ".join(item.evidence.passed_ids) or "none")))
