@@ -1,0 +1,738 @@
+........................................................................ [ 58%]
+...........FFF......................................                     [100%]
+=================================== FAILURES ===================================
+_ test_codex_process_calls_scoped_mcp_tools_and_preserves_transcript[False-False] _
+
+tmp_path = PosixPath('/tmp/pytest-of-fearsidhe/pytest-34/test_codex_process_calls_scope0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x701fc9de5b50>
+blocked = False, cancel_during_tool = False
+
+    @pytest.mark.parametrize("blocked, cancel_during_tool", [(False, False), (True, False), (False, True)])
+    async def test_codex_process_calls_scoped_mcp_tools_and_preserves_transcript(
+        tmp_path, monkeypatch, blocked, cancel_during_tool,
+    ):
+        import json
+        from pathlib import Path
+    
+        from harness.hooks import ProposedToolCall
+        from harness.tools import ToolSpec
+        from harness.types import ToolName
+        from tests.test_provider_codex import _PREAMBLE, _fake_codex
+    
+        # This is a real child process and real MCP HTTP request; no subscription use.
+        script = _PREAMBLE + '''
+    import asyncio
+    from mcp import ClientSession
+    from mcp.client.streamable_http import streamablehttp_client
+    url_arg = next(a for a in sys.argv if a.startswith("mcp_servers.harness.url="))
+    url = json.loads(url_arg.split("=", 1)[1])
+    async def run():
+        async with streamablehttp_client(url) as (read, write, _):
+            async with ClientSession(read, write) as client:
+                await client.initialize()
+                result = await client.call_tool("echo", {"text": "from child"})
+                text = "denied" if result.isError else result.content[0].text
+        emit({"type": "item.completed", "item": {"type": "agent_message", "text": text}})
+        emit({"type": "turn.completed", "usage": {"input_tokens": 1, "output_tokens": 2}})
+    asyncio.run(run())
+    '''
+        binary = _fake_codex(tmp_path, script)
+        monkeypatch.setenv("CODEX_HOME", str(tmp_path / "empty-home"))
+        backend = CodexProvider(binary=binary)
+        kernel = build_kernel(base_dir=tmp_path / "sessions", provider=backend, model=ModelId("codex/default"))
+        invoked = []
+        entered, cleaned = asyncio.Event(), asyncio.Event()
+    
+        class Echo:
+            spec = ToolSpec(name=ToolName("echo"), description="Echo", parameters={"type": "object"})
+    
+            async def __call__(self, args):
+                try:
+                    invoked.append(args)
+                    entered.set()
+                    if cancel_during_tool:
+                        await asyncio.Event().wait()
+                    return "echoed: " + args["text"]
+                finally:
+                    cleaned.set()
+    
+        kernel.registry.register(Echo())
+        kernel.loop.hooks.register_dispatch("test-policy", lambda action:
+            Block(reason="blocked") if blocked and isinstance(action, ProposedToolCall) else Allow())
+        try:
+            await kernel.loop.start()
+            append = kernel.session.append
+    
+            def checked_append(event):
+                if cancel_during_tool and event.type == "agent_run_finished":
+                    assert cleaned.is_set(), "the tool must settle before either task's terminal fact"
+                return append(event)
+    
+            monkeypatch.setattr(kernel.session, "append", checked_append)
+            work = asyncio.create_task(kernel.loop.run_task(AgentTask(prompt="use echo")))
+            if cancel_during_tool:
+                try:
+                    await asyncio.wait_for(entered.wait(), 3)
+                finally:
+                    work.cancel()
+                    with pytest.raises(asyncio.CancelledError):
+                        await asyncio.wait_for(work, 2)
+            else:
+>               result = await work
+                         ^^^^^^^^^^
+
+tests/test_external_agent_runtime.py:231: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/harness/loop.py:149: in run_task
+    return await execute_task(
+src/harness/agent.py:136: in execute_task
+    output = await execute()
+             ^^^^^^^^^^^^^^^
+src/harness/loop.py:215: in _run_task_body
+    child = await runtime.run_task(AgentTask(
+src/harness/agent_runtime.py:80: in run_task
+    return await execute_task(
+src/harness/agent.py:136: in execute_task
+    output = await execute()
+             ^^^^^^^^^^^^^^^
+src/harness/agent_runtime.py:119: in _execute
+    response = await self.dispatcher.dispatch_agent_response(
+src/harness/dispatcher.py:317: in dispatch_agent_response
+    return await self._dispatch_generation(
+src/harness/dispatcher.py:436: in _dispatch_generation
+    message, usage, stop_reason = await collect_bounded(
+src/harness/inference.py:146: in collect_bounded
+    message, usage, stop = await collect(bounded())
+                           ^^^^^^^^^^^^^^^^^^^^^^^^
+src/harness/provider.py:99: in collect
+    async for chunk in stream:
+src/harness/inference.py:114: in bounded
+    async for chunk in source:
+src/harness/provider_codex.py:163: in complete
+    async for chunk in gen:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <harness.provider_codex.CodexProvider object at 0x701fcaa56ab0>
+
+    async def _run_turn(
+        self,
+        *,
+        model: ModelId,
+        messages: Sequence[Message],
+        url: str,
+        cwd: str,
+        codex_home: str,
+    ) -> AsyncIterator[Chunk]:
+        env = _sanitized_env()
+        env["CODEX_HOME"] = codex_home
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *self._argv(model=model, url=url),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                stdin=asyncio.subprocess.PIPE,
+                start_new_session=True,  # own process group: the kill reaches the tree
+                cwd=cwd,
+                env=env,
+            )
+        except OSError as exc:
+            raise ProviderError(f"codex spawn failed: {exc}") from exc
+    
+        # Prompt travels over stdin, never argv: a long transcript can overflow
+        # MAX_ARG_STRLEN, and argv is visible to any local user via ps.
+        assert proc.stdin is not None
+        try:
+            prompt = _PROMPT_PREFIX + "\n\n" + _render_prompt(messages)
+            proc.stdin.write(prompt.encode())
+            await proc.stdin.drain()
+            proc.stdin.close()
+        except BrokenPipeError:
+            pass  # child may already be gone; the normal error paths below catch it
+    
+        assert proc.stderr is not None
+        # Drain stderr concurrently: the child can otherwise fill the pipe and
+        # block mid-turn on a full buffer, which would masquerade as a spurious
+        # timeout while we are only reading stdout.
+        stderr_task = asyncio.create_task(proc.stderr.read())
+        saw_completed = False
+        timed_out = False
+        try:
+            try:
+                async with asyncio.timeout(self.timeout_s):
+                    assert proc.stdout is not None
+                    async for raw in proc.stdout:
+                        line = raw.decode("utf-8", errors="replace").strip()
+                        if not line:
+                            continue
+                        try:
+                            event = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue  # codex may interleave non-JSON noise
+                        if not isinstance(event, dict):
+                            continue
+                        kind = event.get("type") or ""
+                        if kind == "item.completed":
+                            item = event.get("item") or {}
+                            # mcp_tool_call items arrive here too; reasoning
+                            # items surface as ThinkingDelta below, and only
+                            # the agent message is turn (transcript) output.
+                            if item.get("type") == "reasoning" and item.get("text"):
+                                yield ThinkingDelta(text=item["text"])
+                            if item.get("type") == "agent_message" and item.get("text"):
+                                yield TextDelta(text=item["text"])
+                        elif kind == "turn.completed":
+                            saw_completed = True
+                            u = event.get("usage") or {}
+                            yield UsageReport(
+                                usage=Usage(
+                                    input_tokens=u.get("input_tokens"),
+                                    output_tokens=u.get("output_tokens"),
+                                    cache_read_tokens=u.get("cached_input_tokens"),
+                                    cache_write_tokens=u.get("cache_write_input_tokens"),
+                                )
+                            )
+                            yield StreamStop(stop_reason="end_turn")
+                        elif kind == "turn.failed" or "error" in kind:
+                            raise ProviderError(f"codex turn failed: {_error_text(event)}")
+                    await proc.wait()
+            except TimeoutError:
+                timed_out = True
+        finally:
+            # Runs on normal completion, on timeout, AND on GeneratorExit (the
+            # consumer abandoning the stream mid-turn): the only path that
+            # guarantees the child, and anything it spawned, does not leak.
+            if proc.returncode is None:
+                _kill_process_group(proc)
+                await proc.wait()
+            if not stderr_task.done():
+                stderr_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await stderr_task
+    
+        if timed_out:
+            raise ProviderError(f"codex turn timed out after {self.timeout_s}s")
+        if proc.returncode not in (0, None) and not saw_completed:
+            stderr = b""
+            if stderr_task.done() and not stderr_task.cancelled():
+                with contextlib.suppress(Exception):
+                    stderr = stderr_task.result()
+            tail = stderr.decode("utf-8", errors="replace")[-500:].strip() or "no stderr"
+>           raise ProviderError(f"codex exited {proc.returncode}: {tail}")
+E           harness.errors.ProviderError: codex exited 1: Traceback (most recent call last):
+E             File "/tmp/pytest-of-fearsidhe/pytest-34/test_codex_process_calls_scope0/codex", line 26, in <module>
+E               from mcp import ClientSession
+E           ModuleNotFoundError: No module named 'mcp'
+
+src/harness/provider_codex.py:301: ProviderError
+_ test_codex_process_calls_scoped_mcp_tools_and_preserves_transcript[True-False] _
+
+tmp_path = PosixPath('/tmp/pytest-of-fearsidhe/pytest-34/test_codex_process_calls_scope1')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x701fc9de7710>
+blocked = True, cancel_during_tool = False
+
+    @pytest.mark.parametrize("blocked, cancel_during_tool", [(False, False), (True, False), (False, True)])
+    async def test_codex_process_calls_scoped_mcp_tools_and_preserves_transcript(
+        tmp_path, monkeypatch, blocked, cancel_during_tool,
+    ):
+        import json
+        from pathlib import Path
+    
+        from harness.hooks import ProposedToolCall
+        from harness.tools import ToolSpec
+        from harness.types import ToolName
+        from tests.test_provider_codex import _PREAMBLE, _fake_codex
+    
+        # This is a real child process and real MCP HTTP request; no subscription use.
+        script = _PREAMBLE + '''
+    import asyncio
+    from mcp import ClientSession
+    from mcp.client.streamable_http import streamablehttp_client
+    url_arg = next(a for a in sys.argv if a.startswith("mcp_servers.harness.url="))
+    url = json.loads(url_arg.split("=", 1)[1])
+    async def run():
+        async with streamablehttp_client(url) as (read, write, _):
+            async with ClientSession(read, write) as client:
+                await client.initialize()
+                result = await client.call_tool("echo", {"text": "from child"})
+                text = "denied" if result.isError else result.content[0].text
+        emit({"type": "item.completed", "item": {"type": "agent_message", "text": text}})
+        emit({"type": "turn.completed", "usage": {"input_tokens": 1, "output_tokens": 2}})
+    asyncio.run(run())
+    '''
+        binary = _fake_codex(tmp_path, script)
+        monkeypatch.setenv("CODEX_HOME", str(tmp_path / "empty-home"))
+        backend = CodexProvider(binary=binary)
+        kernel = build_kernel(base_dir=tmp_path / "sessions", provider=backend, model=ModelId("codex/default"))
+        invoked = []
+        entered, cleaned = asyncio.Event(), asyncio.Event()
+    
+        class Echo:
+            spec = ToolSpec(name=ToolName("echo"), description="Echo", parameters={"type": "object"})
+    
+            async def __call__(self, args):
+                try:
+                    invoked.append(args)
+                    entered.set()
+                    if cancel_during_tool:
+                        await asyncio.Event().wait()
+                    return "echoed: " + args["text"]
+                finally:
+                    cleaned.set()
+    
+        kernel.registry.register(Echo())
+        kernel.loop.hooks.register_dispatch("test-policy", lambda action:
+            Block(reason="blocked") if blocked and isinstance(action, ProposedToolCall) else Allow())
+        try:
+            await kernel.loop.start()
+            append = kernel.session.append
+    
+            def checked_append(event):
+                if cancel_during_tool and event.type == "agent_run_finished":
+                    assert cleaned.is_set(), "the tool must settle before either task's terminal fact"
+                return append(event)
+    
+            monkeypatch.setattr(kernel.session, "append", checked_append)
+            work = asyncio.create_task(kernel.loop.run_task(AgentTask(prompt="use echo")))
+            if cancel_during_tool:
+                try:
+                    await asyncio.wait_for(entered.wait(), 3)
+                finally:
+                    work.cancel()
+                    with pytest.raises(asyncio.CancelledError):
+                        await asyncio.wait_for(work, 2)
+            else:
+>               result = await work
+                         ^^^^^^^^^^
+
+tests/test_external_agent_runtime.py:231: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/harness/loop.py:149: in run_task
+    return await execute_task(
+src/harness/agent.py:136: in execute_task
+    output = await execute()
+             ^^^^^^^^^^^^^^^
+src/harness/loop.py:215: in _run_task_body
+    child = await runtime.run_task(AgentTask(
+src/harness/agent_runtime.py:80: in run_task
+    return await execute_task(
+src/harness/agent.py:136: in execute_task
+    output = await execute()
+             ^^^^^^^^^^^^^^^
+src/harness/agent_runtime.py:119: in _execute
+    response = await self.dispatcher.dispatch_agent_response(
+src/harness/dispatcher.py:317: in dispatch_agent_response
+    return await self._dispatch_generation(
+src/harness/dispatcher.py:436: in _dispatch_generation
+    message, usage, stop_reason = await collect_bounded(
+src/harness/inference.py:146: in collect_bounded
+    message, usage, stop = await collect(bounded())
+                           ^^^^^^^^^^^^^^^^^^^^^^^^
+src/harness/provider.py:99: in collect
+    async for chunk in stream:
+src/harness/inference.py:114: in bounded
+    async for chunk in source:
+src/harness/provider_codex.py:163: in complete
+    async for chunk in gen:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <harness.provider_codex.CodexProvider object at 0x701fc9dc33e0>
+
+    async def _run_turn(
+        self,
+        *,
+        model: ModelId,
+        messages: Sequence[Message],
+        url: str,
+        cwd: str,
+        codex_home: str,
+    ) -> AsyncIterator[Chunk]:
+        env = _sanitized_env()
+        env["CODEX_HOME"] = codex_home
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *self._argv(model=model, url=url),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                stdin=asyncio.subprocess.PIPE,
+                start_new_session=True,  # own process group: the kill reaches the tree
+                cwd=cwd,
+                env=env,
+            )
+        except OSError as exc:
+            raise ProviderError(f"codex spawn failed: {exc}") from exc
+    
+        # Prompt travels over stdin, never argv: a long transcript can overflow
+        # MAX_ARG_STRLEN, and argv is visible to any local user via ps.
+        assert proc.stdin is not None
+        try:
+            prompt = _PROMPT_PREFIX + "\n\n" + _render_prompt(messages)
+            proc.stdin.write(prompt.encode())
+            await proc.stdin.drain()
+            proc.stdin.close()
+        except BrokenPipeError:
+            pass  # child may already be gone; the normal error paths below catch it
+    
+        assert proc.stderr is not None
+        # Drain stderr concurrently: the child can otherwise fill the pipe and
+        # block mid-turn on a full buffer, which would masquerade as a spurious
+        # timeout while we are only reading stdout.
+        stderr_task = asyncio.create_task(proc.stderr.read())
+        saw_completed = False
+        timed_out = False
+        try:
+            try:
+                async with asyncio.timeout(self.timeout_s):
+                    assert proc.stdout is not None
+                    async for raw in proc.stdout:
+                        line = raw.decode("utf-8", errors="replace").strip()
+                        if not line:
+                            continue
+                        try:
+                            event = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue  # codex may interleave non-JSON noise
+                        if not isinstance(event, dict):
+                            continue
+                        kind = event.get("type") or ""
+                        if kind == "item.completed":
+                            item = event.get("item") or {}
+                            # mcp_tool_call items arrive here too; reasoning
+                            # items surface as ThinkingDelta below, and only
+                            # the agent message is turn (transcript) output.
+                            if item.get("type") == "reasoning" and item.get("text"):
+                                yield ThinkingDelta(text=item["text"])
+                            if item.get("type") == "agent_message" and item.get("text"):
+                                yield TextDelta(text=item["text"])
+                        elif kind == "turn.completed":
+                            saw_completed = True
+                            u = event.get("usage") or {}
+                            yield UsageReport(
+                                usage=Usage(
+                                    input_tokens=u.get("input_tokens"),
+                                    output_tokens=u.get("output_tokens"),
+                                    cache_read_tokens=u.get("cached_input_tokens"),
+                                    cache_write_tokens=u.get("cache_write_input_tokens"),
+                                )
+                            )
+                            yield StreamStop(stop_reason="end_turn")
+                        elif kind == "turn.failed" or "error" in kind:
+                            raise ProviderError(f"codex turn failed: {_error_text(event)}")
+                    await proc.wait()
+            except TimeoutError:
+                timed_out = True
+        finally:
+            # Runs on normal completion, on timeout, AND on GeneratorExit (the
+            # consumer abandoning the stream mid-turn): the only path that
+            # guarantees the child, and anything it spawned, does not leak.
+            if proc.returncode is None:
+                _kill_process_group(proc)
+                await proc.wait()
+            if not stderr_task.done():
+                stderr_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await stderr_task
+    
+        if timed_out:
+            raise ProviderError(f"codex turn timed out after {self.timeout_s}s")
+        if proc.returncode not in (0, None) and not saw_completed:
+            stderr = b""
+            if stderr_task.done() and not stderr_task.cancelled():
+                with contextlib.suppress(Exception):
+                    stderr = stderr_task.result()
+            tail = stderr.decode("utf-8", errors="replace")[-500:].strip() or "no stderr"
+>           raise ProviderError(f"codex exited {proc.returncode}: {tail}")
+E           harness.errors.ProviderError: codex exited 1: Traceback (most recent call last):
+E             File "/tmp/pytest-of-fearsidhe/pytest-34/test_codex_process_calls_scope1/codex", line 26, in <module>
+E               from mcp import ClientSession
+E           ModuleNotFoundError: No module named 'mcp'
+
+src/harness/provider_codex.py:301: ProviderError
+_ test_codex_process_calls_scoped_mcp_tools_and_preserves_transcript[False-True] _
+
+fut = <coroutine object Event.wait at 0x701fca128120>, timeout = 3
+
+    async def wait_for(fut, timeout):
+        """Wait for the single Future or coroutine to complete, with timeout.
+    
+        Coroutine will be wrapped in Task.
+    
+        Returns result of the Future or coroutine.  When a timeout occurs,
+        it cancels the task and raises TimeoutError.  To avoid the task
+        cancellation, wrap it in shield().
+    
+        If the wait is cancelled, the task is also cancelled.
+    
+        If the task suppresses the cancellation and returns a value instead,
+        that value is returned.
+    
+        This function is a coroutine.
+        """
+        # The special case for timeout <= 0 is for the following case:
+        #
+        # async def test_waitfor():
+        #     func_started = False
+        #
+        #     async def func():
+        #         nonlocal func_started
+        #         func_started = True
+        #
+        #     try:
+        #         await asyncio.wait_for(func(), 0)
+        #     except asyncio.TimeoutError:
+        #         assert not func_started
+        #     else:
+        #         assert False
+        #
+        # asyncio.run(test_waitfor())
+    
+    
+        if timeout is not None and timeout <= 0:
+            fut = ensure_future(fut)
+    
+            if fut.done():
+                return fut.result()
+    
+            await _cancel_and_wait(fut)
+            try:
+                return fut.result()
+            except exceptions.CancelledError as exc:
+                raise TimeoutError from exc
+    
+        async with timeouts.timeout(timeout):
+>           return await fut
+                   ^^^^^^^^^
+
+../../.local/share/uv/python/cpython-3.12.13-linux-x86_64-gnu/lib/python3.12/asyncio/tasks.py:520: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <asyncio.locks.Event object at 0x701fc9dea780 [unset]>
+
+    async def wait(self):
+        """Block until the internal flag is true.
+    
+        If the internal flag is true on entry, return True
+        immediately.  Otherwise, block until another coroutine calls
+        set() to set the flag to true, then return True.
+        """
+        if self._value:
+            return True
+    
+        fut = self._get_loop().create_future()
+        self._waiters.append(fut)
+        try:
+>           await fut
+E           asyncio.exceptions.CancelledError
+
+../../.local/share/uv/python/cpython-3.12.13-linux-x86_64-gnu/lib/python3.12/asyncio/locks.py:212: CancelledError
+
+The above exception was the direct cause of the following exception:
+
+tmp_path = PosixPath('/tmp/pytest-of-fearsidhe/pytest-34/test_codex_process_calls_scope2')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x701fc9de8500>
+blocked = False, cancel_during_tool = True
+
+    @pytest.mark.parametrize("blocked, cancel_during_tool", [(False, False), (True, False), (False, True)])
+    async def test_codex_process_calls_scoped_mcp_tools_and_preserves_transcript(
+        tmp_path, monkeypatch, blocked, cancel_during_tool,
+    ):
+        import json
+        from pathlib import Path
+    
+        from harness.hooks import ProposedToolCall
+        from harness.tools import ToolSpec
+        from harness.types import ToolName
+        from tests.test_provider_codex import _PREAMBLE, _fake_codex
+    
+        # This is a real child process and real MCP HTTP request; no subscription use.
+        script = _PREAMBLE + '''
+    import asyncio
+    from mcp import ClientSession
+    from mcp.client.streamable_http import streamablehttp_client
+    url_arg = next(a for a in sys.argv if a.startswith("mcp_servers.harness.url="))
+    url = json.loads(url_arg.split("=", 1)[1])
+    async def run():
+        async with streamablehttp_client(url) as (read, write, _):
+            async with ClientSession(read, write) as client:
+                await client.initialize()
+                result = await client.call_tool("echo", {"text": "from child"})
+                text = "denied" if result.isError else result.content[0].text
+        emit({"type": "item.completed", "item": {"type": "agent_message", "text": text}})
+        emit({"type": "turn.completed", "usage": {"input_tokens": 1, "output_tokens": 2}})
+    asyncio.run(run())
+    '''
+        binary = _fake_codex(tmp_path, script)
+        monkeypatch.setenv("CODEX_HOME", str(tmp_path / "empty-home"))
+        backend = CodexProvider(binary=binary)
+        kernel = build_kernel(base_dir=tmp_path / "sessions", provider=backend, model=ModelId("codex/default"))
+        invoked = []
+        entered, cleaned = asyncio.Event(), asyncio.Event()
+    
+        class Echo:
+            spec = ToolSpec(name=ToolName("echo"), description="Echo", parameters={"type": "object"})
+    
+            async def __call__(self, args):
+                try:
+                    invoked.append(args)
+                    entered.set()
+                    if cancel_during_tool:
+                        await asyncio.Event().wait()
+                    return "echoed: " + args["text"]
+                finally:
+                    cleaned.set()
+    
+        kernel.registry.register(Echo())
+        kernel.loop.hooks.register_dispatch("test-policy", lambda action:
+            Block(reason="blocked") if blocked and isinstance(action, ProposedToolCall) else Allow())
+        try:
+            await kernel.loop.start()
+            append = kernel.session.append
+    
+            def checked_append(event):
+                if cancel_during_tool and event.type == "agent_run_finished":
+                    assert cleaned.is_set(), "the tool must settle before either task's terminal fact"
+                return append(event)
+    
+            monkeypatch.setattr(kernel.session, "append", checked_append)
+            work = asyncio.create_task(kernel.loop.run_task(AgentTask(prompt="use echo")))
+            if cancel_during_tool:
+                try:
+>                   await asyncio.wait_for(entered.wait(), 3)
+
+tests/test_external_agent_runtime.py:225: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../../.local/share/uv/python/cpython-3.12.13-linux-x86_64-gnu/lib/python3.12/asyncio/tasks.py:519: in wait_for
+    async with timeouts.timeout(timeout):
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <Timeout [expired]>
+exc_type = <class 'asyncio.exceptions.CancelledError'>
+exc_val = CancelledError(), exc_tb = <traceback object at 0x701fc9a24b80>
+
+    async def __aexit__(
+        self,
+        exc_type: Optional[Type[BaseException]],
+        exc_val: Optional[BaseException],
+        exc_tb: Optional[TracebackType],
+    ) -> Optional[bool]:
+        assert self._state in (_State.ENTERED, _State.EXPIRING)
+    
+        if self._timeout_handler is not None:
+            self._timeout_handler.cancel()
+            self._timeout_handler = None
+    
+        if self._state is _State.EXPIRING:
+            self._state = _State.EXPIRED
+    
+            if self._task.uncancel() <= self._cancelling and exc_type is exceptions.CancelledError:
+                # Since there are no new cancel requests, we're
+                # handling this.
+>               raise TimeoutError from exc_val
+E               TimeoutError
+
+../../.local/share/uv/python/cpython-3.12.13-linux-x86_64-gnu/lib/python3.12/asyncio/timeouts.py:115: TimeoutError
+
+During handling of the above exception, another exception occurred:
+
+tmp_path = PosixPath('/tmp/pytest-of-fearsidhe/pytest-34/test_codex_process_calls_scope2')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x701fc9de8500>
+blocked = False, cancel_during_tool = True
+
+    @pytest.mark.parametrize("blocked, cancel_during_tool", [(False, False), (True, False), (False, True)])
+    async def test_codex_process_calls_scoped_mcp_tools_and_preserves_transcript(
+        tmp_path, monkeypatch, blocked, cancel_during_tool,
+    ):
+        import json
+        from pathlib import Path
+    
+        from harness.hooks import ProposedToolCall
+        from harness.tools import ToolSpec
+        from harness.types import ToolName
+        from tests.test_provider_codex import _PREAMBLE, _fake_codex
+    
+        # This is a real child process and real MCP HTTP request; no subscription use.
+        script = _PREAMBLE + '''
+    import asyncio
+    from mcp import ClientSession
+    from mcp.client.streamable_http import streamablehttp_client
+    url_arg = next(a for a in sys.argv if a.startswith("mcp_servers.harness.url="))
+    url = json.loads(url_arg.split("=", 1)[1])
+    async def run():
+        async with streamablehttp_client(url) as (read, write, _):
+            async with ClientSession(read, write) as client:
+                await client.initialize()
+                result = await client.call_tool("echo", {"text": "from child"})
+                text = "denied" if result.isError else result.content[0].text
+        emit({"type": "item.completed", "item": {"type": "agent_message", "text": text}})
+        emit({"type": "turn.completed", "usage": {"input_tokens": 1, "output_tokens": 2}})
+    asyncio.run(run())
+    '''
+        binary = _fake_codex(tmp_path, script)
+        monkeypatch.setenv("CODEX_HOME", str(tmp_path / "empty-home"))
+        backend = CodexProvider(binary=binary)
+        kernel = build_kernel(base_dir=tmp_path / "sessions", provider=backend, model=ModelId("codex/default"))
+        invoked = []
+        entered, cleaned = asyncio.Event(), asyncio.Event()
+    
+        class Echo:
+            spec = ToolSpec(name=ToolName("echo"), description="Echo", parameters={"type": "object"})
+    
+            async def __call__(self, args):
+                try:
+                    invoked.append(args)
+                    entered.set()
+                    if cancel_during_tool:
+                        await asyncio.Event().wait()
+                    return "echoed: " + args["text"]
+                finally:
+                    cleaned.set()
+    
+        kernel.registry.register(Echo())
+        kernel.loop.hooks.register_dispatch("test-policy", lambda action:
+            Block(reason="blocked") if blocked and isinstance(action, ProposedToolCall) else Allow())
+        try:
+            await kernel.loop.start()
+            append = kernel.session.append
+    
+            def checked_append(event):
+                if cancel_during_tool and event.type == "agent_run_finished":
+                    assert cleaned.is_set(), "the tool must settle before either task's terminal fact"
+                return append(event)
+    
+            monkeypatch.setattr(kernel.session, "append", checked_append)
+            work = asyncio.create_task(kernel.loop.run_task(AgentTask(prompt="use echo")))
+            if cancel_during_tool:
+                try:
+                    await asyncio.wait_for(entered.wait(), 3)
+                finally:
+                    work.cancel()
+                    with pytest.raises(asyncio.CancelledError):
+>                       await asyncio.wait_for(work, 2)
+
+tests/test_external_agent_runtime.py:229: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../../.local/share/uv/python/cpython-3.12.13-linux-x86_64-gnu/lib/python3.12/asyncio/tasks.py:520: in wait_for
+    return await fut
+           ^^^^^^^^^
+src/harness/loop.py:149: in run_task
+    return await execute_task(
+src/harness/agent.py:153: in execute_task
+    session.append(AgentRunFinished(result=terminal("failed", type(exc).__name__)))
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+event = AgentRunFinished(type='agent_run_finished', result=AgentResult(task_id='329a9f85f30447fb83ec4acbed2ee478', run_id='a26...one, cache_read_tokens=None, cache_write_tokens=None), acceptance='unverified', remaining_criteria=()), purpose='task')
+
+    def checked_append(event):
+        if cancel_during_tool and event.type == "agent_run_finished":
+>           assert cleaned.is_set(), "the tool must settle before either task's terminal fact"
+E           AssertionError: the tool must settle before either task's terminal fact
+E           assert False
+E            +  where False = is_set()
+E            +    where is_set = <asyncio.locks.Event object at 0x701fc9dea150 [unset]>.is_set
+
+tests/test_external_agent_runtime.py:218: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_external_agent_runtime.py::test_codex_process_calls_scoped_mcp_tools_and_preserves_transcript[False-False]
+FAILED tests/test_external_agent_runtime.py::test_codex_process_calls_scoped_mcp_tools_and_preserves_transcript[True-False]
+FAILED tests/test_external_agent_runtime.py::test_codex_process_calls_scoped_mcp_tools_and_preserves_transcript[False-True]
+3 failed, 121 passed in 10.71s

@@ -1,7 +1,7 @@
 # Core agency implementation record
 
-Current implementation branch: `feat/assessment-evaluation`, based on merged `main`
-at `700e5f0` (PR25). Previous branches: `feat/supervised-improvement`, `feat/local-scheduling`, `feat/task-fallback`, `feat/semantic-context-progress`, `feat/local-assistant-m3`, `feat/resident-workflow`, `feat/task-completion-evidence`, `fix/inference-client-lifecycle`, `feat/local-response-profiles`, `feat/local-tool-recovery`, `feat/local-tool-planning`, `feat/local-qualification`, `feat/semantic-evaluation`, `feat/local-context`, `feat/local-readiness`, `feat/agent-runtimes`,
+Current implementation branch: `feat/external-handoff`, based on merged `main`
+at `e576a8e` (PR26). Previous branches: `feat/assessment-evaluation`, `feat/supervised-improvement`, `feat/local-scheduling`, `feat/task-fallback`, `feat/semantic-context-progress`, `feat/local-assistant-m3`, `feat/resident-workflow`, `feat/task-completion-evidence`, `fix/inference-client-lifecycle`, `feat/local-response-profiles`, `feat/local-tool-recovery`, `feat/local-tool-planning`, `feat/local-qualification`, `feat/semantic-evaluation`, `feat/local-context`, `feat/local-readiness`, `feat/agent-runtimes`,
 and `feat/core-agency`.
 
 Committed checkpoints: `0351b75` (roadmap, lifecycle, and storage/result integrity),
@@ -55,7 +55,7 @@ qualification. Milestone completion requires its roadmap gates, not just code.
 | M1 correctness and interaction | In progress | Storage, delegation, controller/UI, MCP capability and explicit-endpoint HTTP cleanup changes are implemented. Durable task obligations and explicit review are visible through the TUI and headless inspection. Broader enforcement/redaction, provider lifecycles and fault qualification remain. |
 | M2 inference / agent contracts | In progress | Bounded inference, native tasks, Codex task binding, explicit execution kinds, nullable usage, core improvement records and recorded task-evidence checks implemented. Remaining adapters, richer artifact predicates and live capability qualification remain. |
 | M3 local core assistant | Complete for the measured CUDA profile | Qwen3-8B passes six full offline project journeys: twelve exact native file writes, changed-record answers after restart, real cancellation, normal memory, and visible task/context status. Four missing-assets/startup-exit recovery cases pass. Shipped profiles and a launcher reproduce the workflow. CPU-only operation, automatic fallback and broader daily-use qualification remain outside this gate. |
-| M4 bounded semantic agency | In progress | All three shadow functions now exist with explicit CLI/TUI access and evidence validation. The public 8B comparison failed context/progress gates; deterministic behavior remains. Bounded task-preserving fallback and session-tree local scheduling are implemented. Message-prompt pairing and earlier context/correction experiments use core improvement records. Supervised message-prompt proposal/evaluation/adoption/rollback is implemented. Paired context/progress candidate evaluation is implemented with explicit operator controls. Held-out qualification, external-agent reconciliation and assessment adoption remain. |
+| M4 bounded semantic agency | In progress | All three shadow functions now exist with explicit CLI/TUI access and evidence validation. The public 8B comparison failed context/progress gates; deterministic behavior remains. Bounded task-preserving fallback and session-tree local scheduling are implemented. Message-prompt pairing and earlier context/correction experiments use core improvement records. Supervised message-prompt proposal/evaluation/adoption/rollback is implemented. Paired context/progress candidate evaluation is implemented with explicit operator controls. Explicit external-to-native reconciliation and bounded handoff are implemented. Held-out qualification, broader handoff qualification and assessment adoption remain. |
 | M5 heterogeneous work / plugins | Pending | Supervision, plugin reconciliation, portable continuation, isolated improvement patches and rollback. |
 | M6 daily-use qualification | Pending | Measured UI, live adapter boundaries, offline and human dogfood gates. |
 
@@ -1339,3 +1339,75 @@ match all 69 core source files. The first offline wheel install lacked cached
 package-index metadata. The successful install fetched metadata with versions
 constrained to the unchanged lockfile; it is distinct from the network-free GPU
 evidence. Both packaging logs and repository results are retained in the handoff.
+
+## September 8 — M4 explicit external-agent reconciliation and handoff
+
+[PR26](https://github.com/c-daly/harness/pull/26) merged at `e576a8e`; reviewed
+head `b02d1c7` passed Python 3.12/3.13 CI and automated review. This slice starts
+from that merge on `feat/external-handoff`.
+
+**Added:** durable operator reconciliation and a single-use external-to-native
+continuation. `/handoff inspect`, `record`, `show`, and `run` expose the checkpoint
+and remaining assignment in the existing interface; the headless CLI offers the
+same controls. Provider-native effects remain opaque and require inspection and
+an explicit stopped-process attestation. An interrupted tracked external task
+cannot use ordinary retry to silently replay its original assignment.
+
+**Authority and continuity:** a frozen checkpoint carries the original task,
+criteria, artifacts, source permissions, workspace/context bindings, and budgets.
+Only a configured, explicitly selected inference destination can continue it.
+Current dispatch policy and the source permission floor both apply after rewrites.
+The finite allowlist permits each exact native file call at most once, with no
+shell or delegation. Completed file targets cannot be modified by the continuation.
+The full conversation remains durable; only the remaining assignment and checkpoint
+enter fresh working context. Previous successful tool checks retain their original
+evidence; review and acceptance remain explicit. Chained handoffs preserve the
+original authority floor and completed effects.
+
+**Interruption and limits:** cancellation consumes the plan and requires another
+reconciliation. A started native file thread settles before the terminal fact,
+including repeated cancellation; the UI explains the wait. Replay performs no
+inference. Unknown source hooks, source-version changes, missing/changed context
+adapters, legacy attempts without scope evidence, and unaccounted child sessions
+hold execution. This bounded implementation does not claim portable M5 workflows
+or automatic reconciliation of external effects.
+
+The [operator guide](../../external-handoff.md) and
+[evidence handoff](../../handoffs/2026-09-08-external-handoff/README.md) record
+commands, constraints, runtime evidence and retained failures. Memory and
+agent-swarm remain plugins; core imports neither plugin's internals.
+
+**Remaining:** M4 held-out semantic qualification and assessment adoption; broader
+live-agent/normal-memory handoff evidence; M5 heterogeneous workflow supervision
+and source-edit improvement experiments; M6 sustained daily-use qualification.
+The earlier failed semantic quality gates remain failed.
+
+**Repository validation:** **1,562 passed, seven skipped, six warnings in 348.24s**
+on Python 3.13, including real subprocess/MCP and final terminal rendering.
+**124 focused tests passed on Python 3.12 in 8.98s.** The first 3.12 invocation
+failed three existing subprocess fixtures because their `python3` shebang found
+an environment without MCP; activating the locked environment with `uv run`
+fixed the invocation without changing those fixtures. Both results are retained.
+Ruff, whitespace, offline sdist/wheel build and clean offline wheel smoke pass;
+all 70 modules import and wheel bytes match all 71 core Python source files.
+No dependency or lockfile changes were needed.
+
+**Real offline handoff:** both public Qwen3-8B CUDA runs pass all 15 checks. A
+controlled Codex-compatible process writes through real MCP, leaves an opaque
+native effect, fails, and is reaped before terminal facts. After operator
+reconciliation and session restart, the real local model writes only the remaining
+artifact, retrieves project context, retains prior evidence, leaves review pending,
+and replays without inference. Final continuation time is **11.648 seconds**
+including cold startup (initial revision: **17.505 seconds**). The final report
+matches all 71 core source files plus the driver. No external network, live
+subscription agent, or memory plugin was used; those broader boundaries remain
+unqualified. The existing managed endpoint was left untouched.
+
+## PR27 review — discoverable handoff controls
+
+The review found `/handoff` missing from built-in `/help`. Help now lists
+`/handoff inspect|record|show|run`. Both existing help tests pass, and a
+100-column final-compositor smoke confirms the complete action list is visible
+without adding session events or invoking inference. Ruff and whitespace checks
+pass. The full-suite, wheel and offline handoff reports above remain evidence
+for `0598460`, before this help-text correction.

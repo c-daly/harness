@@ -40,6 +40,7 @@ class AgentTask(BaseModel):
     context: tuple[Message, ...] = ()
     acceptance_criteria: tuple[str, ...] = ()
     agent: AgentId | None = None
+    handoff_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{32}$")
     limits: TaskLimits = Field(default_factory=TaskLimits)
 
 
@@ -118,6 +119,7 @@ async def execute_task(
     run_id = uuid4().hex
     parent = current_agent_run.get()
     session.append(AgentRunStarted(task_id=task.id, run_id=run_id, runtime=runtime,
+                                   handoff_id=task.handoff_id,
                                    parent_run_id=parent.run_id if parent else None,
                                    agent=task.agent, model=model,
                                    acceptance_criteria=task.acceptance_criteria,

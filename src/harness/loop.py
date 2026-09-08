@@ -145,8 +145,10 @@ class AgentLoop:
         self._task_active = True
         self.active_model = self.model
         try:
+            from harness.handoff import capture_scope
             return await execute_task(
                 self.session, task, runtime="harness", model=self.model,
+                capabilities={"handoff_scope": capture_scope(self.dispatcher)},
                 execute=lambda: self._run_task_body(task, on_progress),
             )
         finally:
@@ -156,6 +158,7 @@ class AgentLoop:
 
     async def _run_task_body(self, task: AgentTask, on_progress) -> AgentOutput:
         user_text = task.prompt
+        history_start = len(self.history) if task.handoff_id else 0
         self.session.append(UserMessage(text=user_text))
         self.history.append(Message.user_text(user_text))
         max_iterations = min(self.max_iterations, task.limits.max_iterations)
@@ -188,7 +191,7 @@ class AgentLoop:
                     if policy.response is not None and policy.response.instructions is not None:
                         prefix.append(Message.system_text("Response instructions:\n" + policy.response.instructions))
                     from harness.context import prepare_context
-                    prepared = prepare_context(prefix, self.history, self.registry.specs(), policy,
+                    prepared = prepare_context(prefix, self.history[history_start:], self.registry.specs(), policy,
                                                max_input_bytes=task.limits.max_input_bytes,
                                                blobs=self.session.blobs)
                     messages = prepared.messages
@@ -200,7 +203,7 @@ class AgentLoop:
                         tools=tuple(str(t.name) for t in self.registry.specs()),
                     ))
                 else:
-                    messages = [*prefix, *self.history]
+                    messages = [*prefix, *self.history[history_start:]]
                 runtime = bind_agent_runtime(
                     self.provider, fallback.model, self.dispatcher, prepared_messages=tuple(messages),
                     pricing=self.pricing, pricing_for=self.pricing_for, pinned=fallback.pinned,

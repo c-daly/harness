@@ -76,9 +76,11 @@ class ExternalAgentRuntime:
             raise RuntimeError("an agent task is already running")
         self._active = True
         try:
+            from harness.handoff import capture_scope
             return await execute_task(
                 self.dispatcher.session, task, runtime=self.info.runtime, model=self.model,
-                capabilities=self.info.model_dump(), purpose="conversation",
+                capabilities={**self.info.model_dump(), "handoff_scope": capture_scope(self.dispatcher)},
+                purpose="conversation",
                 execute=lambda: self._execute(task, on_progress),
             )
         finally:
