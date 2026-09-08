@@ -55,6 +55,8 @@ reports, screenshots and sessions beside itself. With the repository's installed
 environment, run `uv run --no-sync python /tmp/<copy>/terminal_check.py` from the
 repository. The driver refuses an occupied test port and closes the owned
 runtime even on failure. It does not download weights or modify the user catalog.
+The user catalog is optional: the driver records absence separately from a file
+digest, so creation, deletion, or content changes are detected during cleanup.
 
 ## Automated checks
 
@@ -69,3 +71,9 @@ compaction, execution-kind and routing boundaries, and rendered tool discovery.
 Ruff and whitespace checks passed. The final source distribution and wheel built
 offline; a clean temporary wheel installation passed CLI and all-module import
 smoke checks.
+
+PR33's review exposed an unconditional read of that optional user catalog. The
+original driver reproduced `FileNotFoundError` before CLI startup. After the fix,
+five isolated startup/cleanup checks passed for absent, unchanged, newly created,
+deleted, and edited catalogs. These checks stop before inference; the runtime
+and compaction behavior above are unchanged.

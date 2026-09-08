@@ -22,7 +22,18 @@ from harness.messages import Message
 OUT = Path(__file__).parent
 REPORT = {}
 USER_CATALOG = Path.home() / '.config/harness/models.toml'
-BEFORE = hashlib.sha256(USER_CATALOG.read_bytes()).hexdigest()
+
+
+def user_catalog_digest():
+    """None records absence, distinct from every existing file's digest."""
+    try:
+        content = USER_CATALOG.read_bytes()
+    except FileNotFoundError:
+        return None
+    return hashlib.sha256(content).hexdigest()
+
+
+BEFORE = user_catalog_digest()
 
 
 def listening():
@@ -122,7 +133,7 @@ async def launch(kernel, **kwargs):
     finally:
         await app._finish()
         app.kernel.session.close()
-        REPORT['user_catalog_unchanged'] = BEFORE == hashlib.sha256(USER_CATALOG.read_bytes()).hexdigest()
+        REPORT['user_catalog_unchanged'] = BEFORE == user_catalog_digest()
         REPORT['owned_runtime_stopped'] = not listening()
         (OUT / 'report.json').write_text(json.dumps(REPORT, indent=2) + '\n')
     assert REPORT['user_catalog_unchanged'] and REPORT['owned_runtime_stopped']
