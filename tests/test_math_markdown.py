@@ -46,6 +46,34 @@ def test_math_scanner_preserves_code_escaped_dollars_and_currency():
     assert prepared == source
 
 
+@pytest.mark.parametrize("formula", [
+    r"1.898 \times 10^{27}", r"2 + 2 = 4", r"2 + 2", r"2x + 1",
+    r"10^{-3} \mathrm{kg}", r"5",
+])
+def test_number_leading_inline_math_is_not_mistaken_for_currency(formula):
+    prepared, formulas = extract_math(f"The value is ${formula}$ today.")
+    assert [item.source for item in formulas.values()] == [formula]
+    assert "The value is " in prepared and " today." in prepared
+
+
+@pytest.mark.parametrize("source", [
+    r"Cost is $5 and $10. Use `$2 + 2$` for math.",
+    r"Cost is $10. Use `\times` then `$x^2$`.",
+    r"Cost is $10/item and $20/item.",
+    r"The mass is $1.898 \times 10^{27}% kg.",
+])
+def test_numeric_math_detection_preserves_currency_code_and_incomplete_spans(source):
+    prepared, formulas = extract_math(source)
+    assert formulas == {}
+    assert prepared == source
+
+
+def test_currency_does_not_consume_a_later_numeric_formula():
+    prepared, formulas = extract_math(r"Cost is $10. The mass is $1.898 \times 10^{27}$ kg.")
+    assert [item.source for item in formulas.values()] == [r"1.898 \times 10^{27}"]
+    assert "Cost is $10. The mass is " in prepared
+
+
 def test_fence_line_with_trailing_content_does_not_close_a_code_block():
     """CommonMark allows an info string on an OPENING fence only, so a line
     like ```text hello inside a block continues it. Closing early would let

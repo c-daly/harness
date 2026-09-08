@@ -501,6 +501,24 @@ async def test_render_reply_uses_math_markdown_for_latex(tmp_path):
         ]
 
 
+async def test_numeric_inline_latex_is_visible_in_final_compositor(tmp_path):
+    source = r"The mass of Jupiter is approximately $1.898 \times 10^{27}$ kilograms."
+    app = make_app(tmp_path, provider=FakeProvider([text_turn(source)]))
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause(0.1)
+        await pilot.click("#prompt")
+        await pilot.press(*"Mass of Jupiter?", "enter")
+        await pilot.pause(0.5)
+        screen_text = "\n".join(
+            "".join(segment.text for segment in strip if not segment.control)
+            for strip in app.screen._compositor.render_strips()
+        )
+        assert "1.898 × 10²⁷" in screen_text
+        assert "The mass of Jupiter is approximately" in screen_text
+        assert "kilograms." in screen_text
+        assert r"\times" not in screen_text and "10^{27}" not in screen_text
+
+
 async def test_native_sixel_display_uses_textual_widget_not_richlog_controls(
     tmp_path, monkeypatch
 ):
