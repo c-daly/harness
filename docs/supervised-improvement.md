@@ -1,5 +1,10 @@
 # Supervised message-prompt improvement
 
+[Assessment prompt comparison](assessment-evaluation.md) extends the same
+controls with `/improvements compare ASSESSMENT.json`. Context/progress
+candidates are operator-authored and comparison-only; they cannot use the
+message-prompt adoption command.
+
 Core can detect repeated classification failures, generate a bounded candidate,
 run its frozen paired experiment, and explicitly select or roll back the result.
 This loop changes **shadow message-prompt data only**. It cannot edit source,

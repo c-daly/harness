@@ -18,7 +18,7 @@ async def submit(app, pilot, text):
     app.query_one("#prompt", Input).value = text
     await pilot.press("enter")
     await pilot.pause(0.05)
-    if app._semantic_worker is not None:
+    if app._semantic_worker is not None and not app._semantic_worker.is_finished:
         await asyncio.wait_for(app._semantic_worker.wait(), 3)
         await pilot.pause(0.05)
 
@@ -121,3 +121,39 @@ async def test_failed_proposal_does_not_display_provider_exception_body(tmp_path
         assert "Improvement refused: AuthFailed" in visible
         assert "private provider response sentinel" not in visible
         assert not read_improvements(tmp_path, app.kernel.session.id).candidates
+
+
+@pytest.mark.parametrize("interrupt", [False, True])
+async def test_assessment_comparison_uses_terminal_worker_and_keeps_fixture_provenance(tmp_path, interrupt):
+    from tests.test_assessment_evaluation import AssessmentProvider, experiment
+    spec = experiment("progress_assessment")
+    provider = AssessmentProvider(spec)
+    app = make_app(tmp_path, provider=provider, model=ModelId("fake"))
+    path = tmp_path / "assessment.json"
+    path.write_text(spec.model_dump_json())
+    async with app.run_test(size=(160, 55)) as pilot:
+        await submit(app, pilot, "/task new Actual task")
+        await submit(app, pilot, "/semantics progress")
+        provider.seed = False
+        before = app.kernel.tasks.state()
+        if interrupt:
+            provider.hang = True
+            app.query_one("#prompt", Input).value = f"/improvements compare {path}"
+            await pilot.press("enter")
+            await asyncio.wait_for(provider.entered.wait(), 3)
+            app.query_one("#prompt", Input).value = "preserve this draft"
+            await pilot.press("escape")
+            await pilot.pause(.1)
+            assert app.query_one("#prompt", Input).value == "preserve this draft"
+            assert "Improvement interrupted" in screen_text(app)
+        else:
+            await submit(app, pilot, f"/improvements compare {path}")
+            assert "assessment adoption is unavailable" in screen_text(app)
+        state = read_improvements(tmp_path, app.kernel.session.id)
+        result = list(state.results.values())[-1]
+        assert result.completion == ("cancelled" if interrupt else "completed")
+        await submit(app, pilot, "/semantics")
+        visible = " ".join(screen_text(app).split())
+        assert "Evaluation fixture" in visible and "Not live task evidence" in visible
+        assert app.kernel.tasks.state() == before and not state.prompt_changes
+        assert not fold(read_session(tmp_path, app.kernel.session.id)).open_evaluations

@@ -1726,7 +1726,7 @@ class HarnessApp(App[None]):
                 self.say("", line)
             for line in self.kernel.improvement_service.status(self.kernel.loop.model).splitlines():
                 self.say("", line)
-            self.say("", "Controls: /improvements propose | show ID | evaluate CANDIDATE EXPERIMENT.json | adopt RESULT | rollback")
+            self.say("", "Controls: /improvements propose | show ID | evaluate CANDIDATE EXPERIMENT.json | compare ASSESSMENT.json | adopt RESULT | rollback")
         elif command.name == "resources":
             if self._rebuild_in_progress:
                 self.say("! ", "session rebuild in progress; try again in a moment")

@@ -1,7 +1,7 @@
 # Core agency implementation record
 
-Current implementation branch: `feat/supervised-improvement`, based on merged `main`
-at `032f0fc` (PR24). Previous branches: `feat/local-scheduling`, `feat/task-fallback`, `feat/semantic-context-progress`, `feat/local-assistant-m3`, `feat/resident-workflow`, `feat/task-completion-evidence`, `fix/inference-client-lifecycle`, `feat/local-response-profiles`, `feat/local-tool-recovery`, `feat/local-tool-planning`, `feat/local-qualification`, `feat/semantic-evaluation`, `feat/local-context`, `feat/local-readiness`, `feat/agent-runtimes`,
+Current implementation branch: `feat/assessment-evaluation`, based on merged `main`
+at `700e5f0` (PR25). Previous branches: `feat/supervised-improvement`, `feat/local-scheduling`, `feat/task-fallback`, `feat/semantic-context-progress`, `feat/local-assistant-m3`, `feat/resident-workflow`, `feat/task-completion-evidence`, `fix/inference-client-lifecycle`, `feat/local-response-profiles`, `feat/local-tool-recovery`, `feat/local-tool-planning`, `feat/local-qualification`, `feat/semantic-evaluation`, `feat/local-context`, `feat/local-readiness`, `feat/agent-runtimes`,
 and `feat/core-agency`.
 
 Committed checkpoints: `0351b75` (roadmap, lifecycle, and storage/result integrity),
@@ -55,7 +55,7 @@ qualification. Milestone completion requires its roadmap gates, not just code.
 | M1 correctness and interaction | In progress | Storage, delegation, controller/UI, MCP capability and explicit-endpoint HTTP cleanup changes are implemented. Durable task obligations and explicit review are visible through the TUI and headless inspection. Broader enforcement/redaction, provider lifecycles and fault qualification remain. |
 | M2 inference / agent contracts | In progress | Bounded inference, native tasks, Codex task binding, explicit execution kinds, nullable usage, core improvement records and recorded task-evidence checks implemented. Remaining adapters, richer artifact predicates and live capability qualification remain. |
 | M3 local core assistant | Complete for the measured CUDA profile | Qwen3-8B passes six full offline project journeys: twelve exact native file writes, changed-record answers after restart, real cancellation, normal memory, and visible task/context status. Four missing-assets/startup-exit recovery cases pass. Shipped profiles and a launcher reproduce the workflow. CPU-only operation, automatic fallback and broader daily-use qualification remain outside this gate. |
-| M4 bounded semantic agency | In progress | All three shadow functions now exist with explicit CLI/TUI access and evidence validation. The public 8B comparison failed context/progress gates; deterministic behavior remains. Bounded task-preserving fallback and session-tree local scheduling are implemented. Message-prompt pairing and earlier context/correction experiments use core improvement records. Supervised message-prompt proposal/evaluation/adoption/rollback is implemented. Held-out qualification, external-agent reconciliation, assessment candidate evaluation and broader adoption remain. |
+| M4 bounded semantic agency | In progress | All three shadow functions now exist with explicit CLI/TUI access and evidence validation. The public 8B comparison failed context/progress gates; deterministic behavior remains. Bounded task-preserving fallback and session-tree local scheduling are implemented. Message-prompt pairing and earlier context/correction experiments use core improvement records. Supervised message-prompt proposal/evaluation/adoption/rollback is implemented. Paired context/progress candidate evaluation is implemented with explicit operator controls. Held-out qualification, external-agent reconciliation and assessment adoption remain. |
 | M5 heterogeneous work / plugins | Pending | Supervision, plugin reconciliation, portable continuation, isolated improvement patches and rollback. |
 | M6 daily-use qualification | Pending | Measured UI, live adapter boundaries, offline and human dogfood gates. |
 
@@ -1269,3 +1269,73 @@ suites plus the full main TUI suite, including its localhost MCP cases and the
 previously failing context-status journey. The Python 3.12 environment was
 installed from the existing lockfile separately from the project's Python 3.13
 environment. No dependency or lockfile changes were required.
+
+## September 8 — M4 paired assessment prompt evaluation
+
+[PR25](https://github.com/c-daly/harness/pull/25) merged at `700e5f0`; reviewed
+head `8c03119` passed Python 3.12/3.13 CI and automated review. This slice starts
+from that merge on `feat/assessment-evaluation`.
+
+**Added:** paired comparison for context-selection and progress-assessment
+prompt candidates, using the existing durable evaluator and improvement records.
+The operator supplies a bounded `AssessmentExperiment`; `harness improve ...
+compare ASSESSMENT.json` and `/improvements compare ASSESSMENT.json` link recent
+live observations, record exact candidate/plan bytes, and run the frozen pairs.
+Saved plans can also use `harness semantic evaluate`. Candidate/result inspection
+shows assessment prompt data without starting inference.
+
+**Oracle and control boundaries:** immutable critical cases cover stale,
+unavailable, injected and ambiguous context, selection caps, unchecked completion,
+failed checks, review, active work, and interrupted executions. Expected results
+must satisfy the normal scope/evidence validators. Only each current input and
+prompt reach inference. The grader compares complete ID sets and reason/action;
+reports include rules baselines, partitioned sample counts, abstention and latency.
+The assessment implementation is part of the evaluator fingerprint. Budget,
+permission, timeout, cancellation, configuration drift and crash/replay semantics
+use the existing shared runner.
+
+**Fixture provenance and interface:** frozen progress snapshots never update the
+live task. Assessment observations carry their evaluation run and the terminal
+labels them as fixtures; they cannot recursively become live failure evidence.
+Comparisons require an idle boundary, preserve the draft, and settle on Esc or
+new work. No comparison changes task acceptance, routing, permissions, or prompt
+selection. Even passing assessment results cannot use message-prompt adoption.
+Assessment candidate generation/adoption remains open; these candidates are
+operator-authored.
+
+**Real offline evidence:** two public runs completed both comparisons on the
+pinned Qwen3-8B/b9603 CUDA profile with external networking disabled and no plugins.
+Each run made 30 paired calls plus two real seed assessments, preserved task state,
+and stopped its owned runtime. Neither run injected model failures. Both had the
+same scores: context builtin **4/6**, candidate **3/6**, rules **4/6**; progress
+builtin **0/9**, candidate **2/9**, rules **9/9**. Both candidates failed fixed gates.
+Final maximum incumbent/candidate latency was **277/318 ms** for context and
+**488/422 ms** for progress. Fast responses did not justify adoption.
+
+The initial driver missed llama.cpp's version on stderr; its report is retained.
+Capturing both streams fixed the metadata, and the final report's hashes match
+all core/driver source bytes. Prompt text, cases and gates did not change between
+runs. Public examples labelled `held_out` are explicitly **not** genuine held-out
+qualification. These measurements do not replace the earlier M3 normal-memory/
+native-task gate or prove daily-use model quality.
+
+The [operator guide](../../assessment-evaluation.md), public JSON examples, and
+[evidence handoff](../../handoffs/2026-09-08-assessment-evaluation/README.md)
+make the result reviewable. **138 focused tests passed on Python 3.12 in 29.30s**,
+including terminal rendering and cancellation. Ruff and whitespace checks pass.
+
+**Remaining:** M4 held-out semantic qualification, assessment generation/adoption,
+and explicit external-agent reconciliation/handoff. Deterministic task control
+remains appropriate. Broader adoption policies, isolated source experiments and
+daily-use improvement evidence remain later work. Memory and agent-swarm remain
+plugins; the evaluation machinery belongs to core.
+
+**Final repository validation:** **1,530 passed, seven skipped, six warnings in
+334.88s**, using Python 3.13 and `TERM=xterm-256color`, including localhost MCP
+integrations. The skips remain the absent Anthropic/Ollama conformance fixtures
+and opt-in live Antigravity check. Ruff, whitespace, sdist/wheel build and clean
+wheel smoke passed; all 68 shipped modules import, and installed wheel bytes
+match all 69 core source files. The first offline wheel install lacked cached
+package-index metadata. The successful install fetched metadata with versions
+constrained to the unchanged lockfile; it is distinct from the network-free GPU
+evidence. Both packaging logs and repository results are retained in the handoff.

@@ -17,6 +17,16 @@ def refusal_message(exc):
 async def perform(kernel, words):
     """Shared CLI/TUI actions. These are not registered as model tools."""
     service, model = kernel.improvement_service, kernel.loop.model
+    if len(words) == 2 and words[0] == "compare":
+        from harness.assessment_evaluation import AssessmentExperiment
+        from harness.semantic_cli import _read
+        experiment = AssessmentExperiment.model_validate_json(_read(Path(words[1]), 1024 * 1024))
+        if experiment.configuration.model != model:
+            raise ValueError("select the experiment's model before evaluation")
+        result = await service.compare_assessment(experiment)
+        decision = verdict(kernel.improvements.state.plans[result.plan_id], result)
+        return (f"Assessment evaluation {result.id}: {decision} ({result.completion}).\n"
+                "Comparison only; assessment adoption is unavailable. Builtin prompts remain active.")
     if words == ["propose"]:
         candidate = await service.propose(model=model)
         return (f"Candidate {candidate.id}: message prompt {candidate.artifact.sha256[:12]}.\n"
@@ -38,7 +48,7 @@ async def perform(kernel, words):
     if words == ["rollback"]:
         change = service.rollback(model=model)
         return f"Restored message prompt {change.prompt.sha256[:12]}; change {change.id}. Shadow mode."
-    raise ValueError("use propose, evaluate CANDIDATE EXPERIMENT.json, adopt RESULT, or rollback")
+    raise ValueError("use propose, evaluate CANDIDATE EXPERIMENT.json, compare ASSESSMENT.json, adopt RESULT, or rollback")
 
 
 def main(argv):
@@ -63,6 +73,8 @@ def main(argv):
     evaluate = actions.add_parser("evaluate")
     evaluate.add_argument("candidate_id")
     evaluate.add_argument("experiment")
+    compare = actions.add_parser("compare", help="Compare an operator-authored assessment prompt with its builtin.")
+    compare.add_argument("experiment")
     adopt = actions.add_parser("adopt")
     adopt.add_argument("result_id")
     actions.add_parser("rollback")
@@ -82,6 +94,8 @@ def main(argv):
     words = [args.action]
     if args.action == "evaluate":
         words += [args.candidate_id, args.experiment]
+    elif args.action == "compare":
+        words += [args.experiment]
     elif args.action == "adopt":
         words += [args.result_id]
 
