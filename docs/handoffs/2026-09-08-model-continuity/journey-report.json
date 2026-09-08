@@ -1,0 +1,31 @@
+{
+  "session_id": "31f4ff57264541cdb6efdec42fc9855b",
+  "model": "Qwen3-8B-Q4_K_M",
+  "runtime": "llama.cpp b9603 CPU, context 8192, four threads, thinking disabled",
+  "journeys": [
+    "TUI /model from echo",
+    "headless --continue without --model",
+    "TUI --continue without --model"
+  ],
+  "answers": [
+    "CONTINUITY_SET",
+    "amberfern",
+    "amberfern"
+  ],
+  "call_duration_ms": [
+    41714,
+    13033,
+    10324
+  ],
+  "user_messages": 3,
+  "session_resumes": 2,
+  "runtime_actions": [
+    "start",
+    "stop",
+    "start",
+    "stop",
+    "start",
+    "stop"
+  ],
+  "user_catalog_unchanged": true
+}

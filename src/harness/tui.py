@@ -1050,6 +1050,8 @@ class HarnessApp(App[None]):
             native_tools=self._native_tools,
             routing_rules=self._routing_rules,
             model_pinned=old_kernel.loop.model_pinned,
+            inherit_model_selection=True,
+            catalog_path=Path(self.catalog_path) if self.catalog_path is not None else None,
             execution_limits=old_kernel.loop.dispatcher.scope.budget.limits,
             resources=old_kernel.resources,
             context_policy=old_kernel.context_policy if resume_session_id is None else None,
@@ -1579,14 +1581,15 @@ class HarnessApp(App[None]):
         tail -- exactly what resume_session's own reopen would do a moment
         later -- but a LIVE lock is never touched. Returns None when it's
         safe to proceed, else a human-readable reason."""
-        from harness.log import SessionLockedError, TornLogError, read_session
-        from harness.resume import _clear_stale_lock
+        from harness.log import SessionLockedError, TornLogError
+        from harness.model_selection import read_model_selection, load_selected_catalog, ModelSelectionError
 
         base = self.kernel.session.base
         try:
-            _clear_stale_lock(base, session_id)
-            read_session(base, session_id, repair=True)
-        except (SessionLockedError, TornLogError, OSError) as exc:
+            selection = read_model_selection(base, session_id)
+            if selection is not None:
+                load_selected_catalog(selection, Path(self.catalog_path) if self.catalog_path else None)
+        except (SessionLockedError, TornLogError, OSError, ModelSelectionError) as exc:
             return str(exc)
         return None
 
@@ -2232,33 +2235,29 @@ class HarnessApp(App[None]):
         from harness.provider_litellm import CatalogProvider
 
         await self._cancel_semantic_check()
+        from harness.events import ModelSelected
+        from harness.cli import _catalog_provider
+
+        provider = self.kernel.loop.provider
+        replacement = None if isinstance(provider, CatalogProvider) else _catalog_provider(catalog)
+        # Persist the preference before retargeting live dispatch. Pending
+        # selections reach this point only at a safe turn boundary.
+        self.kernel.session.append(ModelSelected(model=ModelId(alias), pinned=True))
         loop = self.kernel.loop
         loop.model = ModelId(alias)
         loop.model_pinned = True  # an explicit /model is a pin (routing-exempt)
         loop.pricing = resolved.pricing_dict() or None
-        provider = loop.provider
         if isinstance(provider, CatalogProvider):
             # Swap the snapshot on the SHARED instance: the loop, the subagent
             # runner, and mixture tools all hold this one provider, so the
             # refresh reaches delegated work too.
             provider.catalog = catalog
         else:
-            from harness.provider_antigravity import AntigravityProvider
-            from harness.provider_claude_code import ClaudeCodeProvider
-            from harness.provider_codex import CodexProvider
-
             # Upgrading out of echo mode (no --model): match cli.py's
             # construction — backend entries must be dispatchable — and swap
             # via the kernel so every holder (loop, subagent runner, kernel)
             # gets the new provider, not just loop.provider.
-            self.kernel.set_provider(
-                CatalogProvider(
-                    catalog,
-                    claude_code=ClaudeCodeProvider(),
-                    codex=CodexProvider(),
-                    antigravity=AntigravityProvider(),
-                )
-            )
+            self.kernel.set_provider(replacement)
         # Unpinned subagents inherit the session's CURRENT model — the build-time
         # default (in echo mode not even a catalog alias) would dispatch experts
         # to the wrong place. Pricing lookups follow the fresh snapshot too.

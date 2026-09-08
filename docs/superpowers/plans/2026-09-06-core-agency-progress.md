@@ -1,7 +1,8 @@
 # Core agency implementation record
 
-Current implementation branch: `feat/local-model-management`, based on merged `main`
-at `c15fac9` (PR30, numeric inline LaTeX). Previous branches: `feat/assessment-improvement`, `feat/external-handoff`, `feat/assessment-evaluation`, `feat/supervised-improvement`, `feat/local-scheduling`, `feat/task-fallback`, `feat/semantic-context-progress`, `feat/local-assistant-m3`, `feat/resident-workflow`, `feat/task-completion-evidence`, `fix/inference-client-lifecycle`, `feat/local-response-profiles`, `feat/local-tool-recovery`, `feat/local-tool-planning`, `feat/local-qualification`, `feat/semantic-evaluation`, `feat/local-context`, `feat/local-readiness`, `feat/agent-runtimes`,
+Current implementation branch: `fix/model-selection-continuity`, based on merged `main`
+at `ca5618c` (PR31, local model management and catalog-publication review fix).
+Previous branches: `feat/local-model-management`, `feat/assessment-improvement`, `feat/external-handoff`, `feat/assessment-evaluation`, `feat/supervised-improvement`, `feat/local-scheduling`, `feat/task-fallback`, `feat/semantic-context-progress`, `feat/local-assistant-m3`, `feat/resident-workflow`, `feat/task-completion-evidence`, `fix/inference-client-lifecycle`, `feat/local-response-profiles`, `feat/local-tool-recovery`, `feat/local-tool-planning`, `feat/local-qualification`, `feat/semantic-evaluation`, `feat/local-context`, `feat/local-readiness`, `feat/agent-runtimes`,
 and `feat/core-agency`.
 
 Committed checkpoints: `0351b75` (roadmap, lifecycle, and storage/result integrity),
@@ -1611,3 +1612,83 @@ open-descriptor writes, exclusive creation, unsupported exchange, disappearance,
 post-exchange interruption and directory-sync failure. Ruff and whitespace checks
 pass. PR31's original Python 3.12/3.13 CI jobs passed on `8299839`; checks for this
 review correction are separate. No inference/runtime configuration was changed.
+
+## Everyday workflow: preserve catalog selection across resume
+
+PR31 merged at `ca5618c`. Following the project-wide status review, the next
+priority is ordinary workflow evidence: switching, long histories, network loss,
+normal memory, interruption and restart. The first three regressions reproduced
+an actual gap: `--continue` forgot the selected alias and used Echo; `/resume`
+used the model from the session being left; an unavailable target alias was not
+checked before teardown.
+
+Catalog preferences now have a durable `model_selected` event carrying the alias
+and routing pin. Startup, explicit switches and resume overrides record it;
+deferred choices wait for the turn boundary. Resume restores the target choice
+against the current catalog, including prices and delegated defaults. Routing,
+fallback and internal calls do not become preferences. Explicit `--model` wins.
+Missing or invalid saved aliases fail with recovery instructions; TUI preflight
+preserves the current session. Kernel configuration rechecks the actual replay
+under its writer lock before publishing a resumed boundary. Existing context
+profile inheritance uses that same locked replay.
+
+Older logs did not record the selection's pin and may have unrecorded `/model`
+changes. They keep the previous startup/default behavior; one explicit `--model`
+establishes a saved preference. This change does not restore grants or fallback
+authorization from past events, persist unsent drafts, or qualify other providers.
+
+**Validation:** three regressions failed on merged main before implementation.
+The final affected group passed **216 tests on Python 3.13 in 241.00 seconds**;
+the separate Python 3.12 environment passed **36 continuation/replay tests in
+3.59 seconds**. Two earlier expanded cases had fixture mistakes (an unavailable
+message helper and an ineffective catalog substitution); the corrected cases
+are included in the final passing group. No provider behavior was weakened.
+Ruff and whitespace checks passed; source distribution and wheel built offline.
+
+The [real local evidence](../../handoffs/2026-09-08-model-continuity/README.md)
+uses installed Qwen3-8B Q4_K_M and llama.cpp b9603 on CPU. Three separate
+processes share one session: TUI `/model` from Echo, headless `--continue`, then
+TUI `--continue`. Both resumes omit `--model` and recall the synthetic project
+codename exactly. Final compositor checks cover the alias, answer and unsent
+draft. Three owned runtime starts have three stops; the test port is closed and
+the normal user catalog is unchanged. This is a narrow continuation smoke test,
+without MCP/plugins or network isolation; M3's existing qualified profile and
+the broader M6 daily-use gate retain their original scope.
+
+The agreed priorities remain: finish ordinary workflow checks (next, long-history
+switches into smaller local contexts), demonstrate one useful held-out M4
+semantic improvement, run a bounded larger-model capacity experiment, then
+extend mixed-agent continuity and isolated source-improvement workflows. The
+current self-improvement mechanisms still have no demonstrated useful local
+quality gain. This continuity fix does not close that gate.
+
+## PR32 review — keep legacy resume baselines out of saved preferences
+
+The review identified an unconditional selection write during kernel resume.
+For legacy logs, it turned a routing default or departing TUI selection into
+durable preference. Administrative improvement/assessment commands could also
+replace the conversation's saved model. Both original CI versions failed two
+improvement-command tests when this unintended write encountered their injected
+provider factory.
+
+Resume now writes a preference only when the caller explicitly marks a
+conversational model selection. Both ordinary CLI paths set that intent for
+`--model`; the TUI's `/model` already records its own applied selection.
+Inherited preferences remain in the log without another write. Routing pins
+alone, repeated legacy resumes and administrative model overrides do not
+establish or replace preference. Explicit selection also takes precedence over
+inheritance inside kernel construction.
+
+Six new regressions failed on the reviewed code before the fix. The final
+coverage also exercises headless and terminal CLI paths, changing/removing an
+incidental routing default, repeated TUI resumes with pinned/unpinned departing
+models, explicit selection after legacy resume, and administrative overrides of
+both legacy and already-recorded preferences. The terminal driver yields to
+subscription workers between rebuilds, as ordinary UI commands do.
+
+**Review validation:** **155 affected tests passed on Python 3.13 in 60.36
+seconds**, and **64 continuation/improvement/resume tests passed on Python 3.12
+in 22.78 seconds**, using the separate environment. Both previously failing CI
+cases passed. Ruff, whitespace checks and offline source/wheel builds passed.
+Full-suite PR checks for the review correction are separate from these local
+results and the original `52e719f` CI failures.
