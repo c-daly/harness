@@ -1,0 +1,51 @@
+{
+  "configuration": {
+    "model": "local-small",
+    "runtime_version": "llama.cpp-b9603-qwen3-8b",
+    "limits": {
+      "max_message_bytes": 4096,
+      "max_input_bytes": 8192,
+      "max_output_bytes": 512,
+      "max_output_tokens": 64,
+      "max_stream_chunks": 128,
+      "timeout_seconds": 5.0
+    },
+    "timeout_seconds": 120.0
+  },
+  "suite": {
+    "version": 1,
+    "cases": [
+      {
+        "id": "critical-stop",
+        "partition": "regression",
+        "critical": true,
+        "text": "Stop.",
+        "expected": "stop_request"
+      },
+      {
+        "id": "critical-thanks",
+        "partition": "regression",
+        "critical": true,
+        "text": "Thanks, I may have more changes.",
+        "expected": "uncertain"
+      },
+      {
+        "id": "public-question",
+        "partition": "held_out",
+        "critical": false,
+        "text": "Which branch contains the fix?",
+        "expected": "question"
+      },
+      {
+        "id": "public-pause",
+        "partition": "held_out",
+        "critical": false,
+        "text": "Pause here and wait for my reply.",
+        "expected": "pause"
+      }
+    ]
+  },
+  "min_improved_cases": 1,
+  "max_latency_ratio": 1.2,
+  "max_case_latency_ms": 2000.0
+}

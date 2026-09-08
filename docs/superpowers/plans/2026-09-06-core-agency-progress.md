@@ -1,7 +1,7 @@
 # Core agency implementation record
 
-Current implementation branch: `feat/local-scheduling`, based on merged `main`
-at `f8b7c1c` (PR23). Previous branches: `feat/task-fallback`, `feat/semantic-context-progress`, `feat/local-assistant-m3`, `feat/resident-workflow`, `feat/task-completion-evidence`, `fix/inference-client-lifecycle`, `feat/local-response-profiles`, `feat/local-tool-recovery`, `feat/local-tool-planning`, `feat/local-qualification`, `feat/semantic-evaluation`, `feat/local-context`, `feat/local-readiness`, `feat/agent-runtimes`,
+Current implementation branch: `feat/supervised-improvement`, based on merged `main`
+at `032f0fc` (PR24). Previous branches: `feat/local-scheduling`, `feat/task-fallback`, `feat/semantic-context-progress`, `feat/local-assistant-m3`, `feat/resident-workflow`, `feat/task-completion-evidence`, `fix/inference-client-lifecycle`, `feat/local-response-profiles`, `feat/local-tool-recovery`, `feat/local-tool-planning`, `feat/local-qualification`, `feat/semantic-evaluation`, `feat/local-context`, `feat/local-readiness`, `feat/agent-runtimes`,
 and `feat/core-agency`.
 
 Committed checkpoints: `0351b75` (roadmap, lifecycle, and storage/result integrity),
@@ -55,7 +55,7 @@ qualification. Milestone completion requires its roadmap gates, not just code.
 | M1 correctness and interaction | In progress | Storage, delegation, controller/UI, MCP capability and explicit-endpoint HTTP cleanup changes are implemented. Durable task obligations and explicit review are visible through the TUI and headless inspection. Broader enforcement/redaction, provider lifecycles and fault qualification remain. |
 | M2 inference / agent contracts | In progress | Bounded inference, native tasks, Codex task binding, explicit execution kinds, nullable usage, core improvement records and recorded task-evidence checks implemented. Remaining adapters, richer artifact predicates and live capability qualification remain. |
 | M3 local core assistant | Complete for the measured CUDA profile | Qwen3-8B passes six full offline project journeys: twelve exact native file writes, changed-record answers after restart, real cancellation, normal memory, and visible task/context status. Four missing-assets/startup-exit recovery cases pass. Shipped profiles and a launcher reproduce the workflow. CPU-only operation, automatic fallback and broader daily-use qualification remain outside this gate. |
-| M4 bounded semantic agency | In progress | All three shadow functions now exist with explicit CLI/TUI access and evidence validation. The public 8B comparison failed context/progress gates; deterministic behavior remains. Bounded task-preserving fallback and session-tree local scheduling are implemented. Message-prompt pairing and earlier context/correction experiments use core improvement records. Held-out qualification, external-agent reconciliation, candidate generation, assessment candidate evaluation, activation and rollback remain. |
+| M4 bounded semantic agency | In progress | All three shadow functions now exist with explicit CLI/TUI access and evidence validation. The public 8B comparison failed context/progress gates; deterministic behavior remains. Bounded task-preserving fallback and session-tree local scheduling are implemented. Message-prompt pairing and earlier context/correction experiments use core improvement records. Supervised message-prompt proposal/evaluation/adoption/rollback is implemented. Held-out qualification, external-agent reconciliation, assessment candidate evaluation and broader adoption remain. |
 | M5 heterogeneous work / plugins | Pending | Supervision, plugin reconciliation, portable continuation, isolated improvement patches and rollback. |
 | M6 daily-use qualification | Pending | Measured UI, live adapter boundaries, offline and human dogfood gates. |
 
@@ -1187,3 +1187,85 @@ active target and a borrowing alias. **111 focused scheduling, local-resource,
 resource-TUI and fallback tests passed in 22.31s**; Ruff and whitespace checks
 passed. The earlier full suite, wheel and GPU reports remain evidence for
 `6d5366a`; they were not rerun for this scoped stop correction.
+
+## September 7 — M4 supervised message-prompt improvement
+
+[PR24](https://github.com/c-daly/harness/pull/24) merged at `032f0fc`; its reviewed
+head `cf4cf8a` passed Python 3.12/3.13 CI and automated review. Work continues
+from that merge on `feat/supervised-improvement`.
+
+**Added:** a complete supervised core loop for shadow message-prompt data.
+`/semantics classify TEXT` records observations in the current session;
+`/improvements` detects repeated invalid responses and exposes the selected
+version. Explicit proposal generation sees bounded failure metadata and incumbent
+instructions, with no tools or evaluation inputs. Operator-frozen experiments
+use the existing paired evaluator. Inspection shows exact prompt data, gates,
+versions and measurements before explicit adoption.
+
+**Selection and recovery:** immutable `PromptChange` events require the latest
+passing completed paired run, at least one measured improvement, exact versions
+and matching evaluator/provider configuration. Adoption/rollback occur only at
+an idle session boundary. Selection persists per alias within the session and
+uses evaluated limits; changed declarations suspend it. Rollback restores exact
+preceding prompt/configuration bytes without inference. Replay reconstructs
+facts without rerunning experiments. Controls retain shared permissions/budgets,
+editable drafts, interruption and new-work priority. These are core controls,
+not plugin expansions or model tools. Automatic policy stays empty.
+
+**Real local evidence:** the first offline smoke had a malformed proposal and an
+incomplete normal-memory project attempt. The diagnostic repeat completed both
+project tasks but both proposals omitted the required top-level fields. Explicit
+response-shape instructions fixed generation; all failed reports are retained.
+The final fixed-gate run completed both real project/proposal/evaluation journeys,
+with plugins absent and normal memory enabled. Proposals took 42.931/50.131 seconds.
+Both incumbents and candidates answered 4/4 public cases correctly, so both
+candidates failed the minimum-improvement gate and explicit adoption was refused.
+No gate was weakened. This proves the hold path, not quality improvement.
+A preceding final-source attempt failed both project journeys before generation;
+that failure is retained. The unchanged repeat was much slower than the earlier
+complete pass (2.395/2.356-second proposals), so runtime reliability remains open.
+
+The [operator guide](../../supervised-improvement.md) and
+[evidence handoff](../../handoffs/2026-09-07-supervised-improvement/README.md)
+record the workflow, retained failures and runtime bounds. The final report's
+core/driver hashes match this implementation. Controlled provider fixtures prove
+successful selection, exact rollback and replay separately from local quality.
+
+**Remaining:** M4 held-out semantic qualification, assessment candidate evaluation
+and explicit external-agent reconciliation/handoff. Broader automatic policies,
+isolated source edits and daily-use improvement evidence remain later work.
+Memory and agent-swarm remain plugins; the improvement lifecycle belongs to core.
+
+**Final repository validation:** **1,495 passed, seven skipped, six warnings in
+368.40s**, with `TERM=xterm-256color`; locked offline sync, Ruff, whitespace
+checks, sdist/wheel build and clean Python 3.13 wheel smoke (67 modules) passed.
+Wheel core bytes match the source. The initial `TERM=dumb` run had one math
+width failure reproduced from merged main; Rich forced 80 columns despite the
+test requesting 78. No math code, assertion or dependency changed. Both the
+initial failure and successful repeat are retained. The focused improvement/
+semantic suite passed all 59 tests, including provider-exception body redaction.
+
+## PR25 review — catalog upgrades suspend adopted prompts
+
+The review identified that the evaluator fingerprint included catalog data but
+omitted `catalog.py`, whose resolution logic selects the inference route and
+endpoint. The fingerprint now includes that implementation. A regression first
+reproduced the missing suspension, then verified resume with changed catalog
+source: the builtin prompt is selected, the old evaluation cannot authorize
+adoption, and rollback remains available without inference.
+
+PR25's Python 3.12 CI also exposed the context-cap status bar waiting for its
+one-second statistics timer. The status bar now renders at mount. A regression
+pauses periodic statistics updates and checks the actual terminal compositor,
+so the fix does not depend on a longer test sleep. Both new regressions failed
+before the fixes. The 69 focused improvement, semantic, catalog and context-TUI
+tests pass on Python 3.13, and Ruff and whitespace checks pass.
+
+The earlier full-suite, wheel and GPU reports describe `55c1367`, before these
+review corrections. They remain retained as evidence for that revision.
+
+**Python 3.12 validation:** 165 tests passed in 201.05s across the same focused
+suites plus the full main TUI suite, including its localhost MCP cases and the
+previously failing context-status journey. The Python 3.12 environment was
+installed from the existing lockfile separately from the project's Python 3.13
+environment. No dependency or lockfile changes were required.

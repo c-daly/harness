@@ -67,7 +67,8 @@ def evaluator_version(provider, config: EvaluatorConfig) -> str:
     config = EvaluatorConfig.model_validate(config.model_dump())
     source = Path(__file__).parent
     files = ("semantic_evaluation.py", "semantics.py", "semantic_assessment.py", "improvement.py", "inference.py",
-             "dispatcher.py", "provider_litellm.py")
+             "dispatcher.py", "provider_litellm.py", "prompt_improvement.py", "improvement_journal.py",
+             "resources.py", "scheduling.py", "catalog.py")
     catalog = getattr(provider, "catalog", None)
     payload = {
         "source": {name: hashlib.sha256((source / name).read_bytes()).hexdigest() for name in files},

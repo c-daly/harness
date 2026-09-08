@@ -12,7 +12,7 @@ from typing import Annotated, Literal, Union
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from harness.blobs import BlobRef
-from harness.types import SessionId
+from harness.types import ModelId, SessionId
 
 Digest = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 Identifier = Annotated[str, Field(min_length=1, max_length=128)]
@@ -93,8 +93,22 @@ class ExperimentResult(_Record):
     completion: Literal["completed", "cancelled", "timed_out", "failed", "aborted"] = "completed"
 
 
+class PromptChange(_Record):
+    """An operator-selected shadow prompt. This never changes task controls."""
+    kind: Literal["prompt_change"] = "prompt_change"
+    policy: Literal["supervised-message-prompt-v1"] = "supervised-message-prompt-v1"
+    model: ModelId
+    action: Literal["adopt", "rollback"]
+    previous_id: Identifier | None = None
+    previous: BlobRef
+    prompt: BlobRef
+    result_id: Identifier | None = None
+    configuration: BlobRef | None = None
+    evaluator_version: Digest | None = None
+
+
 ImprovementRecord = Annotated[
-    Union[Evidence, Candidate, EvaluationPlan, ExperimentResult], Field(discriminator="kind"),
+    Union[Evidence, Candidate, EvaluationPlan, ExperimentResult, PromptChange], Field(discriminator="kind"),
 ]
 
 
@@ -163,12 +177,15 @@ class ImprovementState:
     plans: dict[str, EvaluationPlan] = field(default_factory=dict)
     results: dict[str, ExperimentResult] = field(default_factory=dict)
     runs: dict[str, str] = field(default_factory=dict)
+    prompt_changes: dict[str, PromptChange] = field(default_factory=dict)
+    active_prompts: dict[ModelId, str] = field(default_factory=dict)
 
     def apply(self, record: ImprovementRecord) -> None:
         # Snapshot mutable nested data and validate constructed/copied instances.
         from pydantic import TypeAdapter
         record = TypeAdapter(ImprovementRecord).validate_python(record.model_dump())
-        if any(record.id in values for values in (self.evidence, self.candidates, self.plans, self.results)):
+        if any(record.id in values for values in (
+                self.evidence, self.candidates, self.plans, self.results, self.prompt_changes)):
             raise ValueError("improvement record IDs are immutable and unique")
         if isinstance(record, Evidence):
             self.evidence[record.id] = record
@@ -188,3 +205,31 @@ class ImprovementState:
                 raise ValueError("experiment requires a previously recorded evaluation plan")
             verdict(plan, record)
             self.results[record.id] = record
+        elif isinstance(record, PromptChange):
+            previous = self.prompt_changes.get(self.active_prompts.get(record.model))
+            if (record.previous_id != (previous.id if previous else None)
+                    or previous is not None and record.previous != previous.prompt):
+                raise ValueError("prompt change does not follow the current selected version")
+            if record.action == "adopt":
+                result = self.results.get(record.result_id)
+                if result is None or result.run_id is None or record.configuration is None:
+                    raise ValueError("adoption requires a recorded evaluation run and configuration")
+                plan = self.plans[result.plan_id]
+                candidate = self.candidates[plan.candidate_id]
+                latest = [r for r in self.results.values() if self.plans[r.plan_id].candidate_id == candidate.id][-1]
+                if (candidate.target != "prompt" or plan.min_improved_cases < 1
+                        or result != latest or verdict(plan, result) != "passed"
+                        or record.evaluator_version != result.evaluator_version
+                        or record.previous.sha256 != result.incumbent_version
+                        or record.prompt != candidate.artifact):
+                    raise ValueError("adoption requires the latest passing result for these exact prompt versions")
+            else:
+                if previous is None or record.result_id is not None:
+                    raise ValueError("rollback requires a prior prompt change")
+                restored = self.prompt_changes.get(previous.previous_id)
+                if (record.prompt != previous.previous
+                        or record.configuration != (restored.configuration if restored else None)
+                        or record.evaluator_version != (restored.evaluator_version if restored else None)):
+                    raise ValueError("rollback must restore the exact preceding prompt and configuration")
+            self.prompt_changes[record.id] = record
+            self.active_prompts[record.model] = record.id

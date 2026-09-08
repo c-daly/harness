@@ -1,5 +1,10 @@
 # Semantic observations and prompt evaluation
 
+[Supervised improvement](supervised-improvement.md) connects the message evaluator
+to failure discovery, candidate generation and explicit shadow-prompt adoption/
+rollback. `/semantics classify TEXT` records observations in the current terminal
+session using its compatible selected prompt. All functions remain advisory.
+
 Core supplies explicit message interpretation, scoped context selection, recorded
 progress assessment, and a paired message-prompt evaluator. They use the existing inference dispatcher, permission engine, shared
 call budget, local-readiness service, session log, and verified artifact store.
@@ -224,7 +229,9 @@ previous completed semantics through additive defaults.
 
 Passing still goes through the separate adoption policy, whose default requires
 review for every target. The runner has no activation or file-editing operation.
-This implementation qualifies the evaluation/control plumbing with scripted
-providers, not real local-model quality or latency. Context selection, progress
-assessment, automatic evidence-driven candidate proposals, scheduling, fallback,
-activation, isolated source experiments, and rollback remain roadmap work.
+Scripted providers qualify the evaluator's control paths. Subsequent local
+reports distinguish measured runtime behavior from model-quality qualification.
+Context/progress shadow functions, local scheduling and bounded fallback now
+exist, along with the separate supervised message-prompt adoption/rollback
+service. Automatic evidence-driven proposals, assessment candidate evaluation,
+held-out semantic qualification and isolated source experiments remain open.

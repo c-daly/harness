@@ -808,6 +808,7 @@ class HarnessApp(App[None]):
 
     async def on_mount(self) -> None:
         self.query_one("#prompt", HistoryInput).focus()
+        self._refresh_statusbar()
         self.run_worker(self._session_driver(), group="driver", exit_on_error=False)
 
     async def _session_driver(self) -> None:
@@ -1205,7 +1206,7 @@ class HarnessApp(App[None]):
         return ctx_segment, cost_segment
 
     def _refresh_statusbar(self, rollup: "dict | None" = None) -> None:
-        """Recompute the persistent #statusbar. Called at turn end (reusing
+        """Recompute the persistent #statusbar. Called at mount, turn end (reusing
         the rollup refresh_stats already computed -- no second telemetry
         query), from /model (no turn required), after a kernel rebuild
         (/clear, /resume), and after /compact (history shrinks, ctx% moves)."""
@@ -1326,7 +1327,7 @@ class HarnessApp(App[None]):
             return
         command = parse_slash_command(text)
         if command is not None:
-            if command.name in self._plugin_commands and command.name not in {"task", "status"}:
+            if command.name in self._plugin_commands and command.name not in {"task", "status", "semantics", "improvements"}:
                 expanded = self._plugin_commands[command.name].body.replace("$ARGUMENTS", command.arg)
                 if not self._enqueue_prompt(expanded, expand_mentions=False):
                     return
@@ -1681,26 +1682,51 @@ class HarnessApp(App[None]):
                 self.say("", line)
         elif command.name == "semantics":
             from harness.semantics import read_semantics, render_semantics
-            if command.arg.strip() == "progress":
+            argument = command.arg.strip()
+            if argument == "progress" or argument.startswith("classify "):
                 if self._refuse_if_busy():
                     return
                 if self._semantic_worker is not None and not self._semantic_worker.is_finished:
-                    self.say("", "Progress assessment already running; Esc cancels it.")
+                    self.say("", "An assessment or improvement is already running; Esc cancels it.")
                     return
-                self._semantic_worker = self.run_worker(self._semantic_progress(),
+                action = self._semantic_progress() if argument == "progress" else self._semantic_classify(argument[9:].strip())
+                self._semantic_worker = self.run_worker(action,
                     group="semantics", exit_on_error=False)
                 return
             if command.arg.strip():
-                self.say("", "Usage: /semantics [progress]")
+                self.say("", "Usage: /semantics [progress | classify TEXT]")
                 return
             observations = read_semantics(self.kernel.session.base, self.kernel.session.id)
             for line in render_semantics(observations).splitlines():
                 self.say("", line)
         elif command.name == "improvements":
-            from harness.improvement_journal import read_improvements, render_improvements
+            from harness.improvement_journal import inspect_improvement, read_improvements, render_improvements
+            if command.arg.split()[:1] == ["show"]:
+                words = command.arg.split()
+                try:
+                    if len(words) != 2:
+                        raise ValueError("use /improvements show RECORD_ID")
+                    state = read_improvements(self.kernel.session.base, self.kernel.session.id)
+                    for line in inspect_improvement(state, self.kernel.session.blobs, words[1]).splitlines():
+                        self.say("", line)
+                except Exception as exc:
+                    self.say("! ", f"Improvement inspection failed: {exc}")
+                return
+            if command.arg.strip():
+                if self._refuse_if_busy():
+                    return
+                if self._semantic_worker is not None and not self._semantic_worker.is_finished:
+                    self.say("", "An assessment or improvement is already running; Esc cancels it.")
+                    return
+                self._semantic_worker = self.run_worker(self._improvement_action(command.arg),
+                    group="semantics", exit_on_error=False)
+                return
             state = read_improvements(self.kernel.session.base, self.kernel.session.id)
             for line in render_improvements(state).splitlines():
                 self.say("", line)
+            for line in self.kernel.improvement_service.status(self.kernel.loop.model).splitlines():
+                self.say("", line)
+            self.say("", "Controls: /improvements propose | show ID | evaluate CANDIDATE EXPERIMENT.json | adopt RESULT | rollback")
         elif command.name == "resources":
             if self._rebuild_in_progress:
                 self.say("! ", "session rebuild in progress; try again in a moment")
@@ -1874,6 +1900,32 @@ class HarnessApp(App[None]):
             except (WorkerCancelled, WorkerFailed):
                 pass
         self._semantic_worker = None
+
+    async def _improvement_action(self, argument) -> None:
+        import shlex
+        from harness.improvement_cli import perform, refusal_message
+        self.say("", "Running supervised improvement; Esc cancels, new work takes priority.")
+        try:
+            for line in (await perform(self.kernel, shlex.split(argument))).splitlines():
+                self.say("", line)
+        except asyncio.CancelledError:
+            self.say("", "Improvement interrupted; inspect /improvements for recorded work.")
+            raise
+        except Exception as exc:
+            self.say("! ", f"Improvement refused: {refusal_message(exc)}")
+
+    async def _semantic_classify(self, text) -> None:
+        from harness.semantics import render_semantics
+        self.say("", "Classifying supplied text (shadow mode); Esc cancels, new work takes priority.")
+        try:
+            observation = await self.kernel.semantics.interpret(text, model=self.kernel.loop.model)
+            for line in render_semantics([observation]).splitlines():
+                self.say("", line)
+        except asyncio.CancelledError:
+            self.say("", "Classification cancelled.")
+            raise
+        except Exception as exc:
+            self.say("! ", f"Classification failed ({type(exc).__name__}).")
 
     async def _semantic_progress(self) -> None:
         from harness.semantics import render_semantics
