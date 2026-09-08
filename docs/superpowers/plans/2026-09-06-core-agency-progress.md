@@ -1509,3 +1509,16 @@ post-rebase client invocation lacked localhost socket permission and produced
 12 fixture-bind errors; rerunning with that permission passed without source
 changes. Ruff and whitespace checks pass. The full repository suite is left to
 CI for this scoped error-message/documentation change.
+
+## PR29 review — sanitize route-only local endpoint failures
+
+The review found that the startup-profile validator rejected local URLs containing
+credentials or query/fragment data, causing the diagnostic helper to fall back to
+the raw SDK body. Loopback detection now operates independently and reconstructs
+only the numeric server origin. Credentials, paths, queries, fragments and IPv6
+scope identifiers are omitted; invalid ports/schemes receive local guidance, and
+unparseable endpoints receive a generic sanitized connection diagnostic.
+
+The new regression cases reproduced the leak before the fix. **167 affected
+provider, catalog, inference/client, local-resource and fallback tests pass in
+5.35 seconds** after the fix. Ruff and whitespace checks pass.

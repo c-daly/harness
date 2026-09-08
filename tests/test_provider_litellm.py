@@ -171,6 +171,15 @@ def test_exception_cause_cycle_is_bounded():
     ("http://localhost:8080/v1", "http://127.0.0.1:8080"),
     ("http://127.0.0.1:8080/private-path", "http://127.0.0.1:8080"),
     ("http://[::1]:8080/v1", "http://[::1]:8080"),
+    ("http://private-user:private-password@localhost:8080/private-path?private-query#private-fragment",
+     "http://127.0.0.1:8080"),
+    ("https://127.0.0.2:8443/v1?private-query", "https://127.0.0.2:8443"),
+    ("http://private-user:private-password@[::1]:8080/v1#private-fragment", "http://[::1]:8080"),
+    ("http://localhost.:8080/v1", "http://127.0.0.1:8080"),
+    ("http://localhost:private-port/v1", "the configured local endpoint"),
+    ("http://127.0.0.1:99999/v1", "the configured local endpoint"),
+    ("ftp://127.0.0.1/private-path", "the configured local endpoint"),
+    ("http://[::1%25private-scope]:8080/v1", "http://[::1]:8080"),
 ])
 @pytest.mark.parametrize("failure", ["connection", "wrapped", "timeout"])
 def test_local_transport_error_identifies_server_without_sdk_body(endpoint, origin, failure):
@@ -195,7 +204,10 @@ def test_local_transport_error_identifies_server_without_sdk_body(endpoint, orig
     assert "private" not in str(error)
 
 
-@pytest.mark.parametrize("endpoint", [None, "https://api.example.com/v1", "http://localhost.example.com/v1"])
+@pytest.mark.parametrize("endpoint", [
+    None, "https://api.example.com/v1", "http://localhost.example.com/v1",
+    "http://localhost:password@api.example.com/v1", "http://192.168.1.2:8080/v1",
+])
 def test_remote_transport_error_is_not_described_as_local(endpoint):
     import litellm
     from harness.errors import NetworkFailed
@@ -206,7 +218,11 @@ def test_remote_transport_error_is_not_described_as_local(endpoint):
     assert str(error) == str(exc)
 
 
-async def test_catalog_inference_passes_endpoint_to_error_description(monkeypatch):
+@pytest.mark.parametrize("endpoint", [
+    "http://localhost:8080/v1",
+    "http://private-user:private-password@localhost:8080/v1?private-query#private-fragment",
+])
+async def test_catalog_inference_passes_endpoint_to_error_description(monkeypatch, endpoint):
     import litellm
     from harness.catalog import Catalog
     from harness.errors import NetworkFailed
@@ -219,8 +235,21 @@ async def test_catalog_inference_passes_endpoint_to_error_description(monkeypatc
 
     monkeypatch.setattr(litellm, "acompletion", unavailable)
     provider = CatalogProvider(Catalog({"local": {
-        "route": "openai/fixture", "api_base": "http://localhost:8080/v1",
+        "route": "openai/fixture", "api_base": endpoint,
     }}))
-    with pytest.raises(NetworkFailed, match="Local inference connection failed"):
+    with pytest.raises(NetworkFailed, match="Local inference connection failed") as caught:
         await infer(provider, InferenceRequest(model=ModelId("local"),
                     messages=(Message.user_text("hello"),), purpose="conversation"))
+    assert "OpenAI" not in str(caught.value)
+    assert "private" not in str(caught.value)
+
+
+def test_malformed_endpoint_diagnostic_omits_upstream_body():
+    import litellm
+    from harness.errors import NetworkFailed
+
+    exc = litellm.APIConnectionError("OpenAIException: private request data", "openai", "fixture")
+    error = map_exception(exc, api_base="http://[::1/private-path?private-query")
+    assert isinstance(error, NetworkFailed) and error.retryable
+    assert "configured endpoint" in str(error)
+    assert "OpenAI" not in str(error) and "private" not in str(error)

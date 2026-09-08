@@ -4,6 +4,7 @@ Everything provider-specific is contained here. The kernel never imports
 litellm except through catalog (cost map) and this module.
 """
 
+import ipaddress
 import json
 import os
 import time
@@ -68,15 +69,38 @@ def _quiet(litellm_module) -> None:
 
 
 def _network_failure(exc: Exception, api_base: str | None) -> NetworkFailed:
-    from harness.resources import local_endpoint
-
     try:
-        endpoint = urlsplit(local_endpoint(api_base))
+        endpoint = urlsplit(api_base or "")
+        host = endpoint.hostname
+    except ValueError:
+        return NetworkFailed(
+            "Inference connection failed or timed out. Check the configured endpoint."
+        )
+    # Route-only aliases need not satisfy the stricter owned-runtime validator.
+    # Identify loopback independently so credentials/query strings cannot send
+    # a local failure back to the raw SDK diagnostic.
+    try:
+        address = ipaddress.ip_address("127.0.0.1" if host in ("localhost", "localhost.") else host)
     except ValueError:
         return NetworkFailed(str(exc))
+    if not address.is_loopback:
+        return NetworkFailed(str(exc))
     # Describe the configured local transport, not the SDK's OpenAI branding.
-    # Omit paths and upstream error bodies, which may contain request data.
-    origin = f"{endpoint.scheme}://{endpoint.netloc}"
+    # Reconstruct only a numeric origin; omit credentials, paths, query/fragment
+    # data, IPv6 scope identifiers, and upstream bodies. Invalid ports/schemes
+    # still get local guidance without echoing the malformed authority.
+    origin = "the configured local endpoint"
+    try:
+        port = endpoint.port
+    except ValueError:
+        pass
+    else:
+        if endpoint.scheme in ("http", "https"):
+            host = str(address).split("%", 1)[0]
+            authority = f"[{host}]" if address.version == 6 else host
+            if port is not None:
+                authority += f":{port}"
+            origin = f"{endpoint.scheme}://{authority}"
     return NetworkFailed(
         f"Local inference connection failed or timed out at {origin}. "
         "Check that the local model server is running and responsive. "
