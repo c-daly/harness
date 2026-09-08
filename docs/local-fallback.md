@@ -77,6 +77,8 @@ An accepted conversation response, non-context tool proposal or child-agent
 execution blocks automatic switching, including activity during a failing
 first inference call. Failures inside external agents are held for explicit
 reconciliation because their native side effects are outside this boundary.
+Use the core [handoff controls](external-handoff.md) to inspect effects and
+explicitly continue remaining work with a native inference model.
 Policy denial, budget exhaustion, malformed output, context/input/output
 limits, cancellation and deadlines do not trigger fallback. If every candidate
 is unsuitable or fails, the existing task failure/queue pause behavior applies
@@ -96,8 +98,9 @@ failures; this is not a live cloud-provider outage test.
 
 Core now provides [session-tree local scheduling](local-scheduling.md) across
 aliases, with visible queues and bounded background work. M4 remains open:
-external-agent reconciliation and handoff, held-out semantic promotion, and
-the supervised self-improvement activation/rollback cycle remain open. This
+broader external-agent handoff qualification, held-out semantic promotion, and
+assessment adoption remain open. Bounded [external handoff](external-handoff.md)
+and [supervised message-prompt adoption/rollback](supervised-improvement.md) are implemented. This
 fallback gate does not qualify CPU-only execution, every local model, or
 arbitrary agent tasks.
 

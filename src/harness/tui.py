@@ -1296,6 +1296,8 @@ class HarnessApp(App[None]):
             case RetryAttempted():
                 self._clear_live()
                 self.say("! ", "retrying\u2026")
+            case CustomEvent(namespace="handoff", name="settling_file_call"):
+                self.say("", "Stopping handoff: waiting for the started file operation to settle.")
             case _:
                 pass
 
@@ -1327,7 +1329,7 @@ class HarnessApp(App[None]):
             return
         command = parse_slash_command(text)
         if command is not None:
-            if command.name in self._plugin_commands and command.name not in {"task", "status", "semantics", "improvements"}:
+            if command.name in self._plugin_commands and command.name not in {"task", "status", "semantics", "improvements", "handoff"}:
                 expanded = self._plugin_commands[command.name].body.replace("$ARGUMENTS", command.arg)
                 if not self._enqueue_prompt(expanded, expand_mentions=False):
                     return
@@ -1699,6 +1701,23 @@ class HarnessApp(App[None]):
             observations = read_semantics(self.kernel.session.base, self.kernel.session.id)
             for line in render_semantics(observations).splitlines():
                 self.say("", line)
+        elif command.name == "handoff":
+            import shlex
+            from harness.handoff import render_handoff
+            try:
+                words = shlex.split(command.arg)
+                if words in ([], ["inspect"]) or len(words) == 2 and words[0] == "show":
+                    for line in render_handoff(self.kernel.session, words[1] if len(words) == 2 else None).splitlines():
+                        self.say("", line)
+                    return
+                if self._refuse_if_busy():
+                    return
+                if self._semantic_worker is not None and not self._semantic_worker.is_finished:
+                    self.say("", "An assessment, improvement or handoff is already running; Esc cancels it.")
+                    return
+                self._semantic_worker = self.run_worker(self._handoff_action(words), group="semantics", exit_on_error=False)
+            except Exception as exc:
+                self.say("! ", f"Handoff inspection refused: {exc}")
         elif command.name == "improvements":
             from harness.improvement_journal import inspect_improvement, read_improvements, render_improvements
             if command.arg.split()[:1] == ["show"]:
@@ -1913,6 +1932,27 @@ class HarnessApp(App[None]):
             raise
         except Exception as exc:
             self.say("! ", f"Improvement refused: {refusal_message(exc)}")
+
+    async def _handoff_action(self, words) -> None:
+        from harness.handoff_cli import perform
+        from harness.improvement_cli import refusal_message
+        self.say("", "Running handoff control; Esc cancels, new work takes priority.")
+        try:
+            result = await perform(self.kernel, words, on_progress=self._on_agent_progress)
+            self._clear_live()
+            for line in result.splitlines():
+                self.say("", line)
+        except asyncio.CancelledError:
+            if self._stream_buffer:
+                self.say("~ ", self._stream_buffer)
+            self._clear_live()
+            self.say("", "Handoff interrupted; reconcile its new effects before another attempt.")
+            raise
+        except Exception as exc:
+            self._clear_live()
+            self.say("! ", f"Handoff refused: {refusal_message(exc)}")
+        finally:
+            self._refresh_tasks()
 
     async def _semantic_classify(self, text) -> None:
         from harness.semantics import render_semantics

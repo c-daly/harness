@@ -75,6 +75,11 @@ class Kernel:
         from harness.prompt_improvement import PromptImprovementService
         return PromptImprovementService(self)
 
+    @cached_property
+    def handoffs(self):
+        from harness.handoff import HandoffService
+        return HandoffService(self)
+
     def set_provider(self, provider: ModelProvider) -> None:
         """Single point for retargeting the model provider mid-session. The
         loop, the subagent runner, and this kernel share one provider instance
@@ -961,6 +966,10 @@ def _resources_subcommand(argv: list[str]) -> None:
 
 def main() -> None:
     argv = sys.argv[1:]
+    if argv and argv[0] == "handoff":
+        from harness.handoff_cli import main as handoff_main
+        handoff_main(argv[1:])
+        return
     if argv and argv[0] == "improve":
         from harness.improvement_cli import main as improve_main
         improve_main(argv[1:])

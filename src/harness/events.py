@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from harness.blobs import BlobRef
 from harness.agent import AgentResult
+from harness.handoff import HandoffRecord
 from harness.resources import ResourceObservation
 from harness.context import ContextPolicy
 from harness.improvement import ImprovementRecord
@@ -314,12 +315,19 @@ class AgentRunStarted(_Event):
     acceptance_criteria: tuple[str, ...] = ()
     limits: dict[str, Any] = Field(default_factory=dict)
     capabilities: dict[str, Any] = Field(default_factory=dict)
+    handoff_id: str | None = None
 
 
 class AgentRunFinished(_Event):
     type: Literal["agent_run_finished"] = "agent_run_finished"
     result: AgentResult
     purpose: Literal["task", "conversation"] = "task"
+
+
+class TaskHandoffRecorded(_Event):
+    type: Literal["task_handoff_recorded"] = "task_handoff_recorded"
+    is_intent: ClassVar[bool] = True
+    record: HandoffRecord
 
 
 # --- transcript transforms ---
@@ -498,6 +506,7 @@ Event = Annotated[
         SubagentFinished,
         AgentRunStarted,
         AgentRunFinished,
+        TaskHandoffRecorded,
         ResourceObserved,
         LocalRequestObserved,
         LocalRuntimeRequested,

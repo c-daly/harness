@@ -103,6 +103,8 @@ class TrackedTask:
     evidence: dict[str, RequirementEvidence] = field(default_factory=dict)
     confirmations: dict[str, tuple[int, str]] = field(default_factory=dict)
     acceptance: tuple[int, str] | None = None
+    handoff_id: str | None = None
+    external_execution: bool = False
 
     @property
     def criteria(self) -> tuple[str, ...]:
@@ -136,11 +138,12 @@ class TaskState:
     # Includes same-session external-runtime descendants, never unrelated runs.
     run_owners: dict[str, str] = field(default_factory=dict)
     open_runs: set[str] = field(default_factory=set)
+    model_owners: dict[str, str] = field(default_factory=dict)
 
     def apply(self, env) -> None:
         from harness.events import (
             AgentRunFinished, AgentRunStarted, TaskAccepted, TaskChecked, TaskCreated,
-            TaskRequirementAdded, TaskRequirementConfirmed, TaskSelected,
+            TaskRequirementAdded, TaskRequirementConfirmed, TaskSelected, ModelCallProposed, ModelCallStarted,
         )
         event = env.event
         if isinstance(event, AgentRunStarted):
@@ -162,9 +165,19 @@ class TaskState:
                 task.run_id, task.run_started_seq = event.run_id, env.seq
                 task.execution = "running"
                 task.execution_reason = ""
+                task.handoff_id = event.handoff_id
+                task.external_execution = bool(event.handoff_id)
             if owner is not None:
                 self.run_owners[event.run_id] = owner
                 self.items[owner].open_runs.add(event.run_id)
+        elif isinstance(event, ModelCallProposed):
+            owner = self.run_owners.get(event.agent_run_id)
+            if owner:
+                self.model_owners[event.call_id] = owner
+        elif isinstance(event, ModelCallStarted) and event.execution_kind == "agent":
+            owner = self.model_owners.get(event.call_id)
+            if owner:
+                self.items[owner].external_execution = True
         elif isinstance(event, AgentRunFinished):
             owner = self.run_owners.get(event.result.run_id)
             if owner is not None:
@@ -287,12 +300,22 @@ class TaskService:
                          acceptance_criteria=task.criteria)
 
     def validate_run(self, task):
+        if task.handoff_id is not None:
+            from harness.handoff import current_handoff
+            guard = current_handoff.get()
+            if guard is None or task.handoff_id != guard.record.id or task.id != guard.record.task_id:
+                raise ValueError("handoff tasks require the recorded continuation service")
         tracked = self.state().items.get(task.id)
         if tracked is not None:
             if tracked.open_runs:
                 raise ValueError("this task already has a running attempt")
             if task.acceptance_criteria != tracked.criteria:
                 raise ValueError("task requirements changed; prepare the task again before running")
+            if tracked.external_execution and tracked.execution in {"failed", "cancelled", "aborted", "incomplete"}:
+                from harness.handoff import current_handoff
+                guard = current_handoff.get()
+                if guard is None or task.handoff_id != guard.record.id or task.id != guard.record.task_id:
+                    raise ValueError("reconcile external effects before retrying this task; use /handoff inspect")
 
     def check(self) -> TrackedTask:
         from harness.events import TaskChecked
@@ -344,7 +367,7 @@ def _review_note(note):
 def _check_requirement(requirement, task, events, blobs):
     from harness.events import (
         AgentRunFinished, AgentRunStarted, DispatchResolved, ToolCallCompleted, ToolCallProposed,
-        ToolCallAborted, ToolCallCancelled,
+        ToolCallAborted, ToolCallCancelled, HookDecided,
     )
     details = {"requirement_id": requirement.id}
 
@@ -371,6 +394,7 @@ def _check_requirement(requirement, task, events, blobs):
         # its same-session descendants. Unrelated and previous attempts cannot help.
         runs, proposed, resolved, terminal, ended = set(), {}, {}, {}, {}
         proposal_counts, resolution_counts, terminal_counts = Counter(), Counter(), Counter()
+        handoff_denied = set()
         for env in events:
             event = env.event
             if isinstance(event, ToolCallProposed):
@@ -389,20 +413,30 @@ def _check_requirement(requirement, task, events, blobs):
             elif isinstance(event, (ToolCallCompleted, ToolCallCancelled, ToolCallAborted)):
                 terminal[event.call_id] = env
                 terminal_counts[event.call_id] += 1
+            elif isinstance(event, HookDecided) and event.hook == "core-handoff" and event.decision.get("kind") == "block":
+                handoff_denied.add(event.call_id)
         if any(proposal_counts[call_id] != 1 for call_id in proposed):
             return result("unverified", "ambiguous reused call ID in this attempt")
         matches = []
         for call_id, proposal in proposed.items():
+            if task.handoff_id and call_id in handoff_denied and call_id not in resolved:
+                continue  # The hard handoff guard prevented this duplicate from executing.
             effective = resolved.get(call_id, proposal).event
             if (str(effective.tool) == requirement.check.tool and
                     canonical_args(effective.args) == canonical_args(requirement.check.args)):
                 matches.append((proposal.seq, call_id))
         if not matches:
+            inherited = _inherited_check(requirement, task, events, blobs)
+            if inherited is not None:
+                return inherited
             return result("unverified", "no matching tool call in this attempt")
         _, call_id = max(matches)
         source = terminal.get(call_id)
         details.update(call_id=str(call_id), source_seq=source.seq if source else proposed[call_id].seq)
         if call_id not in resolved:
+            inherited = _inherited_check(requirement, task, events, blobs)
+            if inherited is not None:
+                return inherited
             return result("unverified", "tool was not dispatched")
         if resolution_counts[call_id] != 1 or terminal_counts[call_id] > 1:
             return result("unverified", "ambiguous tool dispatch or result")
@@ -438,6 +472,33 @@ def _check_requirement(requirement, task, events, blobs):
                   "recorded bytes match" if matched else "recorded bytes differ", actual_sha256=actual)
 
 
+def _inherited_check(requirement, task, events, blobs):
+    """Only an explicit handoff may retain earlier recorded tool evidence."""
+    from harness.events import TaskHandoffRecorded
+    from harness.handoff import HandoffSnapshot
+    if task.handoff_id is None:
+        return None
+    records = [e for e in events if isinstance(e.event, TaskHandoffRecorded)
+               and e.event.record.id == task.handoff_id and e.seq < task.run_started_seq]
+    if len(records) != 1 or records[0].event.record.snapshot.size > MAX_EVIDENCE_BYTES:
+        return None
+    record = records[0].event.record
+    try:
+        checkpoint = HandoffSnapshot.model_validate_json(blobs.get(record.snapshot))
+    except (ValueError, MissingBlobError, BlobIntegrityError, OSError):
+        return None
+    if (checkpoint.task_id != task.definition.id or checkpoint.run_id != record.source_run_id
+            or checkpoint.basis_seq != record.basis_seq or checkpoint.basis_seq >= records[0].seq):
+        return None
+    previous_events = [e for e in events if e.seq <= checkpoint.basis_seq]
+    previous = project_tasks(previous_events).items.get(task.definition.id)
+    if (previous is None or previous.run_id != checkpoint.run_id
+            or previous.requirements.get(requirement.id) != requirement):
+        return None
+    evidence = _check_requirement(requirement, previous, previous_events, blobs)
+    return evidence if evidence.status == "passed" else None
+
+
 def task_summary(task: TrackedTask) -> str:
     state = "accepted by user" if task.accepted else (
         f"{len(task.unresolved)}/{len(task.requirements)} unresolved" if task.requirements else
@@ -464,4 +525,8 @@ def render_task(task: TrackedTask) -> str:
     if task.accepted:
         lines.append(f"User acceptance at event {task.acceptance[0]}: {task.acceptance[1]}")
     lines.append("Evidence applies to this recorded attempt.")
+    if task.handoff_id:
+        lines.append(f"Handoff: {task.handoff_id}; earlier tool evidence retains its original event/artifact.")
+    if task.external_execution and task.execution in {"failed", "cancelled", "aborted", "incomplete"}:
+        lines.append("Reconciliation required before another attempt: /handoff inspect")
     return "\n".join(lines)

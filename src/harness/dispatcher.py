@@ -94,7 +94,7 @@ class Dispatcher:
         self.scope = scope or ExecutionScope(session, registry)
         self.terminal_tools: dict = {}
 
-    async def _run_chain(self, action) -> tuple[object | None, str | None]:
+    async def _run_chain(self, action, *, purpose=None) -> tuple[object | None, str | None]:
         """Run hooks + Ask resolution. Returns (effective_action, denial_reason)."""
         outcome = await self.hooks.run_dispatch(action)
         for name, decision in outcome.decisions:
@@ -105,6 +105,21 @@ class Dispatcher:
             )
         if outcome.blocked is not None:
             return None, f"blocked by policy: {outcome.blocked.reason}"
+        from dataclasses import replace
+        from harness.handoff import current_handoff
+        guard = current_handoff.get()
+        if guard is not None:
+            from harness.hooks import Ask, Block
+            try:
+                decision = guard.decision(outcome.effective, purpose=purpose)
+            except Exception as exc:
+                decision = Block(reason=f"handoff scope check failed ({type(exc).__name__})")
+            self.session.append(HookDecided(call_id=action.call_id, hook="core-handoff",
+                                            decision=decision_to_payload(decision)))
+            if isinstance(decision, Block):
+                return None, decision.reason
+            if isinstance(decision, Ask) and outcome.ask is None:
+                outcome = replace(outcome, ask=decision)
         if outcome.ask is not None:
             self.session.append(
                 PermissionRequested(call_id=action.call_id, reason=outcome.ask.reason)
@@ -157,7 +172,7 @@ class Dispatcher:
                     call_id=call.call_id, result_text=result.text, is_error=True,
                 ))
             else:
-                result = await self._dispatch_tool_body(call)
+                result = await self._dispatch_tool_body(call, purpose=lineage.get("purpose"))
         except asyncio.CancelledError:
             text = "(call cancelled; side effects may have occurred)"
             self.session.append(ToolCallCancelled(call_id=call.call_id, result_text=text))
@@ -171,8 +186,8 @@ class Dispatcher:
         finally:
             current_scope.reset(scope_token)
 
-    async def _dispatch_tool_body(self, call: ProposedToolCall) -> ToolOutcome:
-        effective, denial = await self._run_chain(call)
+    async def _dispatch_tool_body(self, call: ProposedToolCall, *, purpose=None) -> ToolOutcome:
+        effective, denial = await self._run_chain(call, purpose=purpose)
         if denial is not None:
             self.session.append(
                 ToolCallCompleted(call_id=call.call_id, result_text=denial, is_error=True)
@@ -185,6 +200,17 @@ class Dispatcher:
                 ToolCallCompleted(call_id=call.call_id, result_text=denial, is_error=True)
             )
             return ToolOutcome(text=denial, blob=None, is_error=True)
+        from harness.handoff import current_handoff
+        guard = current_handoff.get()
+        if guard is not None:
+            try:
+                guard.reserve(effective, purpose=purpose)
+            except ValueError as exc:
+                denial = str(exc)
+                self.session.append(HookDecided(call_id=call.call_id, hook="core-handoff",
+                                                decision={"kind": "block", "reason": denial}))
+                self.session.append(ToolCallCompleted(call_id=call.call_id, result_text=denial, is_error=True))
+                return ToolOutcome(text=denial, blob=None, is_error=True)
         resolved = DispatchResolved(
             call_id=call.call_id, kind="tool", tool=effective.tool, args=deepcopy(dict(effective.args))
         )
@@ -195,7 +221,8 @@ class Dispatcher:
             try:
                 tool = self.registry.get(effective.tool)
                 validate_arguments(tool.spec, dict(effective.args))
-                raw = await tool(dict(effective.args))
+                raw = (await guard.execute_tool(tool, dict(effective.args)) if guard is not None
+                       else await tool(dict(effective.args)))
             finally:
                 reset_current_call_id(token)
             is_error = False
@@ -350,6 +377,13 @@ class Dispatcher:
             if exact_model and effective_model != model:
                 raise ModelDispatchBlocked("routing changed the required inference model")
             execution_kind = kind_for(effective_model)
+            from harness.handoff import current_handoff
+            guard = current_handoff.get()
+            if guard is not None:
+                guard.check_scope()  # Approval can yield; recheck configuration before inference.
+            if guard is not None and (provider is not guard.provider or execution_kind != "inference"
+                                      or effective_model != guard.spec.model):
+                raise ModelDispatchBlocked("handoff requires its pinned inference destination")
             if execution_kind == "agent" and (request.temperature is not None or request.response_schema is not None):
                 raise ProviderError("sampling and structured response settings require an inference model")
             if execution_kind == "agent" and request.parallel_tool_calls is False:

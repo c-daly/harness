@@ -141,7 +141,11 @@ assert state.unresolved == ("review",)
 ```
 
 The execution boundary rejects a tracked task with mismatched criteria or an
-already-running attempt. Untracked `AgentTask` callers keep their existing
+already-running attempt. Interrupted tracked external executions additionally
+require [explicit reconciliation and handoff](external-handoff.md) before retry.
+Only that recorded continuation can retain an earlier attempt's successful
+tool-result evidence, with its original event/artifact; ordinary retries keep
+the existing freshness rules. Untracked `AgentTask` callers keep their existing
 semantics. A headless `harness --resume SESSION -p 'continue'` uses the selected
 task through the same preparation service. For read-only inspection:
 
