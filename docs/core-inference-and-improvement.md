@@ -250,6 +250,10 @@ adoption/rollback at an idle session boundary. Immutable `PromptChange` records
 bind the preceding and selected prompt, model, result, configuration and policy.
 Selection is session-local and remains shadow-only; changed evaluation declarations
 suspend it. The default automatic policy stays empty, and replay never reruns inference.
+[Assessment prompt improvement](assessment-improvement.md) uses the same lifecycle
+with independent context/progress selections per model and explicit
+`supervised-assessment-prompt-v1` policy. Legacy records default to message
+classification; no assessment selection changes task evidence or acceptance.
 
 Inspect the same records in either interface:
 

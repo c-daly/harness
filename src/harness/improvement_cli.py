@@ -7,6 +7,14 @@ from pathlib import Path
 from harness.improvement import verdict
 from harness.prompt_improvement import PromptExperiment
 
+FUNCTIONS = {"message": "message_kind", "context": "context_selection", "progress": "progress_assessment"}
+
+
+def _function(value):
+    if value not in FUNCTIONS:
+        raise ValueError("prompt function must be message, context, or progress")
+    return FUNCTIONS[value]
+
 
 def refusal_message(exc):
     from harness.errors import ProviderError
@@ -26,15 +34,21 @@ async def perform(kernel, words):
         result = await service.compare_assessment(experiment)
         decision = verdict(kernel.improvements.state.plans[result.plan_id], result)
         return (f"Assessment evaluation {result.id}: {decision} ({result.completion}).\n"
-                "Comparison only; assessment adoption is unavailable. Builtin prompts remain active.")
-    if words == ["propose"]:
-        candidate = await service.propose(model=model)
-        return (f"Candidate {candidate.id}: message prompt {candidate.artifact.sha256[:12]}.\n"
+                "The selected prompt has not changed. " +
+                ("Explicit shadow adoption is available with adopt RESULT context|progress."
+                 if decision == "passed" else "Candidate held."))
+    if len(words) in (1, 2) and words[0] == "propose":
+        label = words[1] if len(words) == 2 else "message"
+        candidate = await service.propose(model=model, function=_function(label))
+        return (f"Candidate {candidate.id}: {label} prompt {candidate.artifact.sha256[:12]}.\n"
                 f"Review with /improvements show {candidate.id} (CLI: harness improvements SESSION --show ID).\n"
                 "Evaluation required; the selected prompt has not changed.")
     if len(words) == 3 and words[0] == "evaluate":
         from harness.semantic_cli import _read
-        experiment = PromptExperiment.model_validate_json(_read(Path(words[2]), 1024 * 1024))
+        from pydantic import TypeAdapter
+        from harness.assessment_evaluation import AssessmentPromptExperiment
+        experiment = TypeAdapter(PromptExperiment | AssessmentPromptExperiment).validate_json(
+            _read(Path(words[2]), 1024 * 1024))
         if experiment.configuration.model != model:
             raise ValueError("select the experiment's model before evaluation")
         result = await service.evaluate(words[1], experiment=experiment)
@@ -42,13 +56,16 @@ async def perform(kernel, words):
         return (f"Evaluation {result.id}: {decision} ({result.completion}).\n"
                 + ("Explicit adoption is available; the selected prompt has not changed."
                    if decision == "passed" else "Candidate held; the selected prompt has not changed."))
-    if len(words) == 2 and words[0] == "adopt":
-        change = service.adopt(words[1], model=model)
-        return f"Adopted message prompt {change.prompt.sha256[:12]}; change {change.id}. Shadow mode."
-    if words == ["rollback"]:
-        change = service.rollback(model=model)
-        return f"Restored message prompt {change.prompt.sha256[:12]}; change {change.id}. Shadow mode."
-    raise ValueError("use propose, evaluate CANDIDATE EXPERIMENT.json, compare ASSESSMENT.json, adopt RESULT, or rollback")
+    if len(words) in (2, 3) and words[0] == "adopt":
+        label = words[2] if len(words) == 3 else "message"
+        change = service.adopt(words[1], model=model, function=_function(label))
+        return f"Adopted {label} prompt {change.prompt.sha256[:12]}; change {change.id}. Shadow mode."
+    if len(words) in (1, 2) and words[0] == "rollback":
+        label = words[1] if len(words) == 2 else "message"
+        change = service.rollback(model=model, function=_function(label))
+        return f"Restored {label} prompt {change.prompt.sha256[:12]}; change {change.id}. Shadow mode."
+    raise ValueError("use propose [message|context|progress], evaluate CANDIDATE EXPERIMENT.json, "
+                     "compare ASSESSMENT.json, adopt RESULT [message|context|progress], or rollback [message|context|progress]")
 
 
 def main(argv):
@@ -69,15 +86,17 @@ def main(argv):
     parser.add_argument("--allow", action="append", default=[])
     parser.add_argument("session_id")
     actions = parser.add_subparsers(dest="action", required=True)
-    actions.add_parser("propose")
+    propose = actions.add_parser("propose")
     evaluate = actions.add_parser("evaluate")
     evaluate.add_argument("candidate_id")
     evaluate.add_argument("experiment")
-    compare = actions.add_parser("compare", help="Compare an operator-authored assessment prompt with its builtin.")
+    compare = actions.add_parser("compare", help="Compare an operator-authored assessment prompt with its current incumbent.")
     compare.add_argument("experiment")
     adopt = actions.add_parser("adopt")
     adopt.add_argument("result_id")
-    actions.add_parser("rollback")
+    rollback = actions.add_parser("rollback")
+    for command in (propose, adopt, rollback):
+        command.add_argument("--function", choices=tuple(FUNCTIONS), default="message")
     args = parser.parse_args(argv)
     try:
         catalog = Catalog.load(args.catalog)
@@ -98,6 +117,8 @@ def main(argv):
         words += [args.experiment]
     elif args.action == "adopt":
         words += [args.result_id]
+    if args.action in ("propose", "adopt", "rollback"):
+        words += [args.function]
 
     async def run():
         try:

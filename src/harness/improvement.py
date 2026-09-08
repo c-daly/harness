@@ -17,6 +17,7 @@ from harness.types import ModelId, SessionId
 Digest = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 Identifier = Annotated[str, Field(min_length=1, max_length=128)]
 Target = Literal["prompt", "routing", "context", "code"]
+PromptFunction = Literal["message_kind", "context_selection", "progress_assessment"]
 
 
 class _Record(BaseModel):
@@ -96,7 +97,8 @@ class ExperimentResult(_Record):
 class PromptChange(_Record):
     """An operator-selected shadow prompt. This never changes task controls."""
     kind: Literal["prompt_change"] = "prompt_change"
-    policy: Literal["supervised-message-prompt-v1"] = "supervised-message-prompt-v1"
+    policy: Literal["supervised-message-prompt-v1", "supervised-assessment-prompt-v1"] = "supervised-message-prompt-v1"
+    function: PromptFunction = "message_kind"
     model: ModelId
     action: Literal["adopt", "rollback"]
     previous_id: Identifier | None = None
@@ -105,6 +107,12 @@ class PromptChange(_Record):
     result_id: Identifier | None = None
     configuration: BlobRef | None = None
     evaluator_version: Digest | None = None
+
+    @model_validator(mode="after")
+    def matching_policy(self):
+        if (self.function == "message_kind") != (self.policy == "supervised-message-prompt-v1"):
+            raise ValueError("prompt function and adoption policy must match")
+        return self
 
 
 ImprovementRecord = Annotated[
@@ -179,6 +187,12 @@ class ImprovementState:
     runs: dict[str, str] = field(default_factory=dict)
     prompt_changes: dict[str, PromptChange] = field(default_factory=dict)
     active_prompts: dict[ModelId, str] = field(default_factory=dict)
+    active_assessment_prompts: dict[tuple[ModelId, str], str] = field(default_factory=dict)
+
+    def selected_prompt(self, model, function="message_kind"):
+        identity = (self.active_prompts.get(model) if function == "message_kind"
+                    else self.active_assessment_prompts.get((model, function)))
+        return self.prompt_changes.get(identity)
 
     def apply(self, record: ImprovementRecord) -> None:
         # Snapshot mutable nested data and validate constructed/copied instances.
@@ -206,7 +220,7 @@ class ImprovementState:
             verdict(plan, record)
             self.results[record.id] = record
         elif isinstance(record, PromptChange):
-            previous = self.prompt_changes.get(self.active_prompts.get(record.model))
+            previous = self.selected_prompt(record.model, record.function)
             if (record.previous_id != (previous.id if previous else None)
                     or previous is not None and record.previous != previous.prompt):
                 raise ValueError("prompt change does not follow the current selected version")
@@ -232,4 +246,7 @@ class ImprovementState:
                         or record.evaluator_version != (restored.evaluator_version if restored else None)):
                     raise ValueError("rollback must restore the exact preceding prompt and configuration")
             self.prompt_changes[record.id] = record
-            self.active_prompts[record.model] = record.id
+            if record.function == "message_kind":
+                self.active_prompts[record.model] = record.id
+            else:
+                self.active_assessment_prompts[(record.model, record.function)] = record.id

@@ -1686,22 +1686,28 @@ class HarnessApp(App[None]):
         elif command.name == "semantics":
             from harness.semantics import read_semantics, render_semantics
             argument = command.arg.strip()
-            if argument == "progress" or argument.startswith("classify "):
+            if argument == "progress" or argument.startswith(("classify ", "context ")):
                 if self._refuse_if_busy():
                     return
                 if self._semantic_worker is not None and not self._semantic_worker.is_finished:
                     self.say("", "An assessment or improvement is already running; Esc cancels it.")
                     return
-                action = self._semantic_progress() if argument == "progress" else self._semantic_classify(argument[9:].strip())
+                if argument == "progress":
+                    action = self._semantic_progress()
+                elif argument.startswith("context "):
+                    action = self._semantic_context(argument[8:].strip())
+                else:
+                    action = self._semantic_classify(argument[9:].strip())
                 self._semantic_worker = self.run_worker(action,
                     group="semantics", exit_on_error=False)
                 return
             if command.arg.strip():
-                self.say("", "Usage: /semantics [progress | classify TEXT]")
+                self.say("", "Usage: /semantics [progress | classify TEXT | context FILE.json]")
                 return
             observations = read_semantics(self.kernel.session.base, self.kernel.session.id)
             for line in render_semantics(observations).splitlines():
                 self.say("", line)
+            self.say("", "Controls: /semantics progress | classify TEXT | context FILE.json")
         elif command.name == "handoff":
             import shlex
             from harness.handoff import render_handoff
@@ -1744,9 +1750,13 @@ class HarnessApp(App[None]):
             state = read_improvements(self.kernel.session.base, self.kernel.session.id)
             for line in render_improvements(state).splitlines():
                 self.say("", line)
-            for line in self.kernel.improvement_service.status(self.kernel.loop.model).splitlines():
-                self.say("", line)
-            self.say("", "Controls: /improvements propose | show ID | evaluate CANDIDATE EXPERIMENT.json | compare ASSESSMENT.json | adopt RESULT | rollback")
+            from harness.improvement_cli import FUNCTIONS
+            for function in FUNCTIONS.values():
+                for line in self.kernel.improvement_service.status(self.kernel.loop.model, function).splitlines():
+                    self.say("", line)
+            self.say("", "Controls: /improvements propose [message|context|progress] | show ID | "
+                "evaluate CANDIDATE EXPERIMENT.json | compare ASSESSMENT.json | "
+                "adopt RESULT [message|context|progress] | rollback [message|context|progress]")
         elif command.name == "resources":
             if self._rebuild_in_progress:
                 self.say("! ", "session rebuild in progress; try again in a moment")
@@ -1967,6 +1977,26 @@ class HarnessApp(App[None]):
             raise
         except Exception as exc:
             self.say("! ", f"Classification failed ({type(exc).__name__}).")
+
+    async def _semantic_context(self, argument) -> None:
+        import shlex
+        from harness.semantic_cli import _read
+        from harness.semantic_assessment import ContextSelectionInput
+        from harness.semantics import render_semantics
+        self.say("", "Assessing supplied context (shadow mode); Esc cancels, new work takes priority.")
+        try:
+            words = shlex.split(argument)
+            if len(words) != 1:
+                raise ValueError("use /semantics context FILE.json")
+            data = ContextSelectionInput.model_validate_json(_read(Path(words[0]), 16384))
+            observation = await self.kernel.semantics.select_context(data, model=self.kernel.loop.model)
+            for line in render_semantics([observation]).splitlines():
+                self.say("", line)
+        except asyncio.CancelledError:
+            self.say("", "Context assessment cancelled.")
+            raise
+        except Exception as exc:
+            self.say("! ", f"Context assessment failed ({type(exc).__name__}).")
 
     async def _semantic_progress(self) -> None:
         from harness.semantics import render_semantics

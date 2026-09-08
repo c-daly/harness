@@ -1,0 +1,72 @@
+.......F................................................................ [ 70%]
+..........F...................                                           [100%]
+=================================== FAILURES ===================================
+_ test_assessment_proposal_adoption_and_rollback_in_final_terminal[context_selection-context] _
+
+tmp_path = PosixPath('/tmp/pytest-of-fearsidhe/pytest-58/test_assessment_proposal_adopt0')
+function = 'context_selection', label = 'context'
+
+    @pytest.mark.parametrize("function,label", [("context_selection", "context"), ("progress_assessment", "progress")])
+    async def test_assessment_proposal_adoption_and_rollback_in_final_terminal(tmp_path, function, label):
+        from tests.test_assessment_improvement import LearningAssessmentProvider, evaluation
+        provider = LearningAssessmentProvider(function)
+        app = make_app(tmp_path, provider=provider, model=ModelId("fake"))
+        plan_path = tmp_path / "assessment-evaluation.json"
+        plan_path.write_text(evaluation(provider).model_dump_json())
+        context_path = tmp_path / "scoped-context.json"
+        context_path.write_text(provider.spec.suite.cases[-1].input.model_dump_json())
+        assessment = f"/semantics context {context_path}" if label == "context" else "/semantics progress"
+        async with app.run_test(size=(160, 55)) as pilot:
+            await submit(app, pilot, "/task new Review this project")
+            await submit(app, pilot, "/task require Operator inspects the result")
+            for _ in range(2):
+                await submit(app, pilot, assessment)
+            provider.seed = False
+            await submit(app, pilot, "/improvements")
+            assert f"{function} prompt for fake" in " ".join(screen_text(app).split())
+            assert "propose [message|context|progress]" in " ".join(screen_text(app).split())
+            await submit(app, pilot, f"/improvements propose {label}")
+>           candidate = list(app.kernel.improvements.state.candidates.values())[-1]
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           IndexError: list index out of range
+
+tests/test_tui_improvements.py:182: IndexError
+______________ test_assessment_compare_cli_and_saved_plan_replay _______________
+
+tmp_path = PosixPath('/tmp/pytest-of-fearsidhe/pytest-58/test_assessment_compare_cli_an0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7a736495fd90>
+capsys = <_pytest.capture.CaptureFixture object at 0x7a7365e57ce0>
+
+    def test_assessment_compare_cli_and_saved_plan_replay(tmp_path, monkeypatch, capsys):
+        import asyncio
+        from harness.improvement_journal import read_improvements
+        from tests.test_assessment_evaluation import AssessmentProvider, experiment, seed
+        spec = experiment()
+        provider = AssessmentProvider(spec)
+    
+        async def setup():
+            kernel = await kernel_for(tmp_path, provider)
+            await seed(kernel, provider)
+            session_id = kernel.session.id
+            kernel.session.close()
+            return session_id
+    
+        session_id = asyncio.run(setup())
+        spec_path = tmp_path / "assessment.json"
+        spec_path.write_text(spec.model_dump_json())
+        monkeypatch.setattr("harness.provider_litellm.CatalogProvider", lambda catalog: provider)
+        catalog = catalog_file(tmp_path)
+        monkeypatch.setattr("sys.argv", ["harness", "improve", "--model", "fake", "--base-dir", str(tmp_path),
+            "--catalog", str(catalog), "--allow", "model:fake", session_id, "compare", str(spec_path)])
+        main()
+>       assert "assessment adoption is unavailable" in capsys.readouterr().out
+E       AssertionError: assert 'assessment adoption is unavailable' in 'Assessment evaluation 75fce3f7-7c80-4ece-aa44-abdbdd7a5956: passed (completed).\nThe selected prompt has not changed. Explicit shadow adoption is available with adopt RESULT context|progress.\n'
+E        +  where 'Assessment evaluation 75fce3f7-7c80-4ece-aa44-abdbdd7a5956: passed (completed).\nThe selected prompt has not changed. Explicit shadow adoption is available with adopt RESULT context|progress.\n' = CaptureResult(out='Assessment evaluation 75fce3f7-7c80-4ece-aa44-abdbdd7a5956: passed (completed).\nThe selected prompt has not changed. Explicit shadow adoption is available with adopt RESULT context|progress.\n', err='').out
+E        +    where CaptureResult(out='Assessment evaluation 75fce3f7-7c80-4ece-aa44-abdbdd7a5956: passed (completed).\nThe selected prompt has not changed. Explicit shadow adoption is available with adopt RESULT context|progress.\n', err='') = readouterr()
+E        +      where readouterr = <_pytest.capture.CaptureFixture object at 0x7a7365e57ce0>.readouterr
+
+tests/test_semantic_cli.py:131: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_tui_improvements.py::test_assessment_proposal_adoption_and_rollback_in_final_terminal[context_selection-context]
+FAILED tests/test_semantic_cli.py::test_assessment_compare_cli_and_saved_plan_replay
+2 failed, 100 passed in 26.62s

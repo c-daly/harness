@@ -1,7 +1,7 @@
 # Core agency implementation record
 
-Current implementation branch: `feat/external-handoff`, based on merged `main`
-at `e576a8e` (PR26). Previous branches: `feat/assessment-evaluation`, `feat/supervised-improvement`, `feat/local-scheduling`, `feat/task-fallback`, `feat/semantic-context-progress`, `feat/local-assistant-m3`, `feat/resident-workflow`, `feat/task-completion-evidence`, `fix/inference-client-lifecycle`, `feat/local-response-profiles`, `feat/local-tool-recovery`, `feat/local-tool-planning`, `feat/local-qualification`, `feat/semantic-evaluation`, `feat/local-context`, `feat/local-readiness`, `feat/agent-runtimes`,
+Current implementation branch: `feat/assessment-improvement`, based on merged `main`
+at `d33b4e2` (PR27). Previous branches: `feat/external-handoff`, `feat/assessment-evaluation`, `feat/supervised-improvement`, `feat/local-scheduling`, `feat/task-fallback`, `feat/semantic-context-progress`, `feat/local-assistant-m3`, `feat/resident-workflow`, `feat/task-completion-evidence`, `fix/inference-client-lifecycle`, `feat/local-response-profiles`, `feat/local-tool-recovery`, `feat/local-tool-planning`, `feat/local-qualification`, `feat/semantic-evaluation`, `feat/local-context`, `feat/local-readiness`, `feat/agent-runtimes`,
 and `feat/core-agency`.
 
 Committed checkpoints: `0351b75` (roadmap, lifecycle, and storage/result integrity),
@@ -55,7 +55,7 @@ qualification. Milestone completion requires its roadmap gates, not just code.
 | M1 correctness and interaction | In progress | Storage, delegation, controller/UI, MCP capability and explicit-endpoint HTTP cleanup changes are implemented. Durable task obligations and explicit review are visible through the TUI and headless inspection. Broader enforcement/redaction, provider lifecycles and fault qualification remain. |
 | M2 inference / agent contracts | In progress | Bounded inference, native tasks, Codex task binding, explicit execution kinds, nullable usage, core improvement records and recorded task-evidence checks implemented. Remaining adapters, richer artifact predicates and live capability qualification remain. |
 | M3 local core assistant | Complete for the measured CUDA profile | Qwen3-8B passes six full offline project journeys: twelve exact native file writes, changed-record answers after restart, real cancellation, normal memory, and visible task/context status. Four missing-assets/startup-exit recovery cases pass. Shipped profiles and a launcher reproduce the workflow. CPU-only operation, automatic fallback and broader daily-use qualification remain outside this gate. |
-| M4 bounded semantic agency | In progress | All three shadow functions now exist with explicit CLI/TUI access and evidence validation. The public 8B comparison failed context/progress gates; deterministic behavior remains. Bounded task-preserving fallback and session-tree local scheduling are implemented. Message-prompt pairing and earlier context/correction experiments use core improvement records. Supervised message-prompt proposal/evaluation/adoption/rollback is implemented. Paired context/progress candidate evaluation is implemented with explicit operator controls. Explicit external-to-native reconciliation and bounded handoff are implemented. Held-out qualification, broader handoff qualification and assessment adoption remain. |
+| M4 bounded semantic agency | In progress | All three shadow functions now exist with explicit CLI/TUI access and evidence validation. The public 8B comparison failed context/progress gates; deterministic behavior remains. Bounded task-preserving fallback and session-tree local scheduling are implemented. Message-prompt pairing and earlier context/correction experiments use core improvement records. Supervised message-prompt proposal/evaluation/adoption/rollback is implemented. Paired context/progress candidate evaluation is implemented with explicit operator controls. Explicit external-to-native reconciliation and bounded handoff are implemented. Supervised assessment proposal/adoption/rollback is implemented per function/model. Held-out quality and broader handoff qualification remain. |
 | M5 heterogeneous work / plugins | Pending | Supervision, plugin reconciliation, portable continuation, isolated improvement patches and rollback. |
 | M6 daily-use qualification | Pending | Measured UI, live adapter boundaries, offline and human dogfood gates. |
 
@@ -1411,3 +1411,64 @@ The review found `/handoff` missing from built-in `/help`. Help now lists
 without adding session events or invoking inference. Ruff and whitespace checks
 pass. The full-suite, wheel and offline handoff reports above remain evidence
 for `0598460`, before this help-text correction.
+
+## September 8 — M4 supervised assessment prompt lifecycle
+
+[PR27](https://github.com/c-daly/harness/pull/27) merged at `d33b4e2`; reviewed
+head `b4a57e9` passed Python 3.12/3.13 CI and automated review. This slice starts
+from that merge on `feat/assessment-improvement`.
+
+**Added:** the existing supervised prompt lifecycle now supports context selection
+and progress assessment. An operator can request a candidate after two distinct
+live invalid-output observations, evaluate against an operator-owned frozen suite,
+explicitly select a passing shadow prompt, and restore the preceding version.
+Selections are independent per model/function. Message records retain their legacy
+default and policy. The source/evaluator fingerprint continues to suspend selections
+when implementation or declared runtime configuration changes.
+
+**Boundaries:** proposal generation sees incumbent instructions and bounded failure
+metadata, never private context/task inputs or evaluation answers. Assessment
+fixtures cannot seed live failure evidence. Function/policy matching, completed
+paired-run provenance, the latest passing result, fixed critical cases and exact
+incumbent/configuration binding are enforced before selection. Failed/inconclusive
+results stay held. Assessment prompts remain advisory; no candidate grants itself
+authority or changes task state, acceptance, routing, schemas, or source files.
+
+**Interface:** `/improvements` shows all three functions and their controls.
+`propose`, `adopt`, and `rollback` accept `message|context|progress`; the CLI offers
+`--function`. `/semantics context FILE.json` completes the TUI path for supplied
+scoped context, alongside existing progress assessment. Live observations display
+selected version/change provenance; evaluations use explicit frozen artifacts.
+Replay and rollback do not invoke inference. A new comparison binds the currently
+selected assessment incumbent.
+
+The [operator guide](../../assessment-improvement.md), public experiment shapes,
+and [evidence record](../../handoffs/2026-09-08-assessment-improvement/README.md)
+separate implementation controls from model quality. Memory and agent-swarm remain
+plugins; this lifecycle belongs to core.
+
+**Remaining:** M4 genuine held-out semantic quality and broader live-agent/memory
+handoff qualification; M5 heterogeneous supervision, portability and isolated
+source-edit experiments; M6 sustained daily-use qualification. Earlier failed
+quality gates are not reclassified as passes by adding adoption machinery.
+
+**Repository validation:** **1,588 passed, seven skipped, six warnings in 351.64s**
+on Python 3.13, including MCP/process integrations and final TUI rendering.
+**176 focused tests passed on Python 3.12 in 39.63s.** Ruff, whitespace, locked
+offline sync, sdist/wheel build and clean offline wheel smoke pass. All 70 modules
+import; the wheel matches all 71 core Python files. No lockfile/dependency changes
+were required. The retained initial integration failures exposed the missing
+context TUI action and an obsolete assertion that assessment adoption was
+unavailable; the final UI/CLI paths pass.
+
+**Real local outcome:** both offline Qwen3-8B runs produced two invalid responses
+per function. Context generated a candidate, but incumbent/candidate/rules each
+scored **4/6**, with critical failures and no improvement, so adoption was held.
+Progress generation returned the unchanged incumbent instructions and was rejected
+before candidate/evaluation recording. No prompt was adopted in either run.
+Final context maximum incumbent/candidate latency was **303/295 ms**. The final
+driver adds rejection diagnostics; the initial report is retained. Frozen cases,
+gates, generation settings and core source were unchanged between runs. Final
+hashes match all 71 core files and three qualification scripts. Successful
+selection/rollback is verified with controlled providers; genuine held-out model
+quality remains unproven. No plugins or external networking were used.

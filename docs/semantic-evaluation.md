@@ -8,7 +8,9 @@ session using its compatible selected prompt. All functions remain advisory.
 Core supplies explicit message interpretation, scoped context selection, recorded
 progress assessment, and paired prompt evaluators for all three functions.
 [Assessment comparison](assessment-evaluation.md) accepts operator-authored
-context/progress prompts through the same improvement controls. They use the existing inference dispatcher, permission engine, shared
+context/progress prompts through the same improvement controls. The
+[assessment lifecycle](assessment-improvement.md) adds supervised generation and
+function-scoped shadow adoption/rollback. They use the existing inference dispatcher, permission engine, shared
 call budget, local-readiness service, session log, and verified artifact store.
 These work with all plugins absent. Memory and agent-swarm retain their own roles.
 
@@ -104,13 +106,13 @@ open execution permits waiting or uncertainty. No answer accepts a task, grants
 authority, or starts a retry. Deterministic passed/failed/remaining lists remain
 visible when the model abstains. Later changes do not alter a saved observation.
 
-In the TUI, `/semantics progress` runs an explicit assessment using the selected
-model. Its worker leaves the composer responsive, supports Esc, and cancels and
+In the TUI, `/semantics progress` and `/semantics context FILE.json` run explicit
+assessments using the selected model and compatible prompt version. Its worker leaves the composer responsive, supports Esc, and cancels and
 settles before newly submitted work, model switching, compaction, session rebuild,
 or shutdown. It refuses to start behind active/queued work. All semantic
 functions share a non-waiting lock and abstain when their local alias has a fresh
-busy observation. This is limited to the known alias and local client activity;
-cross-alias GPU scheduling and remote generation preemption remain open.
+busy observation. Core [session-tree scheduling](local-scheduling.md) also arbitrates local aliases;
+remote generation preemption remains runtime-dependent.
 
 The new functions default to 16,384 payload bytes, 32,768 complete input bytes,
 2,048 output bytes, 256 output tokens, 512 stream chunks, and five seconds total.
@@ -128,8 +130,9 @@ Three repetitions, 90% accuracy, every critical case correct, and a two-second
 maximum warm call latency are fixed before execution. Reports retain failures
 and public-fixture outputs for diagnosis. These are public regression cases,
 not held-out evidence or an activation gate. The paired evaluator also supports
-[assessment prompt candidates](assessment-evaluation.md); assessment adoption
-and held-out qualification remain M4 work.
+[assessment prompt candidates](assessment-evaluation.md) and
+[supervised shadow adoption](assessment-improvement.md). Held-out qualification
+remains M4 work.
 
 The [first measured comparison](handoffs/2026-09-07-semantic-assessments/README.md)
 failed both new functions' gates: context 83.3%, progress 42.9% versus a 100%
@@ -181,11 +184,10 @@ the prompt. Fixed critical stop and ambiguous-thanks cases cannot be removed,
 relabelled, or made noncritical. There must also be held-out cases. Set thresholds
 before scoring, preserve failed trials, and use fresh held-out evidence after
 candidate development; repeatedly tuning against the same cases is not held-out
-qualification. Message-prompt proposals use the separate supervised service;
-assessment proposals are currently operator-authored.
+qualification. Message and assessment proposals use the separate supervised service;
+operator-authored assessment comparisons remain available.
 
-Prompt artifacts contain only the fixed `message_kind` function/version and
-instruction text. They cannot provide executable code, schemas, expected labels,
+Prompt artifacts bind their declared function/version and instruction text. They cannot provide executable code, schemas, expected labels,
 resource limits, or adoption policy. Suites contain at most 64 cases and 1 MiB.
 Every case identity, partition, and critical flag must agree with the stored plan.
 Only the current case's text reaches the model; expected labels and other cases
@@ -236,6 +238,6 @@ Scripted providers qualify the evaluator's control paths. Subsequent local
 reports distinguish measured runtime behavior from model-quality qualification.
 Context/progress shadow functions, local scheduling and bounded fallback now
 exist, along with the separate supervised message-prompt adoption/rollback
-service. Assessment candidate comparison is available with operator-authored
-prompts. Automatic proposals, assessment adoption, held-out semantic qualification
-and isolated source experiments remain open.
+service. Assessment proposals, comparison, explicit shadow adoption and rollback
+are also available. Automatic proposals, held-out semantic qualification and
+isolated source experiments remain open.

@@ -128,7 +128,7 @@ def test_assessment_compare_cli_and_saved_plan_replay(tmp_path, monkeypatch, cap
     monkeypatch.setattr("sys.argv", ["harness", "improve", "--model", "fake", "--base-dir", str(tmp_path),
         "--catalog", str(catalog), "--allow", "model:fake", session_id, "compare", str(spec_path)])
     main()
-    assert "assessment adoption is unavailable" in capsys.readouterr().out
+    assert "Explicit shadow adoption is available" in capsys.readouterr().out
     state = read_improvements(tmp_path, session_id)
     result = list(state.results.values())[-1]
     plan = state.plans[result.plan_id]
