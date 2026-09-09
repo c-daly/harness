@@ -2,7 +2,7 @@
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from harness.agent import DelegationResult
 from harness.blobs import BlobRef
@@ -32,6 +32,14 @@ class CoordinationReport(BaseModel):
     unresolved: list[str]
     result: DelegationResult
     output: BlobRef | None
+    admitted: bool | None = Field(default=None, strict=True)
+    timeout_seconds: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+
+    @model_validator(mode="after")
+    def paired_admission(self):
+        if (self.admitted is None) != (self.timeout_seconds is None):
+            raise ValueError("coordination admission and deadline must be recorded together")
+        return self
 
 
 def load_report(blobs, event, session_id) -> CoordinationReport:

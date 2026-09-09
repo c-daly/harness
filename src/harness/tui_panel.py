@@ -27,10 +27,13 @@ from textual.widgets import Static, TabbedContent, TabPane
 
 from harness.events import (
     CoordinationFinished,
+    CoordinationStarted,
     Envelope,
     SubagentFinished,
     SubagentSpawned,
     ToolCallCompleted,
+    ToolCallAborted,
+    ToolCallCancelled,
     ToolCallProposed,
 )
 
@@ -89,7 +92,7 @@ _STRATEGY_TOOLS = frozenset({"ensemble", "consult_panel", "escalate"})
 class AgentRow:
     call_id: str
     label: str
-    status: str  # running | done | error | incomplete | cancelled
+    status: str  # running | done | error | incomplete | cancelled | unconfirmed
     model: "str | None"
     strategy: "str | None"  # grouping key shared by one coordination call's experts
 
@@ -107,6 +110,7 @@ def fold_agents(events: list[Envelope]) -> list[AgentRow]:
     open_dispatch: set[str] = set()
     strategy_calls: set[str] = set()  # ensemble/consult_panel/escalate call_ids seen
     child_rows: dict[str, str] = {}
+    coordinators: dict[str, set[str]] = {}
 
     def upsert(call_id: str, **changes) -> None:
         if call_id not in rows:
@@ -135,9 +139,15 @@ def fold_agents(events: list[Envelope]) -> list[AgentRow]:
                 open_dispatch.discard(call_id)
                 if rows[call_id].status == "running" or ev.is_error:
                     upsert(call_id, status="error" if ev.is_error else "done")
+            if coordinators.get(call_id):
+                upsert(call_id, status="unconfirmed")
+        elif isinstance(ev, (ToolCallAborted, ToolCallCancelled)):
+            call_id = str(ev.call_id)
+            if coordinators.get(call_id):
+                upsert(call_id, status="unconfirmed")
         elif isinstance(ev, SubagentSpawned):
             group = str(ev.call_id) if ev.call_id is not None else None
-            if group in open_dispatch:
+            if group in open_dispatch and group not in coordinators:
                 child_rows[str(ev.child_session_id)] = group
             # a dispatch_agent spawn already has its own row keyed by the
             # dispatch call; only coordination experts get a child-keyed row
@@ -153,9 +163,20 @@ def fold_agents(events: list[Envelope]) -> list[AgentRow]:
                 status = {"ok": "done", "error": "error", "cancelled": "cancelled",
                           "incomplete": "incomplete"}[ev.status]
                 upsert(row, status=status)
+        elif isinstance(ev, CoordinationStarted):
+            call_id = str(ev.call_id)
+            if call_id in strategy_calls or call_id in open_dispatch:
+                coordinators.setdefault(call_id, set()).add(ev.id)
+                upsert(call_id, status="running")
+                if call_id in strategy_calls:
+                    upsert(call_id, label=f"{ev.strategy} result", strategy=call_id)
         elif isinstance(ev, CoordinationFinished):
+            pending = coordinators.get(str(ev.call_id), set())
+            pending.discard(ev.id)
             status = {"completed": "done", "incomplete": "incomplete", "failed": "error",
                       "blocked": "error", "cancelled": "cancelled"}[ev.status]
+            if pending:
+                status = "running"
             if ev.call_id in strategy_calls:
                 upsert(str(ev.call_id), label=f"{ev.strategy} result", status=status, strategy=str(ev.call_id))
             elif ev.call_id in open_dispatch:
@@ -190,6 +211,7 @@ def _render_mixture(rows: list[AgentRow]) -> str:
     lines = []
     for group, members in by_group.items():
         lines.append(f"strategy {group}:")
+        members = sorted(members, key=lambda member: member.call_id != group)
         lines.extend(f"  [{m.status}] {m.label}  model={m.model or '-'}" for m in members)
     return "\n".join(lines)
 

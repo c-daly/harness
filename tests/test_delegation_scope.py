@@ -16,7 +16,8 @@ from harness.tools import ToolRegistry, ToolSpec
 from harness.types import CallId, ModelId, SessionId, ToolName
 
 
-async def test_grandchild_inherits_restrictions_and_actual_parent(tmp_path):
+@pytest.mark.parametrize("coordinated", [False, True])
+async def test_grandchild_inherits_restrictions_and_actual_parent(tmp_path, coordinated):
     executed = []
 
     class Forbidden:
@@ -49,7 +50,9 @@ async def test_grandchild_inherits_restrictions_and_actual_parent(tmp_path):
                 "restricted": AgentDef(name="restricted", description="", body="",
                                        tools=("dispatch_agent",)),
                 "wide": AgentDef(name="wide", description="", body="",
-                                 tools=("dispatch_agent", "forbidden")),
+                                 tools=("dispatch_agent", "forbidden"),
+                                 strategy="ensemble" if coordinated else None,
+                                 experts=("fake",) if coordinated else ()),
             },
         )
         registry.register(DispatchAgentTool(runner=runner, parent=root))

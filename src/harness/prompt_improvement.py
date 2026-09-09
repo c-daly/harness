@@ -115,7 +115,7 @@ class PromptImprovementService:
         state = fold(read_session(kernel.session.base, kernel.session.id, repair=False))
         if (self._lock.locked() or kernel.controller.active is not None or kernel.controller.pending
                 or state.open_intents or state.open_model_intents or state.open_agent_runs or state.open_evaluations
-                or kernel.loop.dispatcher.scope.budget.active_children):
+                or kernel.loop.dispatcher.scope.budget.busy):
             raise ValueError("improvement changes require an idle session; finish or interrupt active work first")
 
     def _current(self, model, function="message_kind"):

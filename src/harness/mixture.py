@@ -17,14 +17,14 @@ and config-driven (a coordination AgentDef with `strategy`/`experts`):
 import asyncio
 import json
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from harness.agent import DelegationResult
 from harness.callctx import current_call_id
 from harness.coordination import CoordinationReport, MAX_REPORT_BYTES
-from harness.execution import current_scope
+from harness.execution import BudgetExceeded, current_scope
 from harness.session import Session
 from harness.tools import ToolSpec
 from harness.types import ModelId, ToolName
@@ -93,13 +93,14 @@ async def _fanout(calls):
 
 async def _coordinate(strategy, runner, parent, prompt, experts, *, judge=None):
     """Preserve participant facts even when a coordinator is interrupted."""
-    from harness.events import CoordinationFinished
-    scope = current_scope.get()
-    parent = scope.session if scope is not None else parent
+    from harness.events import CoordinationFinished, CoordinationStarted
+    scope = runner.scope_for(parent)
+    parent = scope.session
     members = []
     report = {"version": 1, "id": uuid4().hex, "strategy": strategy,
               "acceptance": "unverified", "members": members, "disagreement": False,
-              "gate": "none", "unresolved": [], "source_session_id": parent.id if parent else None}
+              "gate": "none", "unresolved": [], "source_session_id": parent.id if parent else None,
+              "admitted": False, "timeout_seconds": scope.budget.limits.coordination_timeout_seconds}
 
     async def run(expert, role, text=prompt):
         member = {"role": role, "model": expert.model, "agent": expert.agent,
@@ -205,14 +206,34 @@ async def _coordinate(strategy, runner, parent, prompt, experts, *, judge=None):
         return result
 
     try:
-        result = await execute()
-    except asyncio.CancelledError:
-        finish(DelegationResult(status="cancelled", reason="cancelled"))
-        raise
-    except Exception as exc:
-        finish(DelegationResult(status="failed", reason=type(exc).__name__))
-        raise
-    return finish(result)
+        scope.budget.reserve_coordinator(scope.depth + 1)
+    except BudgetExceeded as exc:
+        return finish(DelegationResult(status="blocked", reason=str(exc)))
+    report["admitted"] = True
+    token = current_scope.set(replace(scope, depth=scope.depth + 1))
+    try:
+        if parent is not None:
+            parent.append(CoordinationStarted(id=report["id"], call_id=current_call_id(), strategy=strategy,
+                depth=scope.depth + 1, timeout_seconds=report["timeout_seconds"]))
+        deadline = asyncio.timeout(report["timeout_seconds"])
+        try:
+            async with deadline:
+                result = await execute()
+        except TimeoutError:
+            if not deadline.expired():
+                finish(DelegationResult(status="failed", reason="TimeoutError"))
+                raise
+            result = DelegationResult(status="incomplete", reason="coordination deadline")
+        except asyncio.CancelledError:
+            finish(DelegationResult(status="cancelled", reason="cancelled"))
+            raise
+        except Exception as exc:
+            finish(DelegationResult(status="failed", reason=type(exc).__name__))
+            raise
+        return finish(result)
+    finally:
+        current_scope.reset(token)
+        scope.budget.release_coordinator()
 
 
 async def ensemble(

@@ -17,6 +17,10 @@ Direct ensemble, panel and escalation calls show a separate aggregate result row
 in the Workflows group, alongside each child's own status. Completed participants
 can therefore appear beside an incomplete result when review fails or the
 aggregate answer is truncated. A blocked aggregate is visible even without children.
+Admitted runs also record their start. If no aggregate terminal was saved,
+inspection and export show completion as unconfirmed. In the activity panel,
+the aggregate remains running until its tool settles or is recovered, then shows
+unconfirmed if its terminal result is missing.
 
 Core coordinates through `SubagentRunner.run_result()` and
 `run_strategy_result()`. Their `DelegationResult` distinguishes `completed`,
@@ -39,13 +43,30 @@ child log identifies its effective routed model/runtime. Child output references
 belong to that child's store; the aggregate answer and report belong to the
 calling session. The report loader validates its schema, hash and association
 with the session/event. Existing child-terminal events gain optional provenance
-fields; old logs remain readable.
+fields; old logs remain readable. New reports also record whether coordination
+was admitted and its overall deadline. Older reports leave those fields unknown.
 
 Fan-out permits at most 16 experts (plus an optional ensemble judge). Draft/refine
-uses at most two entries and escalation at most three. Existing shared execution
-and child limits still apply. Cancellation or an unexpected coordinator failure
-cancels and awaits outstanding siblings before publishing the aggregate terminal
-fact. Reports and returned aggregate text are each bounded to 1 MiB. Delivered
+uses at most two entries and escalation at most three. `ExecutionLimits` defaults
+to 16 active workers and, separately, 16 active pure coordinators. A coordinator
+waiting for its experts therefore leaves all worker slots available. Direct
+strategy tools and configured coordination agents each consume one level of
+depth and one cumulative descendant reservation, sharing the existing limits of
+four levels and 128 descendants with workers. Admission is rejected when capacity
+is exhausted; there is no waiting queue. Ordinary agents still occupy worker
+slots while awaiting their own tool calls.
+
+Each admitted coordination has a default 600-second overall deadline, spanning
+all its stages, including optional judges, critics, refiners and premium fallback.
+Expiry returns `incomplete` with reason `coordination deadline`. Cancellation,
+deadline expiry or unexpected failure cancels and awaits outstanding siblings
+before publishing the aggregate terminal fact; completed participant outputs stay
+inspectable. Cancellation is cooperative, so cleanup may extend beyond the
+deadline. An earlier ancestor deadline still cancels its descendants. Active
+coordinators also prevent idle-only handoff and improvement operations. Handoffs
+retain the stricter source limits and hold unreconciled descendant activity.
+
+Reports and returned aggregate text are each bounded to 1 MiB. Delivered
 aggregate truncation is explicit and incomplete.
 
 Ensembles exclude incomplete, failed, blocked or truncated answers from voting
@@ -66,15 +87,15 @@ the advisory selection policy with evidence-based escalation is still an M5 gate
 [Portable export](portable-continuation.md) includes coordination reports attached
 to the exported task's tool calls and copies their aggregate answer artifacts.
 Member output/report references remain source-session references; child logs and
-artifacts are not recursively exported. Report absence does not prove that no
-coordination ran: a crash before its terminal event still needs inspection of
-the existing tool/child facts.
+artifacts are not recursively exported. A saved start without a terminal travels
+as an unconfirmed entry without a report or aggregate output. Earlier logs may
+have no start fact, so report absence alone does not prove that no coordination
+ran; existing tool/child facts still need inspection.
 
 The regression suite covers real child lifecycles, partial results, bounds,
 cancellation, provenance, read-only CLI/TUI inspection and task export. A
 controlled catalog test mixes native inference with the real external Codex
 binding using scripted transports. This establishes contract behavior, not live
-provider, installed-plugin or local-model qualification. Coordinators still
-consume existing child capacity; separate admission, shared token/cost budgets,
-edit ownership, plugin reconciliation and isolated improvement patches/rollback
-remain ahead. Memory and agent-swarm remain plugins.
+provider, installed-plugin or local-model qualification. Shared token/cost
+budgets, edit ownership, plugin reconciliation and isolated improvement
+patches/rollback remain ahead. Memory and agent-swarm remain plugins.

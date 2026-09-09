@@ -3,6 +3,7 @@ envelopes built from the real event classes."""
 
 from harness.events import (
     CoordinationFinished,
+    CoordinationStarted,
     Envelope,
     SubagentFinished,
     SubagentSpawned,
@@ -294,3 +295,39 @@ def test_concurrent_aggregates_keep_separate_status_and_preserve_children():
     assert rows[first].status == "cancelled" and rows[first].strategy == first
     assert rows[second].status == "error" and rows[second].strategy == second
     assert rows[child].status == "done" and rows[child].strategy == first
+
+
+def test_unfinished_coordination_is_unconfirmed_after_tool_recovery_and_renders_first():
+    from harness.events import ToolCallAborted
+    from harness.tui_panel import _render_mixture
+    call, child = new_call_id(), new_session_id()
+    events = [
+        env(1, ToolCallProposed(call_id=call, tool=ToolName("ensemble"), args={})),
+        env(2, CoordinationStarted(id="work", call_id=call, strategy="ensemble", depth=1, timeout_seconds=10)),
+        env(3, SubagentSpawned(child_session_id=child, call_id=call, model=ModelId("m"))),
+        env(4, SubagentFinished(child_session_id=child, status="ok")),
+        env(5, ToolCallAborted(call_id=call, reason="process restarted")),
+    ]
+    rendered = _render_mixture(fold_agents(events))
+    assert rendered.splitlines()[1].startswith("  [unconfirmed] ensemble result")
+    assert "[done] m" in rendered
+
+
+def test_configured_coordinator_stays_running_until_all_nested_results_settle():
+    from harness.blobs import BlobRef
+    from harness.events import ToolCallAborted
+    call, child = new_call_id(), new_session_id()
+    events = [
+        env(1, ToolCallProposed(call_id=call, tool=ToolName("dispatch_agent"), args={"agent": "team"})),
+        env(2, CoordinationStarted(id="outer", call_id=call, strategy="ensemble", depth=1, timeout_seconds=10)),
+        env(3, CoordinationStarted(id="inner", call_id=call, strategy="ensemble", depth=2, timeout_seconds=10)),
+        env(4, SubagentSpawned(child_session_id=child, call_id=call, model=ModelId("m"))),
+        env(5, SubagentFinished(child_session_id=child, status="ok")),
+    ]
+    assert fold_agents(events)[0].status == "running"
+    events.append(env(6, CoordinationFinished(id="inner", call_id=call, strategy="ensemble", status="completed",
+                                             report=BlobRef(sha256="a" * 64, size=1))))
+    assert fold_agents(events)[0].status == "running"
+    events.append(env(7, ToolCallAborted(call_id=call, reason="process restarted")))
+    row, = fold_agents(events)
+    assert row.label == "team" and row.status == "unconfirmed"

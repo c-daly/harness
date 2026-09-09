@@ -191,7 +191,7 @@ def capture_scope(dispatcher):
         "context_policy": dispatcher.scope.context_policy.model_dump(mode="json")
                           if dispatcher.scope.context_policy is not None else None,
         "limits": asdict(budget.limits), "counts": {name: getattr(budget, name)
-            for name in ("model_calls", "tool_calls", "children", "active_children")}}
+            for name in ("model_calls", "tool_calls", "children", "active_children", "active_coordinators")}}
 
 
 def snapshot(session, task_id=None):
@@ -379,12 +379,13 @@ class HandoffGuard:
                 raise ValueError("handoff calls must use canonical absolute paths")
         # Retain original limits and conservatively restore reservations after a
         # restart. Cross-session child accounting needs a separate M5 contract.
-        from harness.events import ModelCallStarted, RetryAttempted, SubagentSpawned, ToolCallProposed
+        from harness.events import CoordinationStarted, ModelCallStarted, RetryAttempted, SubagentSpawned, ToolCallProposed
         from harness.execution import ExecutionLimits
         from harness.log import read_session
         later = [e for e in read_session(kernel.session.base, kernel.session.id, repair=False)
                  if e.seq > checkpoint.started_seq]
-        if scope["counts"]["active_children"] or any(isinstance(e.event, SubagentSpawned) for e in later):
+        if (scope["counts"]["active_children"] or scope["counts"]["active_coordinators"]
+                or any(isinstance(e.event, (SubagentSpawned, CoordinationStarted)) for e in later)):
             raise ValueError("child-session reconciliation/accounting is not qualified; handoff held")
         budget = kernel.loop.dispatcher.scope.budget
         budget.limits = ExecutionLimits(**{k: min(v, scope["limits"][k]) for k, v in asdict(budget.limits).items()})
@@ -478,7 +479,7 @@ class HandoffService:
         state = fold(read_session(kernel.session.base, kernel.session.id, repair=False))
         if (self._active or kernel.controller.active is not None or kernel.controller.pending
                 or state.open_intents or state.open_model_intents or state.open_agent_runs or state.open_evaluations
-                or kernel.loop.dispatcher.scope.budget.active_children):
+                or kernel.loop.dispatcher.scope.budget.busy):
             raise ValueError("handoff requires an idle session; settle active or queued work first")
 
     def record(self, spec: HandoffSpec):

@@ -180,6 +180,7 @@ async def test_cancellation_settles_children_before_coordination_terminal(parent
     assert report.result.status == "cancelled"
     assert all(m.result.status == "cancelled" and m.result.run_id for m in report.members)
     assert runner._root_scopes[str(parent.id)].budget.active_children == 0
+    assert runner._root_scopes[str(parent.id)].budget.active_coordinators == 0
     events = read_session(tmp_path, parent.id)
     assert events[-1].event.type == "coordination_finished"
     for member in report.members:
@@ -190,7 +191,7 @@ async def test_cancellation_settles_children_before_coordination_terminal(parent
 async def test_unexpected_runner_failure_cancels_and_awaits_sibling(parent):
     entered, cleaned = asyncio.Event(), asyncio.Event()
 
-    class Broken:
+    class Broken(FakeRunner):
         async def run_result(self, *, model, **kwargs):
             if model == "bad":
                 await entered.wait()
@@ -203,7 +204,7 @@ async def test_unexpected_runner_failure_cancels_and_awaits_sibling(parent):
                 cleaned.set()
 
     with pytest.raises(RuntimeError):
-        await run_strategy_result("ensemble", Broken(), parent, "Q", [Expert("bad"), Expert("waiting")])
+        await run_strategy_result("ensemble", Broken({}), parent, "Q", [Expert("bad"), Expert("waiting")])
     assert cleaned.is_set()
     report = saved_report(parent)
     assert report.result.status == "failed" and report.result.reason == "RuntimeError"
