@@ -1,8 +1,8 @@
 # Core agency implementation record
 
-Current implementation branch: `feat/context-profile-comparison`, based on merged `main`
-at `bfe76e3` (PR36, rejected context experiments and corrected runtime provenance).
-Previous branches: `docs/context-experiment-results`, `feat/context-eligibility`, `feat/context-selection-qualification`, `fix/bounded-compaction`, `fix/model-selection-continuity`, `feat/local-model-management`, `feat/assessment-improvement`, `feat/external-handoff`, `feat/assessment-evaluation`, `feat/supervised-improvement`, `feat/local-scheduling`, `feat/task-fallback`, `feat/semantic-context-progress`, `feat/local-assistant-m3`, `feat/resident-workflow`, `feat/task-completion-evidence`, `fix/inference-client-lifecycle`, `feat/local-response-profiles`, `feat/local-tool-recovery`, `feat/local-tool-planning`, `feat/local-qualification`, `feat/semantic-evaluation`, `feat/local-context`, `feat/local-readiness`, `feat/agent-runtimes`,
+Current implementation branch: `feat/handoff-failure-qualification`, based on merged `main`
+at `216762c` (PR37, repeated 4B/8B context-profile measurements).
+Previous branches: `feat/context-profile-comparison`, `docs/context-experiment-results`, `feat/context-eligibility`, `feat/context-selection-qualification`, `fix/bounded-compaction`, `fix/model-selection-continuity`, `feat/local-model-management`, `feat/assessment-improvement`, `feat/external-handoff`, `feat/assessment-evaluation`, `feat/supervised-improvement`, `feat/local-scheduling`, `feat/task-fallback`, `feat/semantic-context-progress`, `feat/local-assistant-m3`, `feat/resident-workflow`, `feat/task-completion-evidence`, `fix/inference-client-lifecycle`, `feat/local-response-profiles`, `feat/local-tool-recovery`, `feat/local-tool-planning`, `feat/local-qualification`, `feat/semantic-evaluation`, `feat/local-context`, `feat/local-readiness`, `feat/agent-runtimes`,
 and `feat/core-agency`.
 
 Committed checkpoints: `0351b75` (roadmap, lifecycle, and storage/result integrity),
@@ -56,7 +56,7 @@ qualification. Milestone completion requires its roadmap gates, not just code.
 | M1 correctness and interaction | In progress | Storage, delegation, controller/UI, MCP capability and explicit-endpoint HTTP cleanup changes are implemented. Durable task obligations and explicit review are visible through the TUI and headless inspection. Broader enforcement/redaction, provider lifecycles and fault qualification remain. |
 | M2 inference / agent contracts | In progress | Bounded inference, native tasks, Codex task binding, explicit execution kinds, nullable usage, core improvement records and recorded task-evidence checks implemented. Remaining adapters, richer artifact predicates and live capability qualification remain. |
 | M3 local core assistant | Complete for the measured CUDA profile | Qwen3-8B passes six full offline project journeys: twelve exact native file writes, changed-record answers after restart, real cancellation, normal memory, and visible task/context status. Four missing-assets/startup-exit recovery cases pass. Shipped profiles and a launcher reproduce the workflow. Actual use exposed missing startup configuration in the normal catalog; the provisioned host's local aliases are now connected. Core `/models` now inspects public GGUF metadata and registers installed weights with startup profiles, with ordinary CLI/TUI CPU smoke evidence. Runtime installation, weight downloads and broader CPU/daily-use qualification remain outside this gate. |
-| M4 bounded semantic agency | In progress | All three shadow functions now exist with explicit CLI/TUI access and evidence validation. The public 8B comparison failed context/progress gates; deterministic behavior remains. Bounded task-preserving fallback and session-tree local scheduling are implemented. Message-prompt pairing and earlier context/correction experiments use core improvement records. Supervised message-prompt proposal/evaluation/adoption/rollback is implemented. Paired context/progress candidate evaluation is implemented with explicit operator controls. Explicit external-to-native reconciliation and bounded handoff are implemented. Supervised assessment proposal/adoption/rollback is implemented per function/model. Core now filters context eligibility before inference and resolves empty eligible sets without a model call. Held-out quality and broader handoff qualification remain. |
+| M4 bounded semantic agency | In progress | All three shadow functions now exist with explicit CLI/TUI access and evidence validation. The public 8B comparison failed context/progress gates; deterministic behavior remains. Bounded task-preserving fallback and session-tree local scheduling are implemented. Message-prompt pairing and earlier context/correction experiments use core improvement records. Supervised message-prompt proposal/evaluation/adoption/rollback is implemented. Paired context/progress candidate evaluation is implemented with explicit operator controls. Explicit external-to-native reconciliation and bounded handoff are implemented. Supervised assessment proposal/adoption/rollback is implemented per function/model. Core now filters context eligibility before inference and resolves empty eligible sets without a model call. Required normal-memory loss and explicit resumed handoff now have bounded offline terminal evidence. Held-out quality and broader handoff qualification remain. |
 | M5 heterogeneous work / plugins | Pending | Supervision, plugin reconciliation, portable continuation, isolated improvement patches and rollback. |
 | M6 daily-use qualification | Pending | Measured UI, live adapter boundaries, offline and human dogfood gates. |
 
@@ -1942,3 +1942,52 @@ option. Resume the independent M4 live handoff/failure qualification track;
 semantic quality remains open and needs a distinct frozen hypothesis before
 more model work. M5 heterogeneous workflows/source-edit improvement and M6 daily
 use remain pending. Memory and agent-swarm remain plugins.
+
+
+## September 9 — Required-memory failure during handoff and resumed recovery
+
+PR37 merged at `216762c` with both Python CI versions and review passing.
+The independent M4 handoff track now has a frozen, bounded terminal journey
+through required normal-memory loss and explicitly reconciled recovery. The
+implementation and gates were committed at `5c6e399` before local inference.
+
+**Core behavior:** operator controls distinguish preflight refusal from a failure
+after the handoff starts. Started failures and returned incomplete results say
+that the record was used and direct the operator to inspect and record a new
+handoff. Provider exception bodies stay suppressed; existing cancellation and
+single-use enforcement are preserved. This closes a recovery-instruction gap,
+not a new authorization or automatic-retry path.
+
+**Observed result:** the plugins-absent control passed **21/21 checks**, and the
+normal-memory loss/recovery journey passed **30/30**. Stopping the owned memory
+child caused required-context failure before inference. The draft and completed
+files survived, the used record was refused, and the task remained unaccepted.
+After session restart, a fresh reconciliation retrieved normal memory and wrote
+only B. A and the inspected native effect remained intact. Exactly two successful
+Harness writes existed across the source and continuation; earlier task evidence retained
+its original provenance and replay required no inference.
+
+The local continuations took **12.911 s** without plugins and **6.569 s** with
+recovered memory, within the fixed 45-second limit. These are individual smoke
+journeys, not latency distributions. Final-compositor checks covered failure,
+reconciliation guidance, completed handoff and fresh context. The memory read
+returned 13,802 bytes from the normal scoped subject; only its size/hash is retained.
+
+The [handoff](../../handoffs/2026-09-09-handoff-memory-recovery/README.md) records the
+protocol, metadata-only report and validation. Both journeys used real Qwen3-8B
+inference offline, four CPUs, 4 GiB host RAM and no swap. The source was a controlled
+Codex-compatible process with real MCP, not a live subscription agent. The installed
+memory plugin and normal vault were mounted read-only; private temporary sessions
+were removed. All owned runtimes, memory children and the container stopped.
+
+**Validation:** full Python 3.13 suite **1,774 passed, seven skipped**, six existing
+MCP deprecation warnings in 401.36 seconds. Python 3.12 affected suites **110 passed**
+in 14.26 seconds. Offline build and clean wheel smoke passed; all 75 core files
+match the wheel. All 81 recorded core/driver/profile hashes match the execution
+freeze. Ruff and whitespace checks passed.
+
+**Remaining:** M4 semantic held-out quality and other handoff failures, particularly
+destination loss/busy handling and interruption during continuation. The existing
+network/authentication fallback evidence remains separate from this memory test.
+Live-provider qualification, M5 mixed-agent portability/source-edit improvement,
+and M6 daily use remain open. Memory and agent-swarm remain plugins.

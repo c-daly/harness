@@ -1,0 +1,28 @@
+{
+  "execution_commit": "5c6e399cf752f73c78cd9cc32c64a10177d5414d",
+  "offline_journeys_passed": 2,
+  "critical_checks": {
+    "plugins_absent": 21,
+    "normal_memory_recovery": 30
+  },
+  "source_hashes_verified": 81,
+  "protocol_catalog_and_check_sets_verified": true,
+  "normal_memory_server_hash_verified": true,
+  "private_sessions_removed": true,
+  "owned_qualification_containers_remaining": 0,
+  "python_3_13": {
+    "passed": 1774,
+    "skipped": 7,
+    "warnings": 6,
+    "seconds": 401.36
+  },
+  "python_3_12_affected": {
+    "passed": 110,
+    "seconds": 14.26
+  },
+  "offline_build_passed": true,
+  "offline_wheel_smoke_passed": true,
+  "wheel_source_files_match": 75,
+  "ruff_passed": true,
+  "whitespace_passed": true
+}
