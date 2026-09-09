@@ -1,0 +1,23 @@
+{
+  "base_commit": "bfe76e3189845c24477843430c769322b0462967",
+  "protocol_commit": "faab0733fd6f3fe5d30186ed1b65ad2c94696dd4",
+  "production_core_changes": false,
+  "artifacts": {
+    "README.md": "f47db87ceb9c1039d4fa650e94aae81a359c3157d6403ef1c68b9a9b3a420167",
+    "baseline-1/inference-events.jsonl": "ac4862a785bc8e9c79c9da38a0d1d41ec81ea5bbd2bd05af0728bd79c3f4930a",
+    "baseline-1/referenced-inputs.json": "f15c79f6170e53904f5d77f24db5758316d78bd5d833976d003d66a776422931",
+    "baseline-1/report.json": "7c76d454fed113c63ad9df680cd3eeebd567edd1162a6ec58a4e5dc266d09479",
+    "baseline-2/inference-events.jsonl": "9a61ed6910012fdc3149a6e14b022614d8b5b40790dcae11f295241c29ff92f3",
+    "baseline-2/referenced-inputs.json": "f15c79f6170e53904f5d77f24db5758316d78bd5d833976d003d66a776422931",
+    "baseline-2/report.json": "9b7ec784906a61409dc6e2fb14670da43f98e22a4a0d8785ecbc4ba25cf7d0da",
+    "candidate-1/inference-events.jsonl": "a2c21bff97ea5e521be64318480102e48c2aeb427704aec1963fc48675a47269",
+    "candidate-1/referenced-inputs.json": "f15c79f6170e53904f5d77f24db5758316d78bd5d833976d003d66a776422931",
+    "candidate-1/report.json": "1724ce66d6047323e7b00285f123e3567ff831ecea3f309134d6f587b0eb7747",
+    "candidate-2/inference-events.jsonl": "a22281dabe9c41cd051873360dcf9387b4c8b9447c667759c262f88a55ef3884",
+    "candidate-2/referenced-inputs.json": "f15c79f6170e53904f5d77f24db5758316d78bd5d833976d003d66a776422931",
+    "candidate-2/report.json": "fcf330a59c308810a68383241b8e6a7be6f23e929aeddd320d211229769c8c75",
+    "protocol.json": "8f48ddd54015c33bc4c68d0bc415965256c5b9d2eb7c07837805e430c612523f",
+    "summary.json": "221233fe17ade44156ea8ca48ecdf83f136321fd3888e0fb9f529df41319994d",
+    "validation.json": "8eaa3e7295924a3bc5ef0e179dd3b713bf9b0f8cba132bea84dd9ad5a8629891"
+  }
+}

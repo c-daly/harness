@@ -1,0 +1,117 @@
+{
+  "protocol_commit": "faab073",
+  "comparisons": [
+    {
+      "baseline_correct": 5,
+      "candidate_correct": 5,
+      "cases": 6,
+      "rules_correct": 4,
+      "improved_ids": [],
+      "regressed_ids": [],
+      "critical_failed_ids": [
+        "critical-ambiguous"
+      ],
+      "candidate_max_latency_ms": 817.575108994788,
+      "latency_ratio": 0.33140855387939816,
+      "gates": {
+        "all_cases_correct": false,
+        "critical_passed": false,
+        "no_regressions": true,
+        "improved": false,
+        "case_latency": true,
+        "latency_ratio": true
+      },
+      "development_passed": false,
+      "quality_qualification": false
+    },
+    {
+      "baseline_correct": 5,
+      "candidate_correct": 5,
+      "cases": 6,
+      "rules_correct": 4,
+      "improved_ids": [],
+      "regressed_ids": [],
+      "critical_failed_ids": [
+        "critical-ambiguous"
+      ],
+      "candidate_max_latency_ms": 349.023536000459,
+      "latency_ratio": 0.26740869606993534,
+      "gates": {
+        "all_cases_correct": false,
+        "critical_passed": false,
+        "no_regressions": true,
+        "improved": false,
+        "case_latency": true,
+        "latency_ratio": true
+      },
+      "development_passed": false,
+      "quality_qualification": false
+    }
+  ],
+  "development_passed": false,
+  "quality_qualification": false,
+  "fresh_confirmation_cases_used": 0,
+  "selection_changed": false,
+  "runs": {
+    "baseline-1": {
+      "correct": 5,
+      "model_correct": 4,
+      "model_cases": 5,
+      "core_correct": 1,
+      "max_scored_latency_ms": 1543.8763319980353,
+      "startup_seconds": 14.964884448003431,
+      "warmup": {
+        "status": "ok",
+        "reason": "assessed",
+        "duration_ms": 4384.518186001515
+      },
+      "mechanics_passed": true,
+      "owned_runtime_stopped": true
+    },
+    "candidate-1": {
+      "correct": 5,
+      "model_correct": 4,
+      "model_cases": 5,
+      "core_correct": 1,
+      "max_scored_latency_ms": 817.575108994788,
+      "startup_seconds": 7.544736046002072,
+      "warmup": {
+        "status": "abstained",
+        "reason": "timeout",
+        "duration_ms": 5625.550826000108
+      },
+      "mechanics_passed": true,
+      "owned_runtime_stopped": true
+    },
+    "candidate-2": {
+      "correct": 5,
+      "model_correct": 4,
+      "model_cases": 5,
+      "core_correct": 1,
+      "max_scored_latency_ms": 349.023536000459,
+      "startup_seconds": 2.6968801019975217,
+      "warmup": {
+        "status": "ok",
+        "reason": "assessed",
+        "duration_ms": 2435.3450299968245
+      },
+      "mechanics_passed": true,
+      "owned_runtime_stopped": true
+    },
+    "baseline-2": {
+      "correct": 5,
+      "model_correct": 4,
+      "model_cases": 5,
+      "core_correct": 1,
+      "max_scored_latency_ms": 1177.530597000441,
+      "startup_seconds": 7.4944262280041585,
+      "warmup": {
+        "status": "ok",
+        "reason": "assessed",
+        "duration_ms": 4102.193655002338
+      },
+      "mechanics_passed": true,
+      "owned_runtime_stopped": true
+    }
+  }
+}
