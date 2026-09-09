@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass, field
 
+from harness.agent import DelegationResult
 from harness.frontmatter import AgentDef
 from harness.hooks import HookBus
 from harness.interaction import HeadlessResolver
@@ -34,10 +35,18 @@ class FakeRunner:
     responses: dict  # alias -> str | callable(prompt)->str
     calls: list = field(default_factory=list)
 
-    async def run(self, *, prompt, model, parent, agent=None):
+    async def run_result(self, *, prompt, model, parent, agent=None, on_result=None):
         self.calls.append((str(model), prompt))
         r = self.responses[str(model)]
-        return r(prompt) if callable(r) else r
+        value = r(prompt) if callable(r) else r
+        result = value if isinstance(value, DelegationResult) else DelegationResult(status="completed", text=value)
+        if on_result is not None:
+            on_result(result)
+        return result
+
+
+def failed(reason):
+    return DelegationResult(status="failed", reason=reason)
 
 
 # --- combiners ---
@@ -46,9 +55,9 @@ def test_majority_vote_picks_most_common():
     assert majority_vote(["A", "A", "B"]) == "A"
 
 
-def test_majority_vote_excludes_errors_unless_all_failed():
+def test_majority_vote_treats_error_prefix_as_answer_data():
     assert majority_vote(["[subagent error] x", "ok", "ok"]) == "ok"
-    assert majority_vote(["[subagent error] x"]).startswith("[subagent error]")
+    assert majority_vote(["[subagent error] x", "[subagent error] x", "ok"]) == "[subagent error] x"
 
 
 def test_majority_vote_tie_breaks_to_earliest_occurrence():
@@ -73,16 +82,16 @@ async def test_ensemble_uses_judge_to_synthesize():
 
 async def test_ensemble_judge_path_filters_errors_from_candidates():
     runner = FakeRunner({
-        "a": "[subagent error] boom",
+        "a": failed("boom"),
         "b": "y",
         "j": lambda p: f"SYNTH::{('boom' not in p and 'y' in p)}",
     })
     out = await ensemble(runner, None, "Q", [Expert("a"), Expert("b")], judge=Expert("j"))
-    assert out == "SYNTH::True"  # the errored answer never reached the judge's prompt
+    assert out.startswith("[subagent error] incomplete") and out.endswith("SYNTH::True")
 
 
 async def test_ensemble_judge_not_called_when_all_experts_error():
-    runner = FakeRunner({"a": "[subagent error] x", "b": "[subagent error] y", "j": "SYNTH"})
+    runner = FakeRunner({"a": failed("x"), "b": failed("y"), "j": "SYNTH"})
     out = await ensemble(runner, None, "Q", [Expert("a"), Expert("b")], judge=Expert("j"))
     assert out.startswith("[subagent error]")
     assert "j" not in {m for m, _ in runner.calls}  # judge never invoked
@@ -101,7 +110,9 @@ def test_is_veto_no_substring_scan_false_positive():
 
 
 def test_is_veto_approve_first_line_does_not_veto():
-    assert not _is_veto("APPROVE -- ship it")
+    assert not _is_veto("APPROVE\nThe answer addresses the question.")
+    assert _is_veto("APPROVED nothing")
+    assert _is_veto("APPROVE -- actually incomplete")
 
 
 def test_is_veto_error_vetoes_fail_closed():
@@ -111,7 +122,7 @@ def test_is_veto_error_vetoes_fail_closed():
 # --- panel ---
 
 async def test_panel_accepts_when_no_veto():
-    runner = FakeRunner({"p": "proposal", "c1": "APPROVE", "c2": "approve, looks right"})
+    runner = FakeRunner({"p": "proposal", "c1": "APPROVE", "c2": "approve\nlooks right"})
     out = await panel(runner, None, "Q", proposer=Expert("p"), critics=[Expert("c1"), Expert("c2")])
     assert out == "proposal"
 
@@ -119,12 +130,12 @@ async def test_panel_accepts_when_no_veto():
 async def test_panel_rejects_on_veto():
     runner = FakeRunner({"p": "wrong proposal", "c1": "APPROVE", "c2": "VETO: it is wrong"})
     out = await panel(runner, None, "Q", proposer=Expert("p"), critics=[Expert("c1"), Expert("c2")])
-    assert out.startswith("REJECTED by 1/2")
+    assert "REJECTED by 1/2" in out and out.startswith("[subagent error] incomplete")
     assert "VETO: it is wrong" in out
 
 
 async def test_panel_proposer_error_short_circuits_critics():
-    runner = FakeRunner({"p": "[subagent error] boom", "c1": "APPROVE"})
+    runner = FakeRunner({"p": failed("boom"), "c1": "APPROVE"})
     out = await panel(runner, None, "Q", proposer=Expert("p"), critics=[Expert("c1")])
     assert out == "[subagent error] boom"
     assert [m for m, _ in runner.calls] == ["p"]  # critics never fanned out
@@ -140,7 +151,7 @@ async def test_draft_refine_feeds_draft_to_refiner():
 
 
 async def test_draft_refine_draft_error_short_circuits_refiner():
-    runner = FakeRunner({"d": "[subagent error] boom", "r": "refined"})
+    runner = FakeRunner({"d": failed("boom"), "r": "refined"})
     out = await draft_refine(runner, None, "Q", drafter=Expert("d"), refiner=Expert("r"))
     assert out == "[subagent error] boom"
     assert [m for m, _ in runner.calls] == ["d"]  # refiner never invoked
@@ -156,7 +167,7 @@ async def test_escalate_keeps_cheap_when_it_succeeds():
 
 
 async def test_escalate_promotes_on_cheap_error():
-    runner = FakeRunner({"cheap": "[subagent error] boom", "premium": "fixed"})
+    runner = FakeRunner({"cheap": failed("boom"), "premium": "fixed"})
     out = await escalate(runner, None, "Q", cheap=Expert("cheap"), premium=Expert("premium"))
     assert out == "fixed"
     assert [m for m, _ in runner.calls] == ["cheap", "premium"]
@@ -181,7 +192,7 @@ async def test_escalate_verify_gate_pass_keeps_cheap():
 
 
 async def test_escalate_cheap_error_skips_verify_gate():
-    runner = FakeRunner({"cheap": "[subagent error] boom", "v": "PASS", "premium": "fixed"})
+    runner = FakeRunner({"cheap": failed("boom"), "v": "PASS", "premium": "fixed"})
     out = await escalate(
         runner, None, "Q", cheap=Expert("cheap"), premium=Expert("premium"), verify=Expert("v")
     )
@@ -223,7 +234,7 @@ async def test_ensemble_tool_scalar_models_string_is_one_expert():
 
 
 async def test_escalate_tool_delegates():
-    runner = FakeRunner({"cheap": "[subagent error] x", "premium": "ok"})
+    runner = FakeRunner({"cheap": failed("x"), "premium": "ok"})
     tool = EscalateTool(runner=runner, parent=None)
     out = await tool({"prompt": "Q", "cheap": "cheap", "premium": "premium"})
     assert out == "ok"

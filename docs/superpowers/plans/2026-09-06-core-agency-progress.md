@@ -1,8 +1,8 @@
 # Core agency implementation record
 
-Current implementation branch: `feat/portable-task-export`, based on merged `main`
-at `5a79173` (PR39, destination fault recovery and truthful stream completion).
-Previous branches: `feat/handoff-destination-recovery`, `feat/handoff-failure-qualification`, `feat/context-profile-comparison`, `docs/context-experiment-results`, `feat/context-eligibility`, `feat/context-selection-qualification`, `fix/bounded-compaction`, `fix/model-selection-continuity`, `feat/local-model-management`, `feat/assessment-improvement`, `feat/external-handoff`, `feat/assessment-evaluation`, `feat/supervised-improvement`, `feat/local-scheduling`, `feat/task-fallback`, `feat/semantic-context-progress`, `feat/local-assistant-m3`, `feat/resident-workflow`, `feat/task-completion-evidence`, `fix/inference-client-lifecycle`, `feat/local-response-profiles`, `feat/local-tool-recovery`, `feat/local-tool-planning`, `feat/local-qualification`, `feat/semantic-evaluation`, `feat/local-context`, `feat/local-readiness`, `feat/agent-runtimes`,
+Current implementation branch: `feat/typed-coordination-results`, based on merged
+`main` at `27b37cb` (PR40, portable continuation export and CI race correction).
+Previous branches: `feat/portable-task-export`, `feat/handoff-destination-recovery`, `feat/handoff-failure-qualification`, `feat/context-profile-comparison`, `docs/context-experiment-results`, `feat/context-eligibility`, `feat/context-selection-qualification`, `fix/bounded-compaction`, `fix/model-selection-continuity`, `feat/local-model-management`, `feat/assessment-improvement`, `feat/external-handoff`, `feat/assessment-evaluation`, `feat/supervised-improvement`, `feat/local-scheduling`, `feat/task-fallback`, `feat/semantic-context-progress`, `feat/local-assistant-m3`, `feat/resident-workflow`, `feat/task-completion-evidence`, `fix/inference-client-lifecycle`, `feat/local-response-profiles`, `feat/local-tool-recovery`, `feat/local-tool-planning`, `feat/local-qualification`, `feat/semantic-evaluation`, `feat/local-context`, `feat/local-readiness`, `feat/agent-runtimes`,
 and `feat/core-agency`.
 
 Committed checkpoints: `0351b75` (roadmap, lifecycle, and storage/result integrity),
@@ -57,7 +57,7 @@ qualification. Milestone completion requires its roadmap gates, not just code.
 | M2 inference / agent contracts | In progress | Bounded inference, native tasks, Codex task binding, explicit execution kinds, nullable usage, core improvement records and recorded task-evidence checks implemented. Remaining adapters, richer artifact predicates and live capability qualification remain. |
 | M3 local core assistant | Complete for the measured CUDA profile | Qwen3-8B passes six full offline project journeys: twelve exact native file writes, changed-record answers after restart, real cancellation, normal memory, and visible task/context status. Four missing-assets/startup-exit recovery cases pass. Shipped profiles and a launcher reproduce the workflow. Actual use exposed missing startup configuration in the normal catalog; the provisioned host's local aliases are now connected. Core `/models` now inspects public GGUF metadata and registers installed weights with startup profiles, with ordinary CLI/TUI CPU smoke evidence. Runtime installation, weight downloads and broader CPU/daily-use qualification remain outside this gate. |
 | M4 bounded semantic agency | In progress | All three shadow functions now exist with explicit CLI/TUI access and evidence validation. The public 8B comparison failed context/progress gates; deterministic behavior remains. Bounded task-preserving fallback and session-tree local scheduling are implemented. Message-prompt pairing and earlier context/correction experiments use core improvement records. Supervised message-prompt proposal/evaluation/adoption/rollback is implemented. Paired context/progress candidate evaluation is implemented with explicit operator controls. Explicit external-to-native reconciliation and bounded handoff are implemented. Supervised assessment proposal/adoption/rollback is implemented per function/model. Core now filters context eligibility before inference and resolves empty eligible sets without a model call. Required normal-memory loss, busy preflight, destination loss after a write and Esc during continuation now have bounded offline terminal evidence. Truncated OpenAI-compatible streams cannot fabricate completion. Held-out quality and broader handoff qualification remain. |
-| M5 heterogeneous work / plugins | In progress | Core CLI/TUI exports a documented Markdown/JSON continuation package with task evidence, context snapshots/references, artifacts and original provenance. A controlled independent frontend continues after source-database removal. Live mixed-agent supervision, installed-plugin reconciliation, broader portable continuation, isolated improvement patches and rollback remain. |
+| M5 heterogeneous work / plugins | In progress | Core CLI/TUI exports a documented Markdown/JSON continuation package with task evidence, context snapshots/references, artifacts and original provenance. A controlled independent frontend continues after source-database removal. Coordination now consumes typed child outcomes, preserves partial work/disagreement/provenance, settles cancelled siblings and exports its reports; `/coordination` inspects them. Evidence-based escalation, shared budgets/admission, live mixed-agent supervision, installed-plugin reconciliation, broader portable continuation, isolated improvement patches and rollback remain. |
 | M6 daily-use qualification | Pending | Measured UI, live adapter boundaries, offline and human dogfood gates. |
 
 `4a98d3f` added durable task requirements and recorded evidence in
@@ -2117,3 +2117,57 @@ The source deadline remains 300 ms, and the denied memory tool must never run.
 All 12 resident-status tests passed on Python 3.13 (6.53 s) and 3.12 (6.75 s);
 Ruff and whitespace checks passed. The correction changes tests and this record
 only; core export behavior and the format remain unchanged.
+
+
+## September 9 — Typed delegation and inspectable coordination outcomes
+
+PR40 merged at `27b37cb`; Python 3.12/3.13 CI and automated review passed. This
+increment addresses an M5 integrity prerequisite: mixture coordination previously
+interpreted an `[subagent error]` prefix as execution status, and an interrupted
+fan-out could leave siblings running after the coordinator returned.
+
+**Core behavior:** `SubagentRunner.run_result()` returns a typed execution outcome
+with child session/run, original output reference, reason and truncation. Existing
+string APIs remain compatible. Coordination filters by execution status and
+truncation; literal error-looking text remains ordinary answer data. It preserves
+successful sibling work alongside failures, blocked children, disagreement and
+review vetoes. Cancellation and unexpected runner failures settle siblings before
+the aggregate terminal event. Budget/deadline outcomes retain their recorded
+incomplete status; unreadable child terminal logs leave an explicit diagnostic
+and parent failure rather than hiding the failure.
+
+A versioned, validated report records each participant and the aggregate answer
+in the calling session. `/coordination` and `harness coordination SESSION_ID`
+inspect these facts without loading providers/plugins or changing the log. The
+activity panel preserves a configured coordination agent's incomplete status
+across a successful tool transport. Portable export copies reports associated
+with the task's tool calls and their aggregate outputs. Participant references
+remain references to child stores; recursive artifact transfer is not implemented.
+The [contract](../../coordination-outcomes.md) documents status, provenance,
+limits and advisory selection policies.
+
+**Evidence:** regressions exercise real child sessions, error-prefix answer data,
+partial/truncated results, failed run IDs, blocked fan-out, shared model-budget
+exhaustion, cancellation cleanup ordering, bounded output, CLI/TUI inspection and
+portable task evidence. A controlled catalog journey mixes inference with the
+real external Codex binding using scripted transports. This qualifies contract
+behavior, not live local/remote agents or installed plugins. The tracked task's
+operator review remains unresolved after coordination and export.
+
+**Remaining:** exact `APPROVE`/`PASS` first-line parsing only implements the
+existing advisory review policy. It does not verify acceptance. Evidence-based
+escalation, separate coordinator admission, shared token/cost accounting, edit
+ownership and live heterogeneous/plugin reconciliation remain M5 work. Source
+patch improvement, evaluation and rollback also remain; no prompt/model was
+adopted. M4 held-out semantic quality and M6 daily-use qualification are unchanged.
+
+**Validation:** the full Python 3.13 suite passed **1,835 tests, seven skipped**,
+with six existing MCP deprecation warnings (425.66 s). Affected Python 3.12
+runtime/delegation/task/UI/export suites passed **216 tests** (41.04 s).
+Final review then distinguished missing critic output from actual disagreement
+and retained a negative verifier's disagreement after premium recovery. The
+final coordination suites, including those two added regressions, passed
+**55 tests on each Python version** (1.44 s / 1.53 s); the full run predates this
+small reporting correction. Ruff, whitespace, offline build, CLI help and clean
+wheel smoke passed. All 79 core modules match the final wheel and all 81 final
+core/test hashes remained unchanged through publication preparation.

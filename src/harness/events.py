@@ -310,6 +310,19 @@ class SubagentFinished(_Event):
     type: Literal["subagent_finished"] = "subagent_finished"
     child_session_id: SessionId
     status: Literal["ok", "error", "cancelled", "incomplete"]
+    run_id: str | None = None
+    output: BlobRef | None = None  # Stored in child_session_id's blob directory.
+    reason: str = ""
+    truncated: bool = False
+
+
+class CoordinationFinished(_Event):
+    type: Literal["coordination_finished"] = "coordination_finished"
+    id: str
+    call_id: CallId | None = None
+    strategy: str
+    status: Literal["completed", "incomplete", "failed", "blocked", "cancelled"]
+    report: BlobRef
 
 
 class AgentRunStarted(_Event):
@@ -514,6 +527,7 @@ Event = Annotated[
         PermissionResolved,
         SubagentSpawned,
         SubagentFinished,
+        CoordinationFinished,
         AgentRunStarted,
         AgentRunFinished,
         TaskHandoffRecorded,

@@ -17,7 +17,7 @@ from harness.blobs import BlobRef, BlobStore
 from harness.execution import BudgetExceeded
 from harness.messages import Message
 from harness.provider import Chunk, Usage
-from harness.types import AgentId, ModelId
+from harness.types import AgentId, ModelId, SessionId
 
 if TYPE_CHECKING:
     from harness.session import Session
@@ -59,6 +59,34 @@ class AgentResult(BaseModel):
 
     def read_text(self, blobs: BlobStore) -> str:
         return blobs.get(self.output).decode("utf-8") if self.output is not None else ""
+
+
+class DelegationResult(BaseModel):
+    """Execution outcome delivered to a coordinator; text is never a status protocol.
+
+    Output references belong to child_session_id. A coordination report belongs
+    to report_session_id. Neither reference grants authority or task acceptance.
+    """
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    status: Literal["completed", "incomplete", "failed", "blocked", "cancelled"]
+    text: str = ""
+    reason: str = ""
+    child_session_id: SessionId | None = None
+    run_id: str | None = None
+    output: BlobRef | None = None
+    truncated: bool = False
+    report: BlobRef | None = None
+    report_session_id: SessionId | None = None
+    acceptance: Literal["unverified"] = "unverified"
+
+    def render(self):
+        """Compatibility text for tools/callers; core consumers use status."""
+        if self.status == "completed":
+            return self.text
+        detail = self.reason or self.status
+        if self.status == "incomplete":
+            detail = f"incomplete ({detail})"
+        return f"[subagent error] {detail}" + (f": {self.text}" if self.text else "")
 
 
 @dataclass(frozen=True)

@@ -26,6 +26,7 @@ from textual.containers import Vertical
 from textual.widgets import Static, TabbedContent, TabPane
 
 from harness.events import (
+    CoordinationFinished,
     Envelope,
     SubagentFinished,
     SubagentSpawned,
@@ -151,6 +152,10 @@ def fold_agents(events: list[Envelope]) -> list[AgentRow]:
                 status = {"ok": "done", "error": "error", "cancelled": "cancelled",
                           "incomplete": "incomplete"}[ev.status]
                 upsert(row, status=status)
+        elif isinstance(ev, CoordinationFinished) and ev.call_id in open_dispatch:
+            status = {"completed": "done", "incomplete": "incomplete", "failed": "error",
+                      "blocked": "error", "cancelled": "cancelled"}[ev.status]
+            upsert(ev.call_id, status=status)
 
     return [rows[cid] for cid in reversed(order)]
 
