@@ -1,6 +1,8 @@
 """Model comparisons must retain the existing public correctness and latency gates."""
 
 import hashlib
+import json
+import sys
 from copy import deepcopy
 from pathlib import Path
 
@@ -9,6 +11,7 @@ import pytest
 from harness.blobs import BlobRef
 from harness.semantic_assessment import CONTEXT_PROMPT, ContextSelection, function_version
 from harness.semantics import ASSESSMENT_LIMITS, AssessmentObservation
+from scripts import measure_context_profile
 from scripts.measure_context_profile import IMAGE, MODEL_PROFILES, PROFILES, compare, profile_catalog
 from scripts.qualify_assessment_evaluation import public_experiments
 
@@ -92,3 +95,25 @@ def test_effective_commands_override_defaults_without_mutating_shared_profiles()
         for flag, expected in (("--n-gpu-layers", layers), ("--ctx-size", "4096"), ("--presence-penalty", "0")):
             assert command[command.index(flag) + 1] == expected
     assert MODEL_PROFILES == original
+
+
+def test_setup_failure_is_preserved_and_output_cannot_be_reused(tmp_path, monkeypatch):
+    output = tmp_path / "attempt"
+    monkeypatch.setattr(sys, "argv", ["measure_context_profile.py", "--profile", "candidate-4b",
+        "--model-file", str(tmp_path / "missing.gguf"), "--output", str(output)])
+
+    def unbounded_environment():
+        raise ValueError("not the bounded offline container")
+
+    monkeypatch.setattr(measure_context_profile, "isolation", unbounded_environment)
+    with pytest.raises(SystemExit) as stopped:
+        measure_context_profile.main()
+    assert stopped.value.code == 1
+    saved = (output / "report.json").read_bytes()
+    report = json.loads(saved)
+    assert report["error_type"] == "ValueError"
+    assert report["cases"] == [] and not report["mechanics_passed"]
+    assert report["catalog"] == profile_catalog("candidate-4b", tmp_path / "missing.gguf").entries
+    with pytest.raises(FileExistsError):
+        measure_context_profile.main()
+    assert (output / "report.json").read_bytes() == saved

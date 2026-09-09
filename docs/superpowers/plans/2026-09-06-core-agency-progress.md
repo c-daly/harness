@@ -1,8 +1,8 @@
 # Core agency implementation record
 
-Current implementation branch: `docs/context-experiment-results`, based on merged `main`
-at `db71d51` (PR35, core eligibility before inference).
-Previous branches: `feat/context-eligibility`, `feat/context-selection-qualification`, `fix/bounded-compaction`, `fix/model-selection-continuity`, `feat/local-model-management`, `feat/assessment-improvement`, `feat/external-handoff`, `feat/assessment-evaluation`, `feat/supervised-improvement`, `feat/local-scheduling`, `feat/task-fallback`, `feat/semantic-context-progress`, `feat/local-assistant-m3`, `feat/resident-workflow`, `feat/task-completion-evidence`, `fix/inference-client-lifecycle`, `feat/local-response-profiles`, `feat/local-tool-recovery`, `feat/local-tool-planning`, `feat/local-qualification`, `feat/semantic-evaluation`, `feat/local-context`, `feat/local-readiness`, `feat/agent-runtimes`,
+Current implementation branch: `feat/context-profile-comparison`, based on merged `main`
+at `bfe76e3` (PR36, rejected context experiments and corrected runtime provenance).
+Previous branches: `docs/context-experiment-results`, `feat/context-eligibility`, `feat/context-selection-qualification`, `fix/bounded-compaction`, `fix/model-selection-continuity`, `feat/local-model-management`, `feat/assessment-improvement`, `feat/external-handoff`, `feat/assessment-evaluation`, `feat/supervised-improvement`, `feat/local-scheduling`, `feat/task-fallback`, `feat/semantic-context-progress`, `feat/local-assistant-m3`, `feat/resident-workflow`, `feat/task-completion-evidence`, `fix/inference-client-lifecycle`, `feat/local-response-profiles`, `feat/local-tool-recovery`, `feat/local-tool-planning`, `feat/local-qualification`, `feat/semantic-evaluation`, `feat/local-context`, `feat/local-readiness`, `feat/agent-runtimes`,
 and `feat/core-agency`.
 
 Committed checkpoints: `0351b75` (roadmap, lifecycle, and storage/result integrity),
@@ -1902,3 +1902,43 @@ for the bounded semantic function, preserving the same critical and regression
 gates and keeping fresh confirmation separate. Passing native tool-work gates
 does not establish semantic-selection quality. M4 is still open, along with
 broader handoff qualification and M5/M6 work.
+
+
+## September 9 — Compare the installed 4B and 8B context profiles
+
+PR36 merged at `bfe76e3`. The new public comparison driver and protocol were
+frozen in `faab073` before inference. Four isolated blocks ran in 8B/4B/4B/8B
+order with the same builtin prompt, six public cases, core eligibility filter,
+4,096-token context, request temperature zero, and fixed correctness/latency
+gates. The 8B profile retained 28 GPU layers; 4B used full offload. This compares
+profiles on a shared host, not model size in isolation.
+
+**Result:** both models scored **5/6 twice**, with **4/5 model decisions correct**
+and **one correct core eligibility answer** per block. Every block guessed the
+deployment policy for the ambiguous query. Neither 4B repetition improved or
+regressed a scored answer. Both passed latency gates (candidate maxima **818 ms**
+and **349 ms**, total ratios **0.331** and **0.267**) but failed the critical and
+improvement gates. The first 4B unscored warmup timed out at **5,626 ms** including
+overhead; that failure is retained separately from scored latency. No failed
+block was retried, no configuration was tuned, and no fresh confirmation was run.
+
+The [handoff](../../handoffs/2026-09-09-context-profiles/README.md) retains the frozen
+protocol, reports, actual model events, input/prompt blobs, comparison and source
+hashes. All blocks ran offline with four CPUs, 4 GiB host RAM and no swap; their
+owned runtimes stopped. Core source, dependencies and user model settings are
+unchanged. This does not qualify automatic context selection or demonstrate
+successful self-improvement.
+
+**Validation:** **29 focused tests passed on each of Python 3.12 and 3.13**.
+Regraded 24 scored observations, checked all 28 observations against their
+original events, parsed 224 event envelopes, and verified 32 blobs and 312 source
+hashes against the execution freeze. The comparator rejects mismatched inputs,
+prompts, profiles, sources and limits, and retains critical/regression/latency
+gates. Ruff and whitespace checks passed; no new local full-suite, packaging or
+UI result is claimed for this experiment driver and evidence update.
+
+**Next:** keep context selection advisory and 4B available as a development
+option. Resume the independent M4 live handoff/failure qualification track;
+semantic quality remains open and needs a distinct frozen hypothesis before
+more model work. M5 heterogeneous workflows/source-edit improvement and M6 daily
+use remain pending. Memory and agent-swarm remain plugins.

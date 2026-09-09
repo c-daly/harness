@@ -1,0 +1,26 @@
+{
+  "event_envelopes": 224,
+  "input_blobs": 32,
+  "source_hashes": 312,
+  "scored_observations": 24,
+  "warmups": 4,
+  "completed_model_calls": 23,
+  "protocol_commit": "faab0733fd6f3fe5d30186ed1b65ad2c94696dd4",
+  "all_reports_match_frozen_protocol": true,
+  "observations_match_original_events": true,
+  "source_hashes_match_executed_freeze": true,
+  "production_core_and_dependencies_match_base": true,
+  "focused_tests": {
+    "python_3_13": {
+      "passed": 29,
+      "seconds": 0.91
+    },
+    "python_3_12": {
+      "passed": 29,
+      "seconds": 1.51
+    }
+  },
+  "owned_experiment_containers_remaining": 0,
+  "local_full_suite_rerun": false,
+  "local_packaging_rerun": false
+}
