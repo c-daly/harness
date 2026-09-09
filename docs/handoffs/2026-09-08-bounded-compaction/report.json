@@ -1,0 +1,27 @@
+{
+  "source_bytes": 29689,
+  "whole_history_failure": "Model context limit exceeded. Use /compact <inference-alias> or select a model with a larger context window.",
+  "whole_history_seconds": 5.166,
+  "compact_seconds": 25.788,
+  "summary": "Project codename is amberfern. Numeric diagnostic samples are disposable filler. x0 through x2399 are defined with xN=N. Release token is skyglass. Next task is to test /project/next.py. That test is still pending. Preserve this token and unresolved task.",
+  "parts": 9,
+  "progress": [
+    "Compacting 1/9 with compaction-gpu \u2014 Esc cancels",
+    "Compacting 2/9 with compaction-gpu \u2014 Esc cancels",
+    "Compacting 3/9 with compaction-gpu \u2014 Esc cancels",
+    "Compacting 4/9 with compaction-gpu \u2014 Esc cancels",
+    "Compacting 5/9 with compaction-gpu \u2014 Esc cancels",
+    "Compacting 6/9 with compaction-gpu \u2014 Esc cancels",
+    "Compacting 7/9 with compaction-gpu \u2014 Esc cancels",
+    "Compacting 8/9 with compaction-gpu \u2014 Esc cancels",
+    "Compacting 9/9 with compaction-gpu \u2014 Esc cancels"
+  ],
+  "draft_preserved": true,
+  "continuation_seconds": 1.714,
+  "answer": "The project codename is amberfern, the release token is skyglass, and the pending task is to test /project/next.py.",
+  "session_id": "58b0ebb27ab4493aa15bded8b137b49f",
+  "model": "compaction-gpu",
+  "compositor_verified": true,
+  "user_catalog_unchanged": true,
+  "owned_runtime_stopped": true
+}

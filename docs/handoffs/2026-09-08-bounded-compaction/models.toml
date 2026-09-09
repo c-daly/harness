@@ -1,0 +1,27 @@
+[models.compaction-gpu]
+route = "openai/compaction-gpu"
+api_base = "http://127.0.0.1:8186/v1"
+max_input_tokens = 8192
+input_cost_per_token = 0.0
+output_cost_per_token = 0.0
+tags = ["local"]
+verified = false
+
+[models.compaction-gpu.local]
+auto_start = true
+probe_kind = "llamacpp"
+resource_group = "local"
+cwd = "/home/fearsidhe/projects/harness/.local-runtime/llama-b9603"
+startup_seconds = 120
+required_files = ["/home/fearsidhe/projects/harness/.local-runtime/llama-b9603/llama-server", "/home/fearsidhe/projects/harness/.local-runtime/Qwen3-8B-Q4_K_M.gguf"]
+command = ["/usr/bin/env", "LD_LIBRARY_PATH=/home/fearsidhe/projects/harness/.local-runtime/llama-b9603", "/home/fearsidhe/projects/harness/.local-runtime/llama-b9603/llama-server", "--model", "/home/fearsidhe/projects/harness/.local-runtime/Qwen3-8B-Q4_K_M.gguf", "--alias", "compaction-gpu", "--host", "127.0.0.1", "--port", "8186", "--ctx-size", "8192", "--n-gpu-layers", "99", "--parallel", "1", "--threads", "4", "--threads-batch", "4", "--jinja", "--chat-template-kwargs", "{\"enable_thinking\":false}"]
+
+[models.compaction-gpu.artifact]
+path = "/home/fearsidhe/projects/harness/.local-runtime/Qwen3-8B-Q4_K_M.gguf"
+size_bytes = 5027783488
+sha256 = "d98cdcbd03e17ce47681435b5150e34c1417f50b5c0019dd560e4882c5745785"
+gguf_version = 3
+checked_at = 1788885244.7193632
+hub_repo = "Qwen/Qwen3-8B-GGUF"
+hub_revision = "7c41481f57cb95916b40956ab2f0b139b296d974"
+hub_filename = "Qwen3-8B-Q4_K_M.gguf"

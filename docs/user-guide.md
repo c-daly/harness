@@ -110,19 +110,30 @@ tool calls, and answer permission prompts inline. Key bindings:
   not a process restart). Any MCP servers enabled at startup are restarted
   (fresh connections, same enabled set — the checklist is not re-prompted).
   Refused with a message while a turn is running.
-- `/compact` — fold the whole transcript into one summary. Issues a single
-  completion through the CURRENT model asking for a handoff-quality summary,
-  then replaces `loop.history` with that summary as a system message and
-  records a `CompactionApplied` event in the session log. It's event-sourced
-  and resume-safe: reading the session back later (including via `--resume`)
-  reconstructs the same collapsed state, because the fold applies the exact
-  same replacement on replay. On failure (the summarize call errors) history
-  is left untouched, nothing is logged, and the error is shown. Refused while
-  a turn (or another `/compact`) is running. Esc cancels an in-flight
-  `/compact` cleanly -- history untouched, nothing logged -- without writing
-  a `UserInterrupt` event: unlike interrupting a real turn, a `/compact` is
-  an internal admin call, not a user turn, so no interrupt fact belongs in
-  the log for it.
+- `/compact [alias]` — summarize history in bounded portions, carrying the
+  developing summary into each subsequent call. Defaults to the current model;
+  `/compact local` uses the `local` inference alias without changing your selected
+  model or agent. External agents require an explicit inference alias. Progress
+  stays visible above the prompt; Esc cancels. History changes only after every
+  portion succeeds, and resume reconstructs the same summary. Failure or
+  cancellation preserves the original history. Calls are still audited and
+  charged normally; compaction does not create a user turn or `UserInterrupt`.
+  Refused while a turn or another compaction is running. Tool-result sidecars are
+  verified and included; image history is refused by this text-only compactor.
+  Summaries can lose detail; original events and blobs remain in the session log.
+  The core caps source data at 4 MiB, requests at 32 KiB, output at 1,024 tokens
+  per call, and the operation at 32 portions / five minutes. A catalog context
+  size further reduces each request's byte budget with output/protocol headroom.
+  These byte guards are not exact token counts; an endpoint may still reject a
+  request. Too many portions or an oversized system prompt requires a larger
+  inference alias. No implicit cloud fallback occurs.
+- `/tools [name]` — list tools available to the agent, with short descriptions;
+  give a name for its full description and parameter schema. Tools such as
+  `ensemble` and `consult_panel` are invoked by the agent when you ask in ordinary
+  language (for example, “Use consult_panel to review this plan”). They are not
+  slash commands. Slash commands control the interface directly; `/help` lists
+  those controls and installed plugin commands. Tool execution still uses the
+  normal permission rules.
 - `/resume` — pick a prior session and reopen it in place (same kernel
   rebuild `/clear` uses, but reopening instead of starting fresh). Shows a
   picker listing every other session under `--base-dir`, newest first, each

@@ -1,8 +1,8 @@
 # Core agency implementation record
 
-Current implementation branch: `fix/model-selection-continuity`, based on merged `main`
-at `ca5618c` (PR31, local model management and catalog-publication review fix).
-Previous branches: `feat/local-model-management`, `feat/assessment-improvement`, `feat/external-handoff`, `feat/assessment-evaluation`, `feat/supervised-improvement`, `feat/local-scheduling`, `feat/task-fallback`, `feat/semantic-context-progress`, `feat/local-assistant-m3`, `feat/resident-workflow`, `feat/task-completion-evidence`, `fix/inference-client-lifecycle`, `feat/local-response-profiles`, `feat/local-tool-recovery`, `feat/local-tool-planning`, `feat/local-qualification`, `feat/semantic-evaluation`, `feat/local-context`, `feat/local-readiness`, `feat/agent-runtimes`,
+Current implementation branch: `fix/bounded-compaction`, based on merged `main`
+at `cedbe09` (PR32, model selection continuity and legacy-resume review fix).
+Previous branches: `fix/model-selection-continuity`, `feat/local-model-management`, `feat/assessment-improvement`, `feat/external-handoff`, `feat/assessment-evaluation`, `feat/supervised-improvement`, `feat/local-scheduling`, `feat/task-fallback`, `feat/semantic-context-progress`, `feat/local-assistant-m3`, `feat/resident-workflow`, `feat/task-completion-evidence`, `fix/inference-client-lifecycle`, `feat/local-response-profiles`, `feat/local-tool-recovery`, `feat/local-tool-planning`, `feat/local-qualification`, `feat/semantic-evaluation`, `feat/local-context`, `feat/local-readiness`, `feat/agent-runtimes`,
 and `feat/core-agency`.
 
 Committed checkpoints: `0351b75` (roadmap, lifecycle, and storage/result integrity),
@@ -1692,3 +1692,46 @@ in 22.78 seconds**, using the separate environment. Both previously failing CI
 cases passed. Ruff, whitespace checks and offline source/wheel builds passed.
 Full-suite PR checks for the review correction are separate from these local
 results and the original `52e719f` CI failures.
+
+## Everyday workflow: recover an oversized history with bounded compaction
+
+PR32 merged at `cedbe09` after its review correction passed both CI versions.
+The next regression reproduced `/compact` sending an entire oversized history
+back to the smaller model and failing before summarization could begin.
+
+`Kernel.compaction` now owns explicit, bounded rolling summarization. It prepares
+the canonical folded transcript, verifies and includes text sidecars, and plans
+fragments before dispatch. Each call carries the prior summary and a new fragment
+as historical data, with no executable tool messages. Request, response, source,
+portion-count and whole-operation limits are enforced. Incomplete, empty or
+oversized summaries fail without replacing history. Cancellation, provider
+failure, concurrent transcript changes and unsupported images also retain it.
+One final event replaces all current messages only after every portion succeeds;
+replay matches live state even after an earlier partial compaction.
+
+`/compact [inference-alias]` displays preparation and portion progress, preserves
+drafts, and uses existing queue/cancellation handling. An explicit inference
+alias can summarize an external agent's history without changing the selected
+agent or routing pin. Internal calls are pinned to the planned model, audited
+through the normal dispatcher and charged normally. Byte guards reduce requests
+according to catalog context metadata; they do not claim exact token counts.
+
+The user's tool-discovery question also exposed ambiguous `/tools` output. The
+listing now explains agent invocation, includes short descriptions, and supports
+`/tools <name>` for full descriptions and parameters. Agent tools such as
+`ensemble` and `consult_panel` remain distinct from interface slash commands.
+
+[Real local recovery evidence](../../handoffs/2026-09-08-bounded-compaction/README.md)
+includes a 24,283-token request rejected by an 8,192-token llama.cpp context,
+followed by nine successful bounded CUDA calls in 25.788 seconds and a 1.714-second
+continuation retaining early/late facts and the pending task. The probe exposed
+and fixed generic SDK labeling of llama.cpp's structured context rejection.
+Earlier CPU timeout and incomplete CUDA output are retained as failed attempts;
+they prompted explicit timeout wording and a more concise summarization prompt.
+The host catalog is unchanged and all owned test runtimes were stopped.
+
+**Validation:** the full Python 3.13 suite passed **1,740 tests, seven skipped**;
+after the final timeout/prose wording changes, **27 affected Python 3.13 tests**
+and **76 Python 3.12 tests** passed. The evidence handoff records exact runs and
+their limits. This is a narrow development recovery smoke, not held-out summary
+quality, CPU qualification, useful M4 improvement, or completion of M6.

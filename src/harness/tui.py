@@ -33,7 +33,6 @@ from harness.frontmatter import CommandDef
 from harness.events import (
     AgentRunStarted,
     AgentRunFinished,
-    CompactionApplied,
     CustomEvent,
     ModelCallStarted,
     ModelCorrectionRequested,
@@ -48,11 +47,8 @@ from harness.events import (
     ToolCallCompleted,
     ToolCallProposed,
 )
-from harness.fold import fold
 from harness.hooks import ProposedToolCall
 from harness.interaction import PermissionRequest
-from harness.inference import InferenceRequest
-from harness.log import read_session
 from harness.math_markdown import MathMarkdown, SIXEL_META_KEY, SixelPlacement
 from harness.mcp_host import McpHost
 from harness.messages import Message, Role
@@ -282,12 +278,6 @@ def _list_workspace_files(root: Path) -> list[str]:
                 return sorted(found)
     return sorted(found)
 
-
-_COMPACT_INSTRUCTION = (
-    "Summarize the conversation above in a concise handoff paragraph: key facts, "
-    "decisions made, and any open threads or next steps. Respond with the summary "
-    "text only, no preamble."
-)
 
 # A constrained model is one that either self-identifies as "local" (small,
 # self-hosted) or advertises a small context window; the threshold and
@@ -616,6 +606,7 @@ class HarnessApp(App[None]):
     #stats { height: 1; }
     #statusbar { height: 1; }
     #queue { height: auto; max-height: 4; }
+    #compact-progress { height: auto; max-height: 2; display: none; }
     #model-progress { height: auto; max-height: 2; display: none; }
     #task-status { height: auto; max-height: 3; }
     """
@@ -726,6 +717,7 @@ class HarnessApp(App[None]):
             yield Static(id="live")
         with Vertical(id="input-area"):
             yield Static(id="model-progress")
+            yield Static(id="compact-progress")
             yield Static(id="queue")
             yield Static(id="task-status")
             yield Static(id="stats")
@@ -1511,9 +1503,9 @@ class HarnessApp(App[None]):
             self._panel.refresh_files_and_agents()
         return result
 
-    async def _run_compact(self) -> None:
+    async def _run_compact(self, alias: str = "") -> None:
         try:
-            await self._run_compact_body()
+            await self._run_compact_body(alias)
         except asyncio.CancelledError:
             self.controller.pause(user_requested=False)
             self.controller.phase = "interrupted"
@@ -1524,53 +1516,35 @@ class HarnessApp(App[None]):
             self._refresh_queue()
             self._start_queue()
 
-    async def _run_compact_body(self) -> None:
-        """One summarize completion through the CURRENT model/provider over
-        the whole transcript; on success, replace loop.history with the
-        summary as a system message -- exactly what CompactionApplied's fold
-        replay produces (fold.py:89-97), so a later resume/read-back matches.
-        """
-        kernel = self.kernel
-        loop = kernel.loop
+    async def _run_compact_body(self, alias: str = "") -> None:
+        progress = self.query_one("#compact-progress", Static)
+        progress.update("Preparing compaction — Esc cancels")
+        progress.display = True
+
+        def show_progress(update):
+            progress.update(Text(
+                f"Compacting {update.part}/{update.total} with {update.model} — Esc cancels"
+            ))
+            progress.display = True
+
         try:
-            # repair=False: this session's own writer holds the lock right
-            # now, so repair (meant for reopening a closed/crashed session)
-            # would refuse anyway (log.py:91-95) -- a torn tail here is a
-            # genuine read failure and belongs in the except below, not a
-            # separate unguarded call that can crash the worker silently.
-            state = fold(read_session(kernel.session.base, kernel.session.id, repair=False))
-            if not state._msg_seqs:
-                self.say("! ", "nothing to compact")
-                return
-            from_seq, to_seq = state._msg_seqs[0], state._msg_seqs[-1]
-            messages = [
-                Message.system_text(loop.system_prompt),
-                *loop.history,
-                Message.user_text(_COMPACT_INSTRUCTION),
-            ]
-            # Internal inference is enforced/accounted normally, with no extra
-            # conversation message for CompactionApplied to collapse.
-            result = await loop.dispatcher.dispatch_inference(
-                provider=loop.provider,
-                request=InferenceRequest(model=loop.model, messages=tuple(messages),
-                                         purpose="compaction"),
-                pricing=loop.pricing, pricing_for=loop.pricing_for,
-                pinned=loop.model_pinned,
+            result = await self.kernel.compaction.compact(
+                alias, catalog_path=Path(self.catalog_path) if self.catalog_path else None,
+                on_progress=show_progress,
             )
-            if result.stop_reason != "end_turn":
-                raise ValueError("summary was incomplete; history retained")
         except Exception as exc:
             self.say("! ", f"compact failed: {exc}")
             self.controller.pause(user_requested=False)
             self.controller.phase = "failed"
             return
-        summary = result.message.text()
-        kernel.session.append(
-            CompactionApplied(from_seq=from_seq, to_seq=to_seq, summary=summary, model=loop.model)
-        )
-        loop.history = [Message.system_text(f"Summary of earlier conversation: {summary}")]
-        self.say("", f"compacted {len(state.messages)} messages -> 1 summary")
-        self._refresh_statusbar()  # history shrank to 1 message -- ctx% moves
+        finally:
+            progress.display = False
+        if not result.messages:
+            self.say("! ", "nothing to compact")
+            return
+        self.say("", f"compacted {result.messages} messages -> 1 summary "
+                 f"with {result.model} ({result.parts} parts)")
+        self._refresh_statusbar()
 
     def _preflight_resume(self, session_id: "SessionId") -> "str | None":
         """Lock-liveness + log-readability check for `session_id`, run BEFORE
@@ -1658,7 +1632,7 @@ class HarnessApp(App[None]):
             self.say(
                 "",
                 "/help  /model [alias]  /thoughts [collapse|full|off]  /markdown [on|off]  "
-                "/clear  /compact  /resume  /panel  /tools  /task  /status  /context  /resources  /models  /semantics  /improvements  "
+                "/clear  /compact [alias]  /resume  /panel  /tools [name]  /task  /status  /context  /resources  /models  /semantics  /improvements  "
                 "/handoff inspect|record|show|run  /quit  — @path mentions a file "
                 "(Tab completes), read for the model only; F2 also toggles the activity panel",
             )
@@ -1669,8 +1643,23 @@ class HarnessApp(App[None]):
                     "plugin commands: " + "  ".join(f"/{n}" for n in sorted(self._plugin_commands)),
                 )
         elif command.name == "tools":
-            for spec in self.kernel.loop.registry.specs():
-                self.say("  ", str(spec.name))
+            self.say("", "Tools available to the agent: ask for them in ordinary language. "
+                     "These are not slash commands; /help lists interface controls.")
+            specs = self.kernel.loop.registry.specs()
+            if command.arg:
+                spec = next((s for s in specs if s.name == command.arg.strip()), None)
+                if spec is None:
+                    self.say("! ", f"unknown tool: {command.arg}")
+                else:
+                    self.say("", f"{spec.name}: {spec.description}")
+                    self.say("", "Parameters: " + json.dumps(spec.parameters, ensure_ascii=False))
+            else:
+                for spec in specs:
+                    description = " ".join(spec.description.split())
+                    if len(description) > 120:
+                        description = description[:117] + "..."
+                    self.say("  ", f"{spec.name}: {description}")
+                self.say("", "/tools <name> shows its full description and parameters.")
         elif command.name == "queue":
             self._queue_command(command.arg)
         elif command.name == "task":
@@ -1800,7 +1789,7 @@ class HarnessApp(App[None]):
             # path via action_interrupt/_after_compact_interrupt, so Esc
             # here never routes through loop.interrupt_turn()'s UserInterrupt.
             self._compact_worker = self.run_worker(
-                self._run_compact(), group="agent", exit_on_error=False
+                self._run_compact(command.arg), group="agent", exit_on_error=False
             )
         elif command.name == "resume":
             if self._refuse_if_busy():

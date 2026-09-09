@@ -1,0 +1,105 @@
+[
+  {
+    "session_id": "340fd67fd80d40feabef5ec9f428d9a6",
+    "original_user_messages": 3,
+    "compaction_applied": 0,
+    "calls": [
+      {
+        "type": "model_call_failed",
+        "model": "compaction-cpu",
+        "error_type": "TimeoutError",
+        "duration_ms": 2835782,
+        "stop_reason": null,
+        "usage": null,
+        "purpose": "compaction-legacy-probe"
+      }
+    ],
+    "runtime_actions": [
+      "start",
+      "stop"
+    ]
+  },
+  {
+    "session_id": "474e8548546743c0ac1230a4c61d540d",
+    "original_user_messages": 3,
+    "compaction_applied": 0,
+    "calls": [
+      {
+        "type": "model_call_failed",
+        "model": "compaction-cpu",
+        "error_type": "ProviderError",
+        "duration_ms": 47005,
+        "stop_reason": null,
+        "usage": null,
+        "purpose": "compaction-legacy-probe"
+      }
+    ],
+    "runtime_actions": [
+      "start",
+      "stop"
+    ]
+  },
+  {
+    "session_id": "f1aef262187e46ffbde7bd3a5102f74b",
+    "original_user_messages": 3,
+    "compaction_applied": 0,
+    "calls": [
+      {
+        "type": "model_call_failed",
+        "model": "compaction-cpu",
+        "error_type": "ContextOverflow",
+        "duration_ms": 6676,
+        "stop_reason": null,
+        "usage": null,
+        "purpose": "compaction-legacy-probe"
+      },
+      {
+        "type": "model_call_failed",
+        "model": "compaction-cpu",
+        "error_type": "TimeoutError",
+        "duration_ms": 120002,
+        "stop_reason": null,
+        "usage": null,
+        "purpose": "compaction"
+      }
+    ],
+    "runtime_actions": [
+      "start",
+      "stop"
+    ]
+  },
+  {
+    "session_id": "3cb51a12b02946059d329e8bea57ba6c",
+    "original_user_messages": 3,
+    "compaction_applied": 0,
+    "calls": [
+      {
+        "type": "model_call_failed",
+        "model": "compaction-gpu",
+        "error_type": "ContextOverflow",
+        "duration_ms": 5787,
+        "stop_reason": null,
+        "usage": null,
+        "purpose": "compaction-legacy-probe"
+      },
+      {
+        "type": "model_call_completed",
+        "model": "compaction-gpu",
+        "error_type": null,
+        "duration_ms": 11854,
+        "stop_reason": "max_tokens",
+        "usage": {
+          "input_tokens": 2911,
+          "output_tokens": 1024,
+          "cache_read_tokens": 0,
+          "cache_write_tokens": null
+        },
+        "purpose": "compaction"
+      }
+    ],
+    "runtime_actions": [
+      "start",
+      "stop"
+    ]
+  }
+]

@@ -71,6 +71,11 @@ class Kernel:
         return SemanticService(self.loop.dispatcher, lambda: self.provider)
 
     @cached_property
+    def compaction(self):
+        from harness.compaction import CompactionService
+        return CompactionService(self)
+
+    @cached_property
     def improvement_service(self):
         from harness.prompt_improvement import PromptImprovementService
         return PromptImprovementService(self)

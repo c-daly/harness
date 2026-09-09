@@ -101,6 +101,28 @@ def test_exception_mapping():
     )
 
 
+def test_llamacpp_structured_context_overflow_is_actionable():
+    import httpx
+    import litellm
+    from harness.errors import ContextOverflow
+
+    body = {"error": {"type": "exceed_context_size_error", "n_prompt_tokens": 24283, "n_ctx": 8192,
+                      "message": "private upstream details"}}
+    response = httpx.Response(400, json=body, request=httpx.Request("POST", "http://127.0.0.1/v1"))
+    exc = litellm.BadRequestError("OpenAIException - private upstream details", "local", "openai", response=response)
+    error = map_exception(exc)
+    assert isinstance(error, ContextOverflow) and not error.retryable
+    assert "/compact" in str(error)
+    assert "OpenAI" not in str(error) and "private" not in str(error)
+
+
+def test_context_error_message_alone_does_not_reclassify_bad_request():
+    import litellm
+    from harness.errors import ProviderError
+    exc = litellm.BadRequestError("exceed_context_size_error in invalid argument", "local", "openai")
+    assert type(map_exception(exc)) is ProviderError
+
+
 def test_provider_satisfies_protocol():
     from harness.provider import ModelProvider
     assert isinstance(LiteLLMProvider(), ModelProvider)
