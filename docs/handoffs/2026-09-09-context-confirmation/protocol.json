@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "recorded_at": "2026-09-09T04:06:41.927187+00:00",
+  "base_commit": "db71d51b1b65467dfb7d8bf97c8a6f8c924a075b",
+  "hypothesis": "A narrow unresolved-pronoun instruction added to the existing context prompt fixes ambiguity without losing semantic matches, now that eligibility is deterministic.",
+  "candidate_origin": "Operator-authored; the local model is the evaluated executor, not the candidate author.",
+  "max_development_candidates": 2,
+  "development_suite": "Existing six public cases; no fresh confirmation data used during development.",
+  "development_gates": {
+    "every_case_correct": true,
+    "min_improved_cases": 1,
+    "max_latency_ratio": 1.2,
+    "max_case_latency_ms": 2000
+  },
+  "confirmation_cases": 32,
+  "confirmation_runs": 1,
+  "confirmation_composition": {
+    "ambiguous_references": 8,
+    "semantic_paraphrases": 8,
+    "precise_selection_or_no_match": 8,
+    "empty_eligibility": 4,
+    "injection_or_freshness_distractors": 4
+  },
+  "confirmation_gates": {
+    "min_held_out_correct": 29,
+    "min_held_out_improved": 3,
+    "min_model_correct": 26,
+    "model_cases": 28,
+    "min_correct_advantage_over_rules": 3,
+    "critical_failures_allowed": 0,
+    "regressions_allowed": 0,
+    "max_latency_ratio": 1.2,
+    "max_case_latency_ms": 2000
+  },
+  "confirmation_order": "After development passes, commit the exact candidate/configuration/source/gates freeze before authoring fresh inputs or labels. Freeze the completed suite before one confirmation; never retune from its results.",
+  "confirmation_provenance": "Fresh operator-authored synthetic cases after the candidate freeze. Same agent authored the candidate and cases, so not independent human-labeled production evidence. Case text reaches the local model only during its confirmation call; labels never reach it.",
+  "runtime": "Pinned Qwen3-8B Q4_K_M / llama.cpp b9603, GPU28, c4096, presence0, temperature0, thinking false; startup allowance120s; semantic timeout5s, paired timeout120s. Docker network none, 4 CPUs, 4 GiB host RAM, no swap.",
+  "selection_policy": "A passing confirmation may exercise explicit shadow adoption, live use, restart and rollback only in an isolated test session. Keep builtin defaults and user catalog; no automatic context injection or task authority."
+}

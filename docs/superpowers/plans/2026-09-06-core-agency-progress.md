@@ -1,8 +1,8 @@
 # Core agency implementation record
 
-Current implementation branch: `feat/context-eligibility`, based on merged `main`
-at `eb1e6fb` (PR34, declared held-out evaluation gates and failed development trials).
-Previous branches: `feat/context-selection-qualification`, `fix/bounded-compaction`, `fix/model-selection-continuity`, `feat/local-model-management`, `feat/assessment-improvement`, `feat/external-handoff`, `feat/assessment-evaluation`, `feat/supervised-improvement`, `feat/local-scheduling`, `feat/task-fallback`, `feat/semantic-context-progress`, `feat/local-assistant-m3`, `feat/resident-workflow`, `feat/task-completion-evidence`, `fix/inference-client-lifecycle`, `feat/local-response-profiles`, `feat/local-tool-recovery`, `feat/local-tool-planning`, `feat/local-qualification`, `feat/semantic-evaluation`, `feat/local-context`, `feat/local-readiness`, `feat/agent-runtimes`,
+Current implementation branch: `docs/context-experiment-results`, based on merged `main`
+at `db71d51` (PR35, core eligibility before inference).
+Previous branches: `feat/context-eligibility`, `feat/context-selection-qualification`, `fix/bounded-compaction`, `fix/model-selection-continuity`, `feat/local-model-management`, `feat/assessment-improvement`, `feat/external-handoff`, `feat/assessment-evaluation`, `feat/supervised-improvement`, `feat/local-scheduling`, `feat/task-fallback`, `feat/semantic-context-progress`, `feat/local-assistant-m3`, `feat/resident-workflow`, `feat/task-completion-evidence`, `fix/inference-client-lifecycle`, `feat/local-response-profiles`, `feat/local-tool-recovery`, `feat/local-tool-planning`, `feat/local-qualification`, `feat/semantic-evaluation`, `feat/local-context`, `feat/local-readiness`, `feat/agent-runtimes`,
 and `feat/core-agency`.
 
 Committed checkpoints: `0351b75` (roadmap, lifecycle, and storage/result integrity),
@@ -1852,3 +1852,50 @@ match the wheel bytes.
 handoff evidence; M5 mixed-agent supervision/portability/source-edit experiments;
 M6 sustained daily use. This closes a deterministic empty-context failure and
 keeps model confidence separate from core correctness.
+
+
+## September 9 — Reject remaining prompt and schema-order hypotheses
+
+PR35 merged at `db71d51`, with both Python CI versions and review passing. This
+follow-up changed no production behavior. Two bounded prompt trials and a
+separate, predeclared one-variant schema-order experiment all failed development
+gates; the temporary schema change was reverted.
+
+- The first prompt appended a narrow unresolved-pronoun rule. It fixed the
+  critical ambiguity case but incorrectly abstained on the memory-storage
+  paraphrase: **5/6**, versus builtin **5/6** and rules **4/6**. It failed the
+  no-regression requirement despite passing latency bounds.
+- The second prompt clarified semantic matching within the supplied project
+  context. It preserved the paraphrase but still guessed the ambiguous policy:
+  **5/6**, with no measured improvement over the builtin.
+- Raw responses selected IDs before the reason label, motivating a separately
+  frozen source-format hypothesis. Requesting the reason first changed actual
+  output order but still scored **5/6** and guessed the policy. Maximum recorded
+  latency was **2,057.55 ms**, above the unchanged 2,000 ms gate. This sequential
+  shared-host comparison does not prove that field order caused the slowdown.
+
+The two prompt runs used the existing paired evaluator and passed its mechanics
+checks, including actual adoption refusal. Each six-case score includes the
+one deterministic core eligibility answer. All inputs remained public
+development data; no fresh confirmation cases were authored or evaluated, and
+no prompt was adopted. The model did not author the prompt candidates.
+
+The [handoff](../../handoffs/2026-09-09-context-confirmation/README.md) retains both
+protocols, exact candidate/configuration artifacts, raw model events, input blobs,
+the rejected source patch/snapshot, reports and source hashes. All trials used
+the pinned 8B/llama.cpp profile in network-disabled, resource-bounded containers.
+Owned runtimes stopped; user model configuration remained untouched.
+
+**Validation:** both frozen experiments retain failed verdicts under the core
+grader. All 131 saved event envelopes, 26 referenced input/prompt blobs, and 231
+source hashes checked successfully. The rejected schema source matches its
+snapshot; the production source/tests/scripts/dependencies are identical to
+merged `db71d51`. Ruff and whitespace checks passed. This evidence-only update
+does not claim a new full-suite or packaging run.
+
+**Decision:** keep merged behavior. Further wording-only tuning of this 8B profile
+has not earned confidence. Next, compare alternative inference profiles/models
+for the bounded semantic function, preserving the same critical and regression
+gates and keeping fresh confirmation separate. Passing native tool-work gates
+does not establish semantic-selection quality. M4 is still open, along with
+broader handoff qualification and M5/M6 work.

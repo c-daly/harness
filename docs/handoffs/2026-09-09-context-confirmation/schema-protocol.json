@@ -1,0 +1,19 @@
+{
+  "recorded_at": "2026-09-09T04:13:47.558601+00:00",
+  "base_commit": "db71d51b1b65467dfb7d8bf97c8a6f8c924a075b",
+  "experiment": "decision-first response schema",
+  "implementation_variants": 1,
+  "trigger": "Both bounded prompt candidates failed; raw JSON emits selected_ids before reason.",
+  "hypothesis": "Emitting the uncertainty/selection label before IDs avoids committing to a candidate before deciding whether the query identifies a unique subject.",
+  "change": "Only ContextSelection field order: function, reason, selected_ids. Keep builtin prompt, input filtering, output constraints, model configuration and quality/latency gates.",
+  "development": "One public run on all six existing cases compared with the retained pre-change builtin results. No third prompt candidate.",
+  "gates": {
+    "every_case_correct": true,
+    "min_improved_cases": 1,
+    "critical_failures_allowed": 0,
+    "regressions_allowed": 0,
+    "max_case_latency_ms": 2000,
+    "max_latency_ratio": 1.2
+  },
+  "confirmation": "Only if development passes, freeze implementation/runtime/gates before creating 32 new operator-authored cases. Compare unchanged builtin under legacy and decision-first wire schemas. Inherit the earlier 32-case composition and quality gates; no prompt adoption or claim of prompt learning."
+}
