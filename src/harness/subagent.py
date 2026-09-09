@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from harness.callctx import current_call_id
-from harness.agent import AgentTask
+from harness.agent import AgentTask, DelegationResult
 from harness.events import ErrorRaised, SubagentFinished, SubagentSpawned
 from harness.execution import BudgetExceeded, ExecutionScope, current_scope
 from harness.frontmatter import AgentDef
@@ -45,17 +45,23 @@ class SubagentRunner:
     async def run(
         self, *, prompt: str, model: ModelId | None, parent: Session, agent: str | None = None
     ) -> str:
+        return (await self.run_result(prompt=prompt, model=model, parent=parent, agent=agent)).render()
+
+    async def run_result(
+        self, *, prompt: str, model: ModelId | None, parent: Session, agent: str | None = None,
+        on_result: Callable[[DelegationResult], None] | None = None,
+    ) -> DelegationResult:
         scope = current_scope.get()
         if scope is None:
             scope = self._root_scopes.setdefault(str(parent.id), ExecutionScope(parent, self.registry))
         parent = scope.session  # Includes calls through root-bound coordination tools.
         return await self._run_in_scope(prompt=prompt, model=model, parent=parent,
-                                        agent=agent, scope=scope)
+                                        agent=agent, scope=scope, on_result=on_result)
 
     async def _run_in_scope(
         self, *, prompt: str, model: ModelId | None, parent: Session,
-        agent: str | None, scope: ExecutionScope,
-    ) -> str:
+        agent: str | None, scope: ExecutionScope, on_result=None,
+    ) -> DelegationResult:
         system_prompt = "You are a focused subagent. Complete the task and report."
         registry: ToolRegistry | FilteredRegistry = scope.registry
         limit: int | None = None
@@ -67,11 +73,11 @@ class SubagentRunner:
             definition = self.agents.get(agent)
             if definition is None:
                 available = ", ".join(sorted(self.agents)) or "(none)"
-                return f"[subagent error] unknown agent {agent!r}; available: {available}"
+                return DelegationResult(status="blocked", reason=f"unknown agent {agent!r}; available: {available}")
             if definition.strategy is not None:
                 # a coordination agent-def fans out to its experts instead of
                 # running one child loop (experts become children of `parent`)
-                from harness.mixture import Expert, run_strategy
+                from harness.mixture import Expert, run_strategy_result
 
                 experts = [Expert(model=m) for m in (definition.experts or ())]
                 narrowed = (FilteredRegistry(registry, allowed=definition.tools)
@@ -79,11 +85,11 @@ class SubagentRunner:
                 try:
                     scope.budget.reserve_child(scope.depth + 1)
                 except BudgetExceeded as exc:
-                    return f"[subagent error] {exc}"
+                    return DelegationResult(status="blocked", reason=str(exc))
                 token = current_scope.set(ExecutionScope(parent, narrowed, scope.budget, scope.depth + 1,
                                                         scope.resources, scope.context_policy))
                 try:
-                    return await run_strategy(definition.strategy, self, parent, prompt, experts)
+                    return await run_strategy_result(definition.strategy, self, parent, prompt, experts)
                 finally:
                     current_scope.reset(token)
                     scope.budget.release_child()
@@ -101,16 +107,17 @@ class SubagentRunner:
         try:
             scope.budget.reserve_child(scope.depth + 1)
         except BudgetExceeded as exc:
-            return f"[subagent error] {exc}"
+            return DelegationResult(status="blocked", reason=str(exc))
         try:
             return await self._run_child(prompt=prompt, parent=parent, agent=agent,
                                          chosen=chosen, pinned=pinned, registry=registry,
-                                         system_prompt=system_prompt, limit=limit, scope=scope)
+                                         system_prompt=system_prompt, limit=limit, scope=scope,
+                                         on_result=on_result)
         finally:
             scope.budget.release_child()
 
     async def _run_child(self, *, prompt, parent, agent, chosen, pinned, registry,
-                         system_prompt, limit, scope):
+                         system_prompt, limit, scope, on_result=None):
         child_id = new_session_id()
         spawn_env = parent.append(
             SubagentSpawned(
@@ -121,6 +128,33 @@ class SubagentRunner:
             )
         )
         child = None
+
+        def interrupted(status, reason):
+            from harness.events import AgentRunFinished
+            from harness.log import read_session, TornLogError
+            terminal = None
+            if child is not None:
+                try:
+                    terminal = next((e.event.result for e in reversed(read_session(self.base, child_id, repair=False))
+                                     if isinstance(e.event, AgentRunFinished)), None)
+                except (OSError, ValueError, TornLogError) as exc:
+                    parent.append(ErrorRaised(where="subagent:outcome",
+                        message=f"Child terminal could not be inspected ({type(exc).__name__})"))
+            if terminal is not None and terminal.status == "incomplete" and status == "failed":
+                status, reason = "incomplete", terminal.reason
+            return DelegationResult(status=status, reason=reason, child_session_id=child_id,
+                                    run_id=terminal.run_id if terminal else None)
+
+        def finish(outcome):
+            status = {"completed": "ok", "failed": "error", "blocked": "error",
+                      "incomplete": "incomplete", "cancelled": "cancelled"}[outcome.status]
+            parent.append(SubagentFinished(child_session_id=child_id, status=status,
+                run_id=outcome.run_id, output=outcome.output, reason=outcome.reason,
+                truncated=outcome.truncated))
+            if on_result is not None:
+                on_result(outcome)
+            return outcome
+
         try:
             child = Session(
                 self.base, child_id, parent=(parent.id, spawn_env.seq), default_model=chosen,
@@ -152,21 +186,20 @@ class SubagentRunner:
                         message=f"{type(exc).__name__}: {exc}",
                     )
                 )
-            status = "ok" if result.status == "completed" else "incomplete"
-            text = _bound(result.read_text(child.blobs), limit)
-            if status == "incomplete":
-                text = f"[subagent error] incomplete ({result.reason}): {text}"
+            original = result.read_text(child.blobs)
+            text = _bound(original, limit)
+            outcome = DelegationResult(status="completed" if result.status == "completed" else "incomplete",
+                reason=result.reason, text=text, child_session_id=child_id,
+                run_id=result.run_id, output=result.output, truncated=text != original)
         except asyncio.CancelledError:
-            parent.append(SubagentFinished(child_session_id=child_id, status="cancelled"))
+            finish(interrupted("cancelled", "cancelled"))
             raise
         except Exception as exc:
-            parent.append(SubagentFinished(child_session_id=child_id, status="error"))
-            return f"[subagent error] {exc}"
+            return finish(interrupted("failed", type(exc).__name__))
         else:
             # Publish only after the result is readable. A failed terminal write
             # must not generate a contradictory second terminal event.
-            parent.append(SubagentFinished(child_session_id=child_id, status=status))
-            return text
+            return finish(outcome)
         finally:
             if child is not None:
                 child.close()

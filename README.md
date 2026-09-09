@@ -62,6 +62,7 @@ optional normal memory, checked file work, cancellation and task continuation.
 | **[docs/local-fallback.md](docs/local-fallback.md)** | Opt-in local fallback that preserves task context, authority and budgets |
 | **[docs/external-handoff.md](docs/external-handoff.md)** | Operator reconciliation and bounded continuation of interrupted external work |
 | **[docs/portable-continuation.md](docs/portable-continuation.md)** | Export a tracked task, context and evidence for another interface with `/export` or `harness export` |
+| **[docs/coordination-outcomes.md](docs/coordination-outcomes.md)** | Inspect delegated outcomes, disagreement and provenance with `/coordination` or `harness coordination` |
 | **[docs/local-scheduling.md](docs/local-scheduling.md)** | Local device groups, visible priority queues and owned runtime replacement |
 | **[docs/supervised-improvement.md](docs/supervised-improvement.md)** | Core prompt proposals, fixed experiments, explicit adoption and exact rollback |
 | **[docs/assessment-evaluation.md](docs/assessment-evaluation.md)** | Paired context/progress prompt comparison, frozen oracles and retained failed trials |

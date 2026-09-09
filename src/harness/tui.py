@@ -1325,7 +1325,7 @@ class HarnessApp(App[None]):
             return
         command = parse_slash_command(text)
         if command is not None:
-            if command.name in self._plugin_commands and command.name not in {"task", "status", "semantics", "improvements", "handoff", "models", "export"}:
+            if command.name in self._plugin_commands and command.name not in {"task", "status", "semantics", "improvements", "handoff", "models", "export", "coordination"}:
                 expanded = self._plugin_commands[command.name].body.replace("$ARGUMENTS", command.arg)
                 if not self._enqueue_prompt(expanded, expand_mentions=False):
                     return
@@ -1633,7 +1633,7 @@ class HarnessApp(App[None]):
                 "",
                 "/help  /model [alias]  /thoughts [collapse|full|off]  /markdown [on|off]  "
                 "/clear  /compact [alias]  /resume  /panel  /tools [name]  /task  /status  /context  /resources  /models  /semantics  /improvements  "
-                "/handoff inspect|record|show|run  /export FILE.zip  /quit  — @path mentions a file "
+                "/handoff inspect|record|show|run  /export FILE.zip  /coordination  /quit  — @path mentions a file "
                 "(Tab completes), read for the model only; F2 also toggles the activity panel",
             )
             self.say("", "/queue: inspect, edit, remove, pause, resume, clear; queued prompts are memory only")
@@ -1664,6 +1664,16 @@ class HarnessApp(App[None]):
             self._queue_command(command.arg)
         elif command.name == "task":
             self._task_command(command.arg)
+        elif command.name == "coordination":
+            from harness.coordination_cli import render_coordination
+            if command.arg.strip():
+                self.say("! ", "Usage: /coordination")
+                return
+            try:
+                for line in render_coordination(self.kernel.session.base, self.kernel.session.id).splitlines():
+                    self.say("", line)
+            except Exception as exc:
+                self.say("! ", f"Coordination inspection failed ({type(exc).__name__}).")
         elif command.name == "export":
             import shlex
             try:

@@ -12,8 +12,9 @@ from pathlib import Path
 from zipfile import ZIP_STORED, ZipFile, ZipInfo
 
 from harness.blobs import BlobStore
+from harness.coordination import load_report
 from harness.events import (
-    AgentRunFinished, AgentRunStarted, ContextPolicyConfigured, ContextSourceObserved,
+    AgentRunFinished, AgentRunStarted, ContextPolicyConfigured, ContextSourceObserved, CoordinationFinished,
     DispatchResolved, ModelCallProposed, ModelCallStarted, SubagentFinished, SubagentSpawned,
     TaskChecked, TaskHandoffRecorded, ToolCallAborted, ToolCallCancelled, ToolCallCompleted, ToolCallProposed,
     UnknownEvent, UserMessage,
@@ -110,6 +111,7 @@ def task_package(base: Path, session_id: str, *, task_id: str | None = None):
     tool_proposals = _one_by_call(events, ToolCallProposed)
     runs, calls, context, children, external, reconciliations = {}, {}, [], {}, [], []
     configurations = {}
+    coordination = []
     current_policy = None
     active_roots = set()
 
@@ -183,6 +185,12 @@ def task_package(base: Path, session_id: str, *, task_id: str | None = None):
                 "status": "unconfirmed", "contents": "not_exported"}
         elif isinstance(event, SubagentFinished) and event.child_session_id in children:
             children[event.child_session_id].update(status=event.status, finished_seq=env.seq)
+        elif isinstance(event, CoordinationFinished) and event.call_id in calls:
+            ref = artifacts.add(ref=event.report)
+            report = load_report(artifacts.blobs, event, session_id)
+            coordination.append({"source_seq": env.seq, "id": event.id, "strategy": event.strategy,
+                "status": event.status, "report": ref, "output": artifacts.add(
+                    ref=report.output) if report.output else None})
         elif isinstance(event, TaskHandoffRecorded) and event.record.task_id == task.definition.id:
             from types import SimpleNamespace
             from harness.handoff import load_record
@@ -221,7 +229,7 @@ def task_package(base: Path, session_id: str, *, task_id: str | None = None):
         "runs": list(runs.values()), "tool_calls": list(calls.values()), "context": context,
         "configured_sources": [s.model_dump(mode="json") for s in current_policy.sources] if current_policy else [],
         "external_executions": external, "child_sessions": list(children.values()),
-        "reconciliations": reconciliations, "limitations": list(LIMITATIONS)}
+        "reconciliations": reconciliations, "coordination": coordination, "limitations": list(LIMITATIONS)}
     return package, artifacts.files
 
 
@@ -258,6 +266,7 @@ def render_package(package):
         "Configured sources are the last session configuration; each historical retrieval carries its own reference.", "",
         f"Recorded context observations: {len(package['context'])}. Tool calls to inspect: {len(package['tool_calls'])}.",
         f"External executions to reconcile: {len(package['external_executions'])}. Child session references: {len(package['child_sessions'])}.", "",
+        f"Coordination reports: {len(package.get('coordination', []))}. Inspect participant outcomes and disagreements in `continuation.json`.", "",
         "## Continuation boundaries", "", *(f"- {line}" for line in package["limitations"]), ""])
     return "\n".join(lines).encode()
 

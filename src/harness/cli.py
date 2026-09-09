@@ -1003,6 +1003,10 @@ def _resources_subcommand(argv: list[str]) -> None:
 
 def main() -> None:
     argv = sys.argv[1:]
+    if argv and argv[0] == "coordination":
+        from harness.coordination_cli import main as coordination_main
+        coordination_main(argv[1:])
+        return
     if argv and argv[0] == "export":
         from harness.export_cli import main as export_main
         export_main(argv[1:])
