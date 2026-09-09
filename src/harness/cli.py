@@ -491,7 +491,9 @@ def _subcommand(argv: list[str]) -> None:
 
 
 def _run_main() -> None:
-    parser = argparse.ArgumentParser(prog="harness")
+    parser = argparse.ArgumentParser(prog="harness", epilog=(
+        "Portable continuation: harness export SESSION_ID NEW_FILE.zip [--task ID]. "
+        "Use 'harness export --help' for details."))
     parser.add_argument("-p", "--prompt", default=None)
     parser.add_argument(
         "--base-dir", type=Path, default=Path.home() / ".local" / "share" / "harness"
@@ -1001,6 +1003,10 @@ def _resources_subcommand(argv: list[str]) -> None:
 
 def main() -> None:
     argv = sys.argv[1:]
+    if argv and argv[0] == "export":
+        from harness.export_cli import main as export_main
+        export_main(argv[1:])
+        return
     if argv and argv[0] == "models":
         from harness.models_cli import main as models_main
         models_main(argv[1:])
