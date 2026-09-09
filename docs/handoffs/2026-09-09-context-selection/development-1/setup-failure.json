@@ -1,0 +1,5 @@
+{
+  "outcome": "cold_start_timeout",
+  "startup_seconds": 30,
+  "model_calls": 0
+}

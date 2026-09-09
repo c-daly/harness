@@ -1,8 +1,8 @@
 # Core agency implementation record
 
-Current implementation branch: `fix/bounded-compaction`, based on merged `main`
-at `cedbe09` (PR32, model selection continuity and legacy-resume review fix).
-Previous branches: `fix/model-selection-continuity`, `feat/local-model-management`, `feat/assessment-improvement`, `feat/external-handoff`, `feat/assessment-evaluation`, `feat/supervised-improvement`, `feat/local-scheduling`, `feat/task-fallback`, `feat/semantic-context-progress`, `feat/local-assistant-m3`, `feat/resident-workflow`, `feat/task-completion-evidence`, `fix/inference-client-lifecycle`, `feat/local-response-profiles`, `feat/local-tool-recovery`, `feat/local-tool-planning`, `feat/local-qualification`, `feat/semantic-evaluation`, `feat/local-context`, `feat/local-readiness`, `feat/agent-runtimes`,
+Current implementation branch: `feat/context-selection-qualification`, based on merged `main`
+at `a4f3678` (PR33, bounded compaction and portable driver review fix).
+Previous branches: `fix/bounded-compaction`, `fix/model-selection-continuity`, `feat/local-model-management`, `feat/assessment-improvement`, `feat/external-handoff`, `feat/assessment-evaluation`, `feat/supervised-improvement`, `feat/local-scheduling`, `feat/task-fallback`, `feat/semantic-context-progress`, `feat/local-assistant-m3`, `feat/resident-workflow`, `feat/task-completion-evidence`, `fix/inference-client-lifecycle`, `feat/local-response-profiles`, `feat/local-tool-recovery`, `feat/local-tool-planning`, `feat/local-qualification`, `feat/semantic-evaluation`, `feat/local-context`, `feat/local-readiness`, `feat/agent-runtimes`,
 and `feat/core-agency`.
 
 Committed checkpoints: `0351b75` (roadmap, lifecycle, and storage/result integrity),
@@ -1735,3 +1735,67 @@ after the final timeout/prose wording changes, **27 affected Python 3.13 tests**
 and **76 Python 3.12 tests** passed. The evidence handoff records exact runs and
 their limits. This is a narrow development recovery smoke, not held-out summary
 quality, CPU qualification, useful M4 improvement, or completion of M6.
+
+
+## September 9 — Context-selection development and explicit held-out gates
+
+PR33 merged at `a4f3678` after both Python CI versions and the portability review
+fix passed. This tranche targets M4's missing evidence of a useful semantic
+improvement. Memory and agent-swarm remain plugins.
+
+**Core change:** paired plans, message prompt experiments, and both assessment
+experiment paths now accept frozen `min_held_out_correct` and
+`min_held_out_improved` counts. Previously, fixing one known regression could
+satisfy a plan despite every held-out answer remaining wrong. The common verdict
+now enforces declared held-out minimums and the adoption controls refuse a
+failing result. Strict counts cannot exceed the held-out partition size; defaults
+of zero preserve old records. Reports expose the frozen gates. Operator-labelled
+partitions still do not prove case independence.
+
+**Measured result:** two operator-authored context-selection candidates were
+tested on the six public development cases, under a protocol limiting candidate
+development to two prompts. Qwen3-8B Q4_K_M ran offline with llama.cpp b9603,
+28 GPU layers, 4,096-token context, thinking disabled, and presence penalty zero.
+The container had four CPUs, 4 GiB host RAM, and no swap. No user runtime or
+catalog was changed; owned test runtimes stopped.
+
+- Candidate 1 scored **5/6**, against builtin **4/6** and lexical rules **4/6**.
+  It fixed unavailable-context selection but still guessed an ambiguous subject.
+- Candidate 2 scored **5/6** and passed all five critical cases, but lost a
+  semantic paraphrase the incumbent got right. Both candidates failed their
+  unchanged development gates. Maximum candidate latencies were 1,571 and
+  1,663 ms; total latency ratios were 1.021 and 0.944.
+- An earlier setup attempt timed out at 30 seconds before inference. The scored
+  profile's partial offload and 120-second startup allowance were set before
+  any scored response. Its first load took 53.7 seconds; a later cached load
+  took 4.5 seconds. Candidate 1's first seed timed out. All paired cases were
+  measured. These observations are retained rather than treated as passing
+  cold-start qualification.
+
+No confirmation cases were authored or evaluated, no prompt was adopted, and
+M4 remains open. The intended later confirmation gates (29/32 correct, three
+held-out improvements and a three-answer advantage over rules, no critical
+failures or regressions, existing latency bounds) remain unconsumed. All public
+example cases, including their `held_out` partition, are development evidence.
+
+The [handoff](../../handoffs/2026-09-09-context-selection/README.md) retains the
+protocol, candidate prompts, exact experiments/catalogs, failed setup, model
+response events, paired reports, and source hashes. The new public replay driver
+checks pinned assets and isolation, refuses existing attempt directories, saves
+inputs before inference, preserves failures, and checks adoption refusal.
+
+**Validation:** the full Python 3.13 suite passed **1,746 tests**, with seven
+skips and six existing MCP warnings in 412.92 seconds. Focused checks passed
+103 tests on both Python 3.12 and 3.13; the final eight holdout-gate tests,
+including two additional message-path cases, also passed on both. Ruff,
+whitespace checks, sdist/wheel build, and clean wheel install/import passed;
+all 75 core file bytes match the wheel. A real offline replay of candidate 2
+reproduced 5/6 versus builtin 4/6, refused adoption, preserved task state and
+builtin selection, settled calls, and stopped the owned runtime. This is public
+reproduction evidence, not a third development candidate or fresh confirmation.
+
+**Next:** keep the builtin, and test a distinct bounded strategy such as applying
+context eligibility in code before model relevance selection. That change still
+requires its own development and fresh confirmation evidence. Broader M4 handoff
+qualification, M5 heterogeneous supervision/portable continuation/source-edit
+experiments, and M6 daily use remain open.

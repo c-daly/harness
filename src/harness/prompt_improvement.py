@@ -10,7 +10,7 @@ import hashlib
 import json
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from harness.blobs import BlobRef
 from harness.events import AssessmentObserved, EvaluationRunStarted, SemanticObserved
@@ -31,8 +31,17 @@ class PromptExperiment(BaseModel):
     configuration: EvaluatorConfig
     suite: MessageEvaluationSuite
     min_improved_cases: int = Field(default=1, ge=1, strict=True)
+    min_held_out_correct: int = Field(default=0, ge=0, strict=True)
+    min_held_out_improved: int = Field(default=0, ge=0, strict=True)
     max_latency_ratio: float = Field(default=1.2, gt=0)
     max_case_latency_ms: float = Field(default=2000, gt=0)
+
+    @model_validator(mode="after")
+    def bounded_holdout(self):
+        held_out = sum(c.partition == "held_out" for c in self.suite.cases)
+        if max(self.min_held_out_correct, self.min_held_out_improved) > held_out:
+            raise ValueError("held-out threshold exceeds held-out case count")
+        return self
 
 
 class PromptProposal(BaseModel):
@@ -210,6 +219,8 @@ class PromptImprovementService:
                 suite=session.blobs.put(experiment.suite.model_dump_json().encode()),
                 evaluator_version=evaluator_version(kernel.provider, config), cases=experiment.suite.plan_cases(),
                 min_improved_cases=experiment.min_improved_cases, max_latency_ratio=experiment.max_latency_ratio,
+                min_held_out_correct=experiment.min_held_out_correct,
+                min_held_out_improved=experiment.min_held_out_improved,
                 max_case_latency_ms=experiment.max_case_latency_ms)
             kernel.improvements.record(plan)
             return await run_evaluation(kernel, plan.id, incumbent=incumbent, config=config)

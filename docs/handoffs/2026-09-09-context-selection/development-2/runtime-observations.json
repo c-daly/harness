@@ -1,0 +1,145 @@
+{
+  "first_observation": {
+    "v": 1,
+    "session_id": "1141d6c8c7d641d5b648d24a832b1e3f",
+    "seq": 4,
+    "ts": 1788917451.5946453,
+    "event": {
+      "type": "resource_observed",
+      "observation": {
+        "alias": "local-small",
+        "config_digest": "5890bd37cea432f50cb9ccbbac0db596499b2af575fb931c24c6071d2dcb2174",
+        "status": "checking",
+        "reason": "checking_inventory",
+        "observed_at": 1788917451.5945926,
+        "expires_at": 1788917456.5945926,
+        "stale": false,
+        "ownership": "external",
+        "evidence": "health_and_inventory",
+        "model_id": null,
+        "context_window": null,
+        "tool_support": null,
+        "structured_output": null,
+        "runtime_version": null,
+        "resource_group": "local",
+        "active_alias": null,
+        "queued_requests": 0
+      }
+    }
+  },
+  "first_ready": {
+    "v": 1,
+    "session_id": "1141d6c8c7d641d5b648d24a832b1e3f",
+    "seq": 87,
+    "ts": 1788917456.116293,
+    "event": {
+      "type": "resource_observed",
+      "observation": {
+        "alias": "local-small",
+        "config_digest": "5890bd37cea432f50cb9ccbbac0db596499b2af575fb931c24c6071d2dcb2174",
+        "status": "ready",
+        "reason": "model_listed",
+        "observed_at": 1788917456.1161504,
+        "expires_at": 1788917461.1161504,
+        "stale": false,
+        "ownership": "harness",
+        "evidence": "health_and_inventory",
+        "model_id": "local-small",
+        "context_window": null,
+        "tool_support": null,
+        "structured_output": null,
+        "runtime_version": null,
+        "resource_group": "local",
+        "active_alias": null,
+        "queued_requests": 0
+      }
+    }
+  },
+  "last_observations": [
+    {
+      "v": 1,
+      "session_id": "1141d6c8c7d641d5b648d24a832b1e3f",
+      "seq": 250,
+      "ts": 1788917479.5588543,
+      "event": {
+        "type": "resource_observed",
+        "observation": {
+          "alias": "local-small",
+          "config_digest": "5890bd37cea432f50cb9ccbbac0db596499b2af575fb931c24c6071d2dcb2174",
+          "status": "busy",
+          "reason": "active_requests",
+          "observed_at": 1788917479.558748,
+          "expires_at": 1788917484.558748,
+          "stale": false,
+          "ownership": "harness",
+          "evidence": "local_activity",
+          "model_id": null,
+          "context_window": null,
+          "tool_support": null,
+          "structured_output": null,
+          "runtime_version": null,
+          "resource_group": "local",
+          "active_alias": null,
+          "queued_requests": 0
+        }
+      }
+    },
+    {
+      "v": 1,
+      "session_id": "1141d6c8c7d641d5b648d24a832b1e3f",
+      "seq": 251,
+      "ts": 1788917481.7612982,
+      "event": {
+        "type": "resource_observed",
+        "observation": {
+          "alias": "local-small",
+          "config_digest": "5890bd37cea432f50cb9ccbbac0db596499b2af575fb931c24c6071d2dcb2174",
+          "status": "ready",
+          "reason": "model_listed",
+          "observed_at": 1788917479.5582776,
+          "expires_at": 1788917484.5582776,
+          "stale": false,
+          "ownership": "harness",
+          "evidence": "health_and_inventory",
+          "model_id": "local-small",
+          "context_window": null,
+          "tool_support": null,
+          "structured_output": null,
+          "runtime_version": null,
+          "resource_group": "local",
+          "active_alias": null,
+          "queued_requests": 0
+        }
+      }
+    },
+    {
+      "v": 1,
+      "session_id": "1141d6c8c7d641d5b648d24a832b1e3f",
+      "seq": 258,
+      "ts": 1788917482.2328067,
+      "event": {
+        "type": "resource_observed",
+        "observation": {
+          "alias": "local-small",
+          "config_digest": "5890bd37cea432f50cb9ccbbac0db596499b2af575fb931c24c6071d2dcb2174",
+          "status": "stopped",
+          "reason": "owned_process_stopped",
+          "observed_at": 1788917482.232626,
+          "expires_at": 1788917482.232626,
+          "stale": false,
+          "ownership": "harness",
+          "evidence": "local_process",
+          "model_id": null,
+          "context_window": null,
+          "tool_support": null,
+          "structured_output": null,
+          "runtime_version": null,
+          "resource_group": "local",
+          "active_alias": null,
+          "queued_requests": 0
+        }
+      }
+    }
+  ],
+  "time_to_ready_seconds": 4.521647691726685
+}

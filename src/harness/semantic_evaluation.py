@@ -207,6 +207,8 @@ async def run_evaluation(kernel, plan_id, *, incumbent, config: EvaluatorConfig)
         status = "timed_out"
     finally:
         report = {"schema_version": 1, "function": grader.function, "run_id": run_id, "completion": status,
+            "gates": plan.model_dump(include={"min_improved_cases", "min_held_out_correct",
+                "min_held_out_improved", "max_latency_ratio", "max_case_latency_ms"}),
             "activation_qualified": False, "held_out_provenance": "operator_declared",
             "runtime_identity_verified": False, "configuration": config.model_dump(mode="json"),
             "evaluator_version": version, "suite": plan.suite.model_dump(),

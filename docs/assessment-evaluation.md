@@ -58,6 +58,15 @@ An experiment contains:
   incumbent total latency, and at most 2,000 ms per candidate case. These are
   paired comparison gates, not an absolute model-quality qualification.
 
+To require improvement beyond development cases, also freeze
+`min_held_out_correct` and `min_held_out_improved`. The first requires a minimum
+correct count in the held-out partition; the second requires that many paired
+incumbent-fail/candidate-pass results there. Both default to zero for existing
+experiments, must be nonnegative integers, and cannot exceed the held-out case
+count. A gain on known regressions cannot satisfy these additional gates.
+Failed or incomplete results remain ineligible for adoption. These thresholds
+also apply to evaluation of a previously proposed assessment candidate.
+
 The control links the latest eight eligible observations of the same built-in
 function and model to evidence records. At least one is required. Invalid output
 and timeout are failure observations; assessed/no-match/uncertain results can

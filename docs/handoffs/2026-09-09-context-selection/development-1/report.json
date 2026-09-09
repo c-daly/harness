@@ -1,0 +1,16 @@
+{
+  "stage": "development",
+  "held_out": false,
+  "isolation": {
+    "interfaces": [
+      "lo"
+    ],
+    "memory_max_bytes": 4294967296,
+    "swap_max_bytes": 0,
+    "cpu_max": [
+      "400000",
+      "100000"
+    ]
+  },
+  "owned_runtime_stopped": true
+}
