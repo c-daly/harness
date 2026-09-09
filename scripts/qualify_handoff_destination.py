@@ -12,6 +12,7 @@ import json
 import subprocess
 import tempfile
 import time
+from contextlib import aclosing
 from datetime import datetime, timezone
 from importlib.metadata import version
 from pathlib import Path
@@ -23,7 +24,7 @@ from harness.agent import TaskLimits
 from harness.catalog import Catalog
 from harness.errors import ProviderError
 from harness.fold import fold
-from harness.handoff import ExactCall, HandoffSpec, Resolution, read_handoffs, snapshot
+from harness.handoff import ExactCall, HandoffSpec, Resolution, read_handoffs, snapshot, validate_resolutions
 from harness.inference import InferenceRequest
 from harness.log import read_session
 from harness.mcp_config import McpServerSpec
@@ -94,18 +95,38 @@ async def command(app, pilot, text, *, draft=None):
 
 def specification(kernel, project, letter, *, stream=False):
     checkpoint = snapshot(kernel.session)
+    resolutions = []
+    for effect in checkpoint.effects:
+        if effect.state != "uncertain":
+            continue
+        status = "uncertain"
+        if effect.kind == "provider_native" and (project / "native.txt").read_text() == "external native effect":
+            status = "completed"
+        elif effect.call and effect.call.tool in {"read_file", "glob", "grep"}:
+            status = "not_applied"  # Failed reads do not change project artifacts.
+        elif effect.call and effect.call.tool == "write_file":
+            for stage in ("A", "B", "C"):
+                path = project / f"{stage}.txt"
+                if effect.call.args.get("file_path") == str(path):
+                    if not path.exists():
+                        status = "not_applied"
+                    elif path.read_text() == effect.call.args.get("content"):
+                        status = "completed"
+        resolutions.append(Resolution(effect_id=effect.id, status=status,
+            note="Inspected the fixture artifacts after all earlier work stopped; absent writes were not applied. "
+                 "Unrecognized or mismatched effects remain uncertain."))
     return HandoffSpec(snapshot_sha256=checkpoint.digest, model="local-small", process_stopped=True,
         continuation=f"Write {letter}.txt with exactly 'stage {letter}' followed by a newline using the allowed "
                      "write_file call. Earlier files are complete. " + (LONG_REPLY if stream else "Then briefly confirm."),
-        resolutions=tuple(Resolution(effect_id=e.id, status="completed",
-            note="Inspected all existing stage files and native.txt; the earlier work has stopped.")
-            for e in checkpoint.effects if e.state == "uncertain"),
+        resolutions=tuple(resolutions),
         allowed_calls=(ExactCall(tool="write_file", args=write_args(project, letter)),))
 
 
 async def record(app, pilot, root, letter, *, stream=False):
     path = root / "reconciliation.json"
-    path.write_text(specification(app.kernel, root / "project", letter, stream=stream).model_dump_json())
+    spec = specification(app.kernel, root / "project", letter, stream=stream)
+    validate_resolutions(snapshot(app.kernel.session), spec)
+    path.write_text(spec.model_dump_json())
     before = set(read_handoffs(app.kernel.session))
     await command(app, pilot, f"/handoff record {path}")
     records = read_handoffs(app.kernel.session)
@@ -169,7 +190,18 @@ async def journey(root, provider, mode, memory_spec=None):
                     if isinstance(chunk, TextDelta) and chunk.text:
                         streaming.set()
 
-                owner = asyncio.create_task(kernel.loop.dispatcher.dispatch_inference(provider=provider,
+                class HeldStream:
+                    async def infer(self, request):
+                        async with aclosing(provider.infer(request)) as source:
+                            async for chunk in source:
+                                yield chunk
+                                if isinstance(chunk, TextDelta) and chunk.text:
+                                    # Hold the consumer of a real stream until
+                                    # explicit cancellation, within its original
+                                    # request deadline. Do not invent model output.
+                                    await asyncio.Event().wait()
+
+                owner = asyncio.create_task(kernel.loop.dispatcher.dispatch_inference(provider=HeldStream(),
                     request=InferenceRequest(model="local-small", messages=(Message.user_text(
                         "List the integers from 1 to 10000, one per line. Do not skip any."),),
                         purpose="work", timeout_seconds=45, max_output_tokens=4096), on_chunk=observe))
@@ -323,7 +355,7 @@ def main():
     models = catalog(args.model_file, "qwen3-8b")
     models = Catalog({**models.entries, "external": {"route": "codex/default", "backend": "codex"}})
     weights = MODEL_PROFILES["qwen3-8b"]
-    report = {"suite": "handoff-destination-recovery-v3", "observed_at": datetime.now(timezone.utc).isoformat(),
+    report = {"suite": "handoff-destination-recovery-v4", "observed_at": datetime.now(timezone.utc).isoformat(),
         "versions": {name: version(name) for name in ("litellm", "openai", "textual", "mcp")},
         "image": IMAGE, "weights": {k: v for k, v in weights.items() if k != "runtime_args"},
         "catalog": models.entries, "journeys": [], "passed": False,

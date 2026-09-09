@@ -9,7 +9,7 @@ import pytest
 from harness.catalog import Catalog
 from harness.mcp_config import McpServerSpec
 from harness.provider_litellm import CatalogProvider
-from scripts.qualify_handoff_destination import MODES, expected_checks, journey
+from scripts.qualify_handoff_destination import MODES, expected_checks, journey, specification
 
 
 @pytest.mark.parametrize("mode", MODES)
@@ -38,3 +38,28 @@ mcp.run()
     result = await journey(tmp_path, CatalogProvider(models), mode, memory)
     assert result["passed"], {"failed": sorted(expected_checks(mode) - {k for k, v in result["checks"].items() if v}),
                               "error_type": result.get("error_type")}
+
+
+async def test_fixture_reconciliation_does_not_mark_a_rejected_future_write_completed(tmp_path):
+    from harness.errors import AuthFailed
+    from tests.test_handoff import source
+
+    kernel, provider = await source(tmp_path)
+    provider.catalog.entries["local-small"] = provider.catalog.entries["local"]
+    kernel.loop.model = "local-small"
+    try:
+        first = kernel.handoffs.record(specification(kernel, provider.root, "B"))
+        provider.steps = ["third", "new", "fail"]  # C is outside the first exact allowlist.
+        with pytest.raises(AuthFailed):
+            await kernel.handoffs.run(first.id)
+        assert (provider.root / "B.txt").read_text() == "stage B\n"
+        assert not (provider.root / "C.txt").exists()
+        remaining = specification(kernel, provider.root, "C")
+        assert any(r.status == "not_applied" for r in remaining.resolutions)
+        second = kernel.handoffs.record(remaining)
+        provider.steps = ["third", "done"]
+        await kernel.handoffs.run(second.id)
+        assert (provider.root / "C.txt").read_text() == "stage C\n"
+        assert (provider.root / "B.txt").read_text() == "stage B\n"
+    finally:
+        kernel.session.close()
