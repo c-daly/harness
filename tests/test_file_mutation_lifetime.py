@@ -1,15 +1,21 @@
 """File ownership survives cancellation until the actual mutation has settled."""
 
 import asyncio
+import hashlib
 import threading
 
 import pytest
 
-from harness.native_tools import EditFileTool, ReadState, WriteFileTool
+from harness.native_tools import EditFileTool, ReadFileTool, ReadState, ToolError, WriteFileTool
 
 
 def mutation(root, kind, *, target="shared.txt", before="v0", after="v1"):
-    reads = ReadState({str((root / target).resolve())})
+    reads = ReadState()
+    path = (root / target).resolve()
+    if path.exists():
+        # Seed an observed version for these worker-lifetime tests; a path alone
+        # is historical routing data and no longer authorizes an overwrite.
+        reads.mark(str(path), hashlib.sha256(path.read_bytes()).hexdigest())
     if kind == "write":
         return (WriteFileTool(workspace_root=root, read_state=reads), "_write",
                 {"file_path": target, "content": after})
@@ -58,8 +64,12 @@ async def test_cancelled_owner_keeps_canonical_path_until_thread_settles(tmp_pat
         release.set()
         with pytest.raises(asyncio.CancelledError):
             await owner
-        await asyncio.wait_for(waiting, 3)
-        assert successor_entered.is_set() and (tmp_path / "shared.txt").read_text() == "v2"
+        with pytest.raises(ToolError, match="changed"):
+            await asyncio.wait_for(waiting, 3)
+        assert successor_entered.is_set() and (tmp_path / "shared.txt").read_text() == "v1"
+        await ReadFileTool(workspace_root=tmp_path, read_state=second._rs)({"file_path": "alias.txt"})
+        await second(second_args)
+        assert (tmp_path / "shared.txt").read_text() == "v2"
     finally:
         release.set()
         await asyncio.gather(owner, *([waiting] if waiting else []), return_exceptions=True)

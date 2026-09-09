@@ -8,6 +8,7 @@ Bash uses an async subprocess (see BashTool, Task 5).
 
 import asyncio
 import fnmatch as _fnmatch
+import hashlib
 import os
 import re
 import signal
@@ -37,8 +38,12 @@ class ToolError(Exception):
 
 
 class ReadState:
-    """In-process projection of which canonical paths have been read this session.
-    Seeded from fold(envelopes).read_paths at build_kernel so the gate survives resume."""
+    """Live content observations belong to the calling session, not the registry.
+
+    Historical paths remain routing hints only. Resume cannot reconstruct raw
+    file versions from numbered, windowed or truncated tool output. Observations
+    are updated on the event loop after delivery, never by cancelled I/O workers.
+    """
 
     def __init__(self, paths: set[str] | None = None) -> None:
         # WARNING: paths must already be canonical. fold.read_paths is as-recorded,
@@ -46,12 +51,28 @@ class ReadState:
         # against the workspace root (resolve_in_workspace) and silently drop
         # unresolvable ones before passing them here (wiring: Task 8).
         self._paths = set(paths or ())
+        self._unscoped: dict[str, str] = {}
+        self._sessions = weakref.WeakKeyDictionary()
 
-    def mark(self, path: str) -> None:
+    def _observations(self) -> dict[str, str]:
+        from harness.execution import current_scope
+        scope = current_scope.get()
+        if scope is None:
+            return self._unscoped
+        return self._sessions.setdefault(scope.session, {})
+
+    def mark(self, path: str, digest: str) -> None:
         self._paths.add(path)
+        self._observations()[path] = digest
+
+    def forget(self, path: str) -> None:
+        self._observations().pop(path, None)
+
+    def version(self, path: str) -> str | None:
+        return self._observations().get(path)
 
     def was_read(self, path: str) -> bool:
-        return path in self._paths
+        return self.version(path) is not None
 
     def paths(self) -> frozenset[str]:
         return frozenset(self._paths)
@@ -112,6 +133,23 @@ def _resolve(root: Path, raw: object) -> Path:
         raise ToolError(str(exc)) from exc
 
 
+class _FileMissing(ToolError):
+    """A delivered missing-file read invalidates a previous content observation."""
+
+
+def _check_version(path: Path, expected: str | None, data: bytes | None) -> None:
+    if expected is None and data is not None:
+        raise ToolError(
+            "File has not been read by this agent since startup. read_file it first "
+            f"so you know what you are changing. Historical and other agents' reads do not count. Path: {path}"
+        )
+    if expected is not None and (data is None or hashlib.sha256(data).hexdigest() != expected):
+        raise ToolError(
+            "File changed since this agent last read or wrote it. read_file it again, "
+            f"then reapply your change to current contents (or confirm deletion). Path: {path}"
+        )
+
+
 def _format_numbered(lines: list[str], start: int) -> str:
     out = []
     for i, line in enumerate(lines):
@@ -164,14 +202,19 @@ class ReadFileTool:
                 "Omit them to read from the start."
             )
         windowed = raw_offset is not None or raw_limit is not None
-        result = await asyncio.to_thread(self._read, path, offset, limit, windowed)
+        try:
+            result, digest = await asyncio.to_thread(self._read, path, offset, limit, windowed)
+        except _FileMissing:
+            if self._rs is not None:
+                self._rs.forget(str(path))
+            raise
         if self._rs is not None:
-            self._rs.mark(str(path))
+            self._rs.mark(str(path), digest)
         return result
 
-    def _read(self, path: Path, offset: int, limit: int, windowed: bool) -> str:
+    def _read(self, path: Path, offset: int, limit: int, windowed: bool) -> tuple[str, str]:
         if not path.exists():
-            raise ToolError(
+            raise _FileMissing(
                 f"file does not exist: {path}. Check the path, or use glob/grep to find it."
             )
         if path.is_dir():
@@ -184,14 +227,17 @@ class ReadFileTool:
                     f"read a range (e.g. offset: 1, limit: 500), or use grep to find the section."
                 )
             data = path.read_bytes()
+        except FileNotFoundError as exc:
+            raise _FileMissing(f"file does not exist: {path}. Check the path before retrying.") from exc
         except OSError as exc:
             raise ToolError(
                 f"could not read {path}: {exc.strerror or exc}. The file may have restrictive "
                 f"permissions or be unreadable. Check access, or use bash (e.g. ls -l) to inspect it."
             ) from exc
         text = data.decode("utf-8", errors="replace")
+        digest = hashlib.sha256(data).hexdigest()
         if text == "":
-            return "File exists but is empty."
+            return "File exists but is empty.", digest
         all_lines = text.split("\n")
         if all_lines and all_lines[-1] == "":
             all_lines = all_lines[:-1]  # drop trailing-newline artifact
@@ -213,7 +259,7 @@ class ReadFileTool:
             body += (
                 f"\n\n(showing lines {offset}\u2013{last} of {total} \u2014 use offset to continue)"
             )
-        return body
+        return body, digest
 
 
 class WriteFileTool:
@@ -223,7 +269,8 @@ class WriteFileTool:
         self.spec = ToolSpec(
             name=ToolName("write_file"),
             description=(
-                "Write a file (create, or overwrite a file already read this session). "
+                "Write a file (create, or overwrite a file this agent has read since startup). "
+                "If the file changed since your read, read_file it again before retrying. "
                 "Parent directories are created automatically. Path is absolute or "
                 "workspace-relative."
             ),
@@ -240,24 +287,27 @@ class WriteFileTool:
     async def __call__(self, args: dict[str, Any]) -> str:
         path = _resolve(self._root, args.get("file_path", ""))
         content = str(args.get("content", ""))
-        return await _run_mutation(self, path, self._write, content)
+        expected = self._rs.version(str(path))  # Freeze before waiting for the path lock.
+        result, digest = await _run_mutation(self, path, self._write, content, expected)
+        self._rs.mark(str(path), digest)
+        return result
 
-    def _write(self, path: Path, content: str) -> str:
+    def _write(self, path: Path, content: str, expected: str | None) -> tuple[str, str]:
         if path.is_dir():
             raise ToolError(f"{path} is a directory.")
-        existed = path.exists()
-        if existed and not self._rs.was_read(str(path)):
-            raise ToolError(
-                f"{path} already exists and has not been read in this session. read_file it "
-                f"first so you know what you are overwriting; for a partial change use edit_file."
-            )
-        prev_lines = (
-            len(path.read_text(encoding="utf-8", errors="replace").splitlines()) if existed else 0
-        )
+        try:
+            data = path.read_bytes()
+        except FileNotFoundError:
+            data = None
+        except OSError as exc:
+            raise ToolError(f"could not read {path}: {exc.strerror or exc}. Check file permissions.") from exc
+        _check_version(path, expected, data)
+        prev_lines = len(data.decode("utf-8", errors="replace").splitlines()) if data is not None else 0
         tmp = path.with_name(path.name + _WRITE_TMP_SUFFIX)
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
-            tmp.write_text(content, encoding="utf-8")
+            updated = content.encode("utf-8")
+            tmp.write_bytes(updated)
             tmp.replace(path)  # atomic
         except OSError as exc:
             raise ToolError(
@@ -266,11 +316,11 @@ class WriteFileTool:
             ) from exc
         finally:
             tmp.unlink(missing_ok=True)  # no-op after a successful replace; cleans leaks on failure
-        self._rs.mark(str(path))  # a write counts as a read for chained edits
         n = len(content.splitlines())
-        if existed:
-            return f"Overwrote {path} ({n} lines, was {prev_lines})."
-        return f"Created {path} ({n} lines)."
+        digest = hashlib.sha256(updated).hexdigest()
+        if data is not None:
+            return f"Overwrote {path} ({n} lines, was {prev_lines}).", digest
+        return f"Created {path} ({n} lines).", digest
 
 
 class EditFileTool:
@@ -280,7 +330,8 @@ class EditFileTool:
         self.spec = ToolSpec(
             name=ToolName("edit_file"),
             description=(
-                "Replace an exact substring in a file already read this session. old_string "
+                "Replace an exact substring in a file this agent has read since startup. "
+                "If the file changed since your read, read_file it again before retrying. old_string "
                 "must match the file byte-for-byte (do NOT include read_file line-number "
                 "prefixes). Set replace_all to change every occurrence."
             ),
@@ -301,23 +352,26 @@ class EditFileTool:
         old = str(args.get("old_string", ""))
         new = str(args.get("new_string", ""))
         replace_all = bool(args.get("replace_all", False))
-        return await _run_mutation(self, path, self._edit, old, new, replace_all)
+        expected = self._rs.version(str(path))
+        result, digest = await _run_mutation(self, path, self._edit, old, new, replace_all, expected)
+        self._rs.mark(str(path), digest)
+        return result
 
-    def _edit(self, path: Path, old: str, new: str, replace_all: bool) -> str:
+    def _edit(self, path: Path, old: str, new: str, replace_all: bool, expected: str | None) -> tuple[str, str]:
         if not path.exists():
             raise ToolError(f"file does not exist: {path}. read_file it first, then retry.")
-        if not self._rs.was_read(str(path)):
-            raise ToolError(
-                f"{path} has not been read in this session. read_file it first, then retry."
-            )
         if old == new:
             raise ToolError("old_string and new_string are identical; nothing to change.")
         try:
-            text = path.read_text(encoding="utf-8", errors="replace")
+            data = path.read_bytes()
         except OSError as exc:
             raise ToolError(
                 f"could not read {path}: {exc.strerror or exc}. Check file permissions."
             ) from exc
+        _check_version(path, expected, data)
+        # Preserve read_text's universal-newline behavior while checking the raw
+        # bytes that supplied this edit, including any part outside a read window.
+        text = data.decode("utf-8", errors="replace").replace("\r\n", "\n").replace("\r", "\n")
         count = text.count(old)
         if count == 0:
             raise ToolError(
@@ -333,7 +387,8 @@ class EditFileTool:
         updated = text.replace(old, new) if replace_all else text.replace(old, new, 1)
         tmp = path.with_name(path.name + _WRITE_TMP_SUFFIX)
         try:
-            tmp.write_text(updated, encoding="utf-8")
+            encoded = updated.encode("utf-8")
+            tmp.write_bytes(encoded)
             tmp.replace(path)
         except OSError as exc:
             raise ToolError(
@@ -341,8 +396,7 @@ class EditFileTool:
             ) from exc
         finally:
             tmp.unlink(missing_ok=True)  # no-op after a successful replace; cleans leaks on failure
-        self._rs.mark(str(path))
-        return f"Edited {path}. Snippet of the result:\n{self._snippet(updated, new)}"
+        return f"Edited {path}. Snippet of the result:\n{self._snippet(updated, new)}", hashlib.sha256(encoded).hexdigest()
 
     def _snippet(self, text: str, needle: str) -> str:
         lines = text.split("\n")

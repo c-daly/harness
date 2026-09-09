@@ -69,7 +69,8 @@ class FoldedState:
     last_seq: int = 0
     # seq -> index range bookkeeping for compaction
     _msg_seqs: list[int] = field(default_factory=list)
-    # paths read or written successfully this session (read-before-edit gate, R-C1).
+    # Historical paths read or written successfully this session (routing hints).
+    # They do not establish a current content version for native mutations.
     # NOTE: these are as-recorded path strings, canonical ONLY when WorkspaceGuard ran.
     # Resume seeding MUST resolve each against the workspace root (resolve_in_workspace)
     # and silently drop unresolvable ones before constructing ReadState (wiring: Task 8).

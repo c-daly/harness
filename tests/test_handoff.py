@@ -330,10 +330,10 @@ async def test_cancel_waits_for_started_native_file_thread_even_after_repeated_c
     entered, release = threading.Event(), threading.Event()
     original = WriteFileTool._write
 
-    def paused_write(tool, path, content):
+    def paused_write(tool, path, content, expected):
         entered.set()
         assert release.wait(5)
-        return original(tool, path, content)
+        return original(tool, path, content, expected)
 
     monkeypatch.setattr(WriteFileTool, "_write", paused_write)
     provider.steps = ["new", "done"]
