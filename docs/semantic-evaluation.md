@@ -187,6 +187,18 @@ candidate development; repeatedly tuning against the same cases is not held-out
 qualification. Message and assessment proposals use the separate supervised service;
 operator-authored assessment comparisons remain available.
 
+Freeze explicit held-out gates when testing generalization:
+`min_held_out_correct` sets the minimum number of correct candidate answers in
+that partition, and `min_held_out_improved` sets the minimum number of paired
+incumbent-fail/candidate-pass cases there. For example, a 32-case confirmation
+set can require 29 correct and three improvements. Both fields are strict
+nonnegative integers bounded by the held-out case count. They default to zero
+for compatibility with existing experiments; a partition label alone does not
+require improvement on unseen cases. The fields work on `EvaluationPlan`,
+`PromptExperiment`, and both assessment experiment types, survive journal
+replay, appear in reports, and participate in the verdict used by adoption.
+They cannot verify that an operator kept the cases separate from development.
+
 Prompt artifacts bind their declared function/version and instruction text. They cannot provide executable code, schemas, expected labels,
 resource limits, or adoption policy. Suites contain at most 64 cases and 1 MiB.
 Every case identity, partition, and critical flag must agree with the stored plan.

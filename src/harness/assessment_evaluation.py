@@ -195,6 +195,8 @@ class AssessmentPromptExperiment(BaseModel):
     configuration: AssessmentEvaluatorConfig
     suite: AssessmentEvaluationSuite
     min_improved_cases: int = Field(default=1, ge=1, strict=True)
+    min_held_out_correct: int = Field(default=0, ge=0, strict=True)
+    min_held_out_improved: int = Field(default=0, ge=0, strict=True)
     max_latency_ratio: float = Field(default=1.2, gt=0)
     max_case_latency_ms: float = Field(default=2000, gt=0)
 
@@ -202,6 +204,9 @@ class AssessmentPromptExperiment(BaseModel):
     def bounded_suite(self):
         if self.min_improved_cases > len(self.suite.cases):
             raise ValueError("improvement threshold exceeds case count")
+        held_out = sum(c.partition == "held_out" for c in self.suite.cases)
+        if max(self.min_held_out_correct, self.min_held_out_improved) > held_out:
+            raise ValueError("held-out threshold exceeds held-out case count")
         return self
 
 
@@ -270,6 +275,8 @@ def prepare_assessment_experiment(kernel, experiment: AssessmentExperiment):
         candidate_version=candidate.artifact.sha256, suite=session.blobs.put(experiment.suite.model_dump_json().encode()),
         evaluator_version=evaluator_version(kernel.provider, experiment.configuration),
         cases=experiment.suite.plan_cases(), min_improved_cases=experiment.min_improved_cases,
+        min_held_out_correct=experiment.min_held_out_correct,
+        min_held_out_improved=experiment.min_held_out_improved,
         max_latency_ratio=experiment.max_latency_ratio, max_case_latency_ms=experiment.max_case_latency_ms)
     journal.record(candidate)
     journal.record(plan)

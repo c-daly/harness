@@ -1,0 +1,118 @@
+{
+  "first_observation": {
+    "v": 1,
+    "session_id": "7619256e55524d108109b0baec50b350",
+    "seq": 4,
+    "ts": 1788916975.5351715,
+    "event": {
+      "type": "resource_observed",
+      "observation": {
+        "alias": "local-small",
+        "config_digest": "69711007e5cca2726e753a1722f9fc143e7decfa407934c6ed4ff424a3c650a0",
+        "status": "checking",
+        "reason": "checking_inventory",
+        "observed_at": 1788916975.535136,
+        "expires_at": 1788916980.535136,
+        "stale": false,
+        "ownership": "external",
+        "evidence": "health_and_inventory",
+        "model_id": null,
+        "context_window": null,
+        "tool_support": null,
+        "structured_output": null,
+        "runtime_version": null,
+        "resource_group": "local",
+        "active_alias": null,
+        "queued_requests": 0
+      }
+    }
+  },
+  "first_ready": null,
+  "last_observations": [
+    {
+      "v": 1,
+      "session_id": "7619256e55524d108109b0baec50b350",
+      "seq": 554,
+      "ts": 1788917005.576066,
+      "event": {
+        "type": "resource_observed",
+        "observation": {
+          "alias": "local-small",
+          "config_digest": "69711007e5cca2726e753a1722f9fc143e7decfa407934c6ed4ff424a3c650a0",
+          "status": "checking",
+          "reason": "checking_inventory",
+          "observed_at": 1788917005.5758822,
+          "expires_at": 1788917010.5758822,
+          "stale": false,
+          "ownership": "harness",
+          "evidence": "health_and_inventory",
+          "model_id": null,
+          "context_window": null,
+          "tool_support": null,
+          "structured_output": null,
+          "runtime_version": null,
+          "resource_group": "local",
+          "active_alias": null,
+          "queued_requests": 0
+        }
+      }
+    },
+    {
+      "v": 1,
+      "session_id": "7619256e55524d108109b0baec50b350",
+      "seq": 555,
+      "ts": 1788917005.5833278,
+      "event": {
+        "type": "resource_observed",
+        "observation": {
+          "alias": "local-small",
+          "config_digest": "69711007e5cca2726e753a1722f9fc143e7decfa407934c6ed4ff424a3c650a0",
+          "status": "loading",
+          "reason": "server_loading",
+          "observed_at": 1788917005.5831573,
+          "expires_at": 1788917010.5831573,
+          "stale": false,
+          "ownership": "harness",
+          "evidence": "health_and_inventory",
+          "model_id": null,
+          "context_window": null,
+          "tool_support": null,
+          "structured_output": null,
+          "runtime_version": null,
+          "resource_group": "local",
+          "active_alias": null,
+          "queued_requests": 0
+        }
+      }
+    },
+    {
+      "v": 1,
+      "session_id": "7619256e55524d108109b0baec50b350",
+      "seq": 557,
+      "ts": 1788917005.8550284,
+      "event": {
+        "type": "resource_observed",
+        "observation": {
+          "alias": "local-small",
+          "config_digest": "69711007e5cca2726e753a1722f9fc143e7decfa407934c6ed4ff424a3c650a0",
+          "status": "stopped",
+          "reason": "owned_process_stopped",
+          "observed_at": 1788917005.8549097,
+          "expires_at": 1788917005.8549097,
+          "stale": false,
+          "ownership": "harness",
+          "evidence": "local_process",
+          "model_id": null,
+          "context_window": null,
+          "tool_support": null,
+          "structured_output": null,
+          "runtime_version": null,
+          "resource_group": "local",
+          "active_alias": null,
+          "queued_requests": 0
+        }
+      }
+    }
+  ],
+  "time_to_ready_seconds": null
+}

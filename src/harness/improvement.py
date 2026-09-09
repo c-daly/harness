@@ -59,6 +59,8 @@ class EvaluationPlan(_Record):
     evaluator_version: Digest
     cases: tuple[EvaluationCase, ...] = Field(min_length=2)
     min_improved_cases: int = Field(default=1, ge=0, strict=True)
+    min_held_out_correct: int = Field(default=0, ge=0, strict=True)
+    min_held_out_improved: int = Field(default=0, ge=0, strict=True)
     max_latency_ratio: float = Field(default=1.2, gt=0)
     max_case_latency_ms: float = Field(gt=0)
 
@@ -70,6 +72,9 @@ class EvaluationPlan(_Record):
             raise ValueError("evaluation requires regression and held-out cases")
         if self.min_improved_cases > len(self.cases):
             raise ValueError("improvement threshold exceeds case count")
+        held_out = sum(c.partition == "held_out" for c in self.cases)
+        if max(self.min_held_out_correct, self.min_held_out_improved) > held_out:
+            raise ValueError("held-out threshold exceeds held-out case count")
         return self
 
 
@@ -131,6 +136,7 @@ def verdict(plan: EvaluationPlan, result: ExperimentResult) -> Literal["passed",
     if len(observations) != len(result.observations) or set(observations) != {c.id for c in plan.cases}:
         raise ValueError("experiment must report each planned case exactly once")
     improved = 0
+    held_out_correct = held_out_improved = 0
     incumbent_ms = candidate_ms = 0.0
     incomplete = result.completion != "completed"
     failed = False
@@ -146,6 +152,9 @@ def verdict(plan: EvaluationPlan, result: ExperimentResult) -> Literal["passed",
             incomplete = True
             continue
         improved += int(value.incumbent_passed is False and value.candidate_passed is True)
+        if case.partition == "held_out":
+            held_out_correct += int(value.candidate_passed is True)
+            held_out_improved += int(value.incumbent_passed is False and value.candidate_passed is True)
         incumbent_ms += value.incumbent_latency_ms
         candidate_ms += value.candidate_latency_ms
         failed |= value.candidate_latency_ms > plan.max_case_latency_ms
@@ -154,6 +163,8 @@ def verdict(plan: EvaluationPlan, result: ExperimentResult) -> Literal["passed",
     if incomplete:
         return "inconclusive"
     if improved < plan.min_improved_cases or candidate_ms > incumbent_ms * plan.max_latency_ratio:
+        return "failed"
+    if held_out_correct < plan.min_held_out_correct or held_out_improved < plan.min_held_out_improved:
         return "failed"
     return "passed"
 

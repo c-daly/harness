@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "function": "context_selection",
+  "development_max_candidates": 2,
+  "development_cases": "Existing five immutable critical cases and public-paraphrase; public development data only.",
+  "confirmation_cases": 32,
+  "confirmation_runs": 1,
+  "min_held_out_correct": 29,
+  "min_held_out_improved": 3,
+  "min_correct_advantage_over_rules": 3,
+  "max_case_latency_ms": 2000,
+  "max_latency_ratio": 1.2,
+  "critical_failures_allowed": 0,
+  "regressions_allowed": 0,
+  "case_provenance": "New operator-authored synthetic cases created only after candidate bytes are frozen; not independent human-labeled production samples.",
+  "candidate_provenance": "Operator-authored correction hypothesis from prior public failures; not local-model-generated.",
+  "confirmation_order": "Freeze candidate/configuration/gates before writing confirmation inputs; freeze inputs/labels before one paired confirmation. No retuning on confirmation.",
+  "adoption": "Only explicit shadow selection if all paired and confirmation gates pass; otherwise retain builtin. Never enable autonomous routing or task control.",
+  "runtime": "Installed Qwen3-8B Q4_K_M / llama.cpp b9603, CUDA, 4096 context, no thinking, no presence penalty; semantic temperature zero; Docker network none, 4 CPUs, 4 GiB RAM, no swap. Final pre-inference profile: 28 GPU layers, startup allowance 120 seconds; semantic response and quality latency limits unchanged.",
+  "setup_attempts": [
+    {
+      "directory": "development-1",
+      "outcome": "cold_start_timeout_30s_no_scored_calls",
+      "change": "Longer cold start allowance and partial GPU offload for available shared-host capacity; set before any scored development response."
+    }
+  ]
+}
