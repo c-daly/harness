@@ -162,8 +162,11 @@ The shared controller pauses follow-ups on an incomplete result. The TUI shows
 the reason and preserves queued input and the unsent draft; headless CLI prints
 partial output and exits nonzero. Native children record `incomplete` rather
 than `ok`, and the activity panel retains that status even when the enclosing
-tool returns text. Legacy coordination still uses a string bridge with a
-preserved error prefix; it is not yet a fully typed heterogeneous result protocol.
+tool returns text. [Coordination](coordination-outcomes.md) now consumes typed
+delegation outcomes, preserves partial results and provenance, and settles
+siblings before recording its terminal report. String tool APIs remain compatible;
+their prose does not determine child execution status. Live heterogeneous
+qualification and evidence-based escalation remain open.
 
 ## External agent tasks: Codex migration
 

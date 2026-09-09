@@ -127,6 +127,6 @@ The [offline smoke evidence](handoffs/2026-09-07-supervised-improvement/README.m
 uses real local generation/evaluation, explicitly injected format faults and
 public cases. Controlled provider fixtures prove adoption, rollback, replay,
 refusal and interruption paths. These do not establish improvement on unseen
-interactions. M4 still needs held-out semantic qualification and external-agent
-reconciliation. Assessment candidates, automatic policies and isolated source
-changes remain later work.
+interactions. M4 still needs held-out semantic qualification and broader live-agent
+handoff qualification. Assessment candidates now have the supervised lifecycle
+linked above; automatic policies and isolated source changes remain later work.
