@@ -1,12 +1,13 @@
 """Public scripted HTTP stream for destination process-loss tests; no inference."""
 
 import json
+import socket
 import sys
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-project, mode, port = Path(sys.argv[1]), sys.argv[2], int(sys.argv[3])
+project, mode, listener_fd = Path(sys.argv[1]), sys.argv[2], int(sys.argv[3])
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -61,4 +62,9 @@ class Handler(BaseHTTPRequestHandler):
             pass
 
 
-ThreadingHTTPServer(("127.0.0.1", port), Handler).serve_forever()
+with socket.socket(fileno=listener_fd) as listener:
+    with ThreadingHTTPServer(listener.getsockname(), Handler, bind_and_activate=False) as server:
+        server.socket.close()
+        server.socket = listener
+        server.server_activate()
+        server.serve_forever()

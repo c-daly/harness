@@ -2047,3 +2047,11 @@ advisory and no new model or improvement candidate was adopted. Live-provider
 handoff qualification, M5 mixed-agent portability/source-edit improvement, and
 M6 daily use remain open. This closes the named bounded destination fault cases,
 not the whole core-agency roadmap.
+
+**PR39 review:** the public HTTP fixture now inherits a socket held by the test
+through startup, process loss and restart, removing the port-allocation race.
+Every fixture launch checks that a competing bind fails, and each journey checks
+both initial and resumed launches. The seven affected tests passed concurrently
+on Python 3.13 (35.23 s) and 3.12 (36.00 s); Ruff and whitespace checks passed.
+This changes test infrastructure only; the frozen core and offline reports remain
+unchanged.

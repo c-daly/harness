@@ -1,5 +1,7 @@
 """Public process/HTTP/MCP/terminal faults; real model evidence is opt-in."""
 
+import asyncio
+import errno
 import socket
 import sys
 from pathlib import Path
@@ -12,12 +14,37 @@ from harness.provider_litellm import CatalogProvider
 from scripts.qualify_handoff_destination import MODES, expected_checks, journey, specification
 
 
+HTTP_FIXTURE = str(Path(__file__).parent / "fixtures/handoff_destination_http.py")
+
+
+@pytest.fixture
+def destination_socket(monkeypatch):
+    # Retain the reservation across startup, process loss and session restart.
+    # Only the HTTP fixture inherits it; ordinary Harness launches are unchanged.
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        launches = []
+        spawn = asyncio.create_subprocess_exec
+
+        async def inherit_listener(*args, **kwargs):
+            if args[:2] == (sys.executable, HTTP_FIXTURE):
+                with socket.socket() as contender:
+                    with pytest.raises(OSError) as conflict:
+                        contender.bind(listener.getsockname())
+                    assert conflict.value.errno == errno.EADDRINUSE
+                kwargs["pass_fds"] = (*kwargs.get("pass_fds", ()), listener.fileno())
+                launches.append(listener.fileno())
+            return await spawn(*args, **kwargs)
+
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", inherit_listener)
+        yield listener, launches
+
+
 @pytest.mark.parametrize("mode", MODES)
 @pytest.mark.parametrize("memory_enabled", [False, True])
-async def test_destination_fault_and_explicit_recovery(tmp_path, mode, memory_enabled):
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        port = sock.getsockname()[1]
+async def test_destination_fault_and_explicit_recovery(tmp_path, mode, memory_enabled, destination_socket):
+    listener, launches = destination_socket
+    port = listener.getsockname()[1]
     memory = None
     if memory_enabled:
         server = tmp_path / "memory_fixture.py"
@@ -33,11 +60,11 @@ mcp.run()
     models = Catalog({"external": {"backend": "codex", "route": "codex/default"}, "local-small": {
         "route": "openai/local-small", "api_base": f"http://127.0.0.1:{port}/v1",
         "local": {"auto_start": True, "startup_seconds": 5, "command": [sys.executable,
-            str(Path(__file__).parent / "fixtures/handoff_destination_http.py"),
-            str(tmp_path / "project"), mode, str(port)]}}})
+            HTTP_FIXTURE, str(tmp_path / "project"), mode, str(listener.fileno())]}}})
     result = await journey(tmp_path, CatalogProvider(models), mode, memory)
     assert result["passed"], {"failed": sorted(expected_checks(mode) - {k for k, v in result["checks"].items() if v}),
                               "error_type": result.get("error_type")}
+    assert len(launches) == 2  # Reservation checked before both initial and resumed startup.
 
 
 async def test_fixture_reconciliation_does_not_mark_a_rejected_future_write_completed(tmp_path):
