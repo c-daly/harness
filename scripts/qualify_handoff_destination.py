@@ -34,7 +34,7 @@ from harness.provider_litellm import CatalogProvider
 from harness.tasks import project_tasks
 from harness.tui import HarnessApp
 from scripts.qualify_handoff import controlled_source, empty_auth_home, process_stopped
-from scripts.qualify_handoff_memory import command, finish_app, make_kernel, run_events
+from scripts.qualify_handoff_memory import finish_app, make_kernel, run_events
 from scripts.qualify_local import IMAGE, MODEL_PROFILES, catalog, close, isolation, sha256, until
 from scripts.qualify_m3 import mounted, profile, screen
 
@@ -67,6 +67,29 @@ def settled(kernel):
 
 def write_args(project, letter):
     return {"file_path": str(project / f"{letter}.txt"), "content": f"stage {letter}\n"}
+
+
+async def start_command(app, pilot, text, *, draft=None):
+    composer = app.query_one("#prompt", Input)
+    await pilot.click("#prompt")
+    composer.value = text
+    previous = app._semantic_worker
+    await pilot.press("enter")
+    # Input.Submitted clears the composer before processing the command. Wait
+    # for that acknowledgement instead of overwriting an unhandled command.
+    await until(lambda: composer.value == "", seconds=5)
+    if draft is not None:
+        composer.value = draft
+    if text.startswith(("/handoff record ", "/handoff run ")):
+        await until(lambda: app._semantic_worker is not previous, seconds=5)
+        return app._semantic_worker
+
+
+async def command(app, pilot, text, *, draft=None):
+    worker = await start_command(app, pilot, text, draft=draft)
+    if worker is not None:
+        await asyncio.wait_for(worker.wait(), 60)
+    await pilot.pause(.1)
 
 
 def specification(kernel, project, letter, *, stream=False):
@@ -183,10 +206,7 @@ async def journey(root, provider, mode, memory_spec=None):
                             process.kill()  # The exact session-owned child; do not stop user servers.
 
                 kernel.loop.on_chunk = observe
-                composer = app.query_one("#prompt", Input)
-                composer.value = f"/handoff run {initial.id}"
-                await pilot.press("enter")
-                composer.value = "keep this recovery draft"
+                await start_command(app, pilot, f"/handoff run {initial.id}", draft="keep this recovery draft")
                 await until(streaming.is_set, seconds=40)
                 checks["stream_after_write"] = (project / "B.txt").read_text() == "stage B\n"
                 started = time.monotonic()
@@ -276,6 +296,8 @@ async def journey(root, provider, mode, memory_spec=None):
         try:
             report["failure_state"] = {"execution": getattr(kernel.tasks.selected(), "execution", None),
                 "destination_selected": kernel.loop.model == "local-small", "settled": settled(kernel),
+                "command_still_in_composer": app.query_one("#prompt", Input).value.startswith("/"),
+                "prompt_focused": app.query_one("#prompt", Input).has_focus,
                 "stage_files_present": [letter for letter in letters if (project / f"{letter}.txt").exists()]}
         except Exception as state_error:
             report["failure_state_error_type"] = type(state_error).__name__
@@ -301,7 +323,7 @@ def main():
     models = catalog(args.model_file, "qwen3-8b")
     models = Catalog({**models.entries, "external": {"route": "codex/default", "backend": "codex"}})
     weights = MODEL_PROFILES["qwen3-8b"]
-    report = {"suite": "handoff-destination-recovery-v2", "observed_at": datetime.now(timezone.utc).isoformat(),
+    report = {"suite": "handoff-destination-recovery-v3", "observed_at": datetime.now(timezone.utc).isoformat(),
         "versions": {name: version(name) for name in ("litellm", "openai", "textual", "mcp")},
         "image": IMAGE, "weights": {k: v for k, v in weights.items() if k != "runtime_args"},
         "catalog": models.entries, "journeys": [], "passed": False,
