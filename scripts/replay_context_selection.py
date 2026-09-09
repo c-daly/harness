@@ -96,7 +96,9 @@ def main():
     spec = type(spec).model_validate(spec.model_dump())
     args.output.mkdir()
     report = {"stage": "public_development_replay", "held_out": False, "quality_qualification": False,
-        "observed_at": datetime.now(timezone.utc).isoformat(), "image": IMAGE, "weights": weights,
+        "observed_at": datetime.now(timezone.utc).isoformat(), "image": IMAGE,
+        "weights": {key: value for key, value in weights.items() if key != "runtime_args"},
+        "runtime_command": list(command),
         "isolation": bounds, "plugins": "absent", "checks": {},
         "provenance": "Operator-authored candidate, public cases including the held_out partition; no fresh confirmation.",
         "source_sha256": {str(p.relative_to(ROOT)): sha256(p) for p in [

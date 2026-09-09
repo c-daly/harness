@@ -70,6 +70,15 @@ four CPUs, 4 GiB host RAM, and no swap. GPU memory was separate; no user runtime
 was displaced. Cold loading had a 120-second allowance and per-call semantics
 kept their five-second deadline. All owned runtimes stopped.
 
+The prompt reports received a [post-run metadata correction](metadata-correction.json):
+`weights` now records only artifact identity, and `runtime_command` copies the
+effective command from each retained catalog. The original reports incorrectly
+included profile defaults with presence penalty 1.5. The correction records their
+original commit, hashes, and removed defaults; measurements and executed source
+hashes are unchanged. The replay driver now writes this separation directly.
+The command's server temperature default is 0.7; semantic requests override it
+with temperature zero.
+
 - [Prompt trial 1](development-1/report.json), [trial 2](development-2/report.json),
   and [schema trial](schema-development/report.json).
 - [Unrounded comparison summary](summary.json) and [artifact manifest](manifest.json).
@@ -97,12 +106,13 @@ Both frozen prompt experiments parse and independently retain a failed core
 verdict. The candidate artifact hashes match their plans. All **131 retained
 event envelopes**, **26 referenced input/prompt blobs**, and **231 recorded
 source hashes** were checked. The schema trial's one changed source file matches
-its retained experimental snapshot; all other source hashes match the checkout.
-[Validation results](validation.json) also confirm that production source,
-tests, scripts, dependency declarations, and lockfile exactly match `db71d51`.
-Ruff and whitespace checks passed. No new full-suite or packaging result is
-claimed for this evidence-only change; merged PR35's green checks cover the
-unchanged production tree.
+its retained experimental snapshot; all other source hashes match the executed
+sources at `db71d51`. The current replay driver contains the later metadata fix,
+covered by a regression check of the saved report and catalog before runtime
+startup and after startup failure. [Validation results](validation.json) identify
+these post-run script/test changes; core source, dependency declarations, and
+lockfile still match `db71d51`. Ruff and whitespace checks passed. No new
+full-suite, packaging, or inference result is claimed for this metadata fix.
 
 ## Decision and next work
 

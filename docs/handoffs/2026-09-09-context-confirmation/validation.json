@@ -3,5 +3,13 @@
   "input_blobs": 26,
   "source_hashes": 231,
   "frozen_prompt_experiments": 2,
-  "production_tree_matches_base": true
+  "executed_source_commit": "db71d51b1b65467dfb7d8bf97c8a6f8c924a075b",
+  "source_hashes_match_executed_sources": true,
+  "production_core_and_dependencies_match_base": true,
+  "post_run_changes": [
+    "scripts/replay_context_selection.py",
+    "tests/test_context_replay.py"
+  ],
+  "metadata_correction_verified": true,
+  "focused_tests_passed": 10
 }

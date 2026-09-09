@@ -1888,10 +1888,13 @@ Owned runtimes stopped; user model configuration remained untouched.
 
 **Validation:** both frozen experiments retain failed verdicts under the core
 grader. All 131 saved event envelopes, 26 referenced input/prompt blobs, and 231
-source hashes checked successfully. The rejected schema source matches its
-snapshot; the production source/tests/scripts/dependencies are identical to
-merged `db71d51`. Ruff and whitespace checks passed. This evidence-only update
-does not claim a new full-suite or packaging run.
+source hashes checked successfully against the executed sources at `db71d51`
+and the rejected schema snapshot. Review caught stale default runtime arguments
+in both prompt reports: a documented metadata correction now separates weight
+identity from the effective catalog command. The replay driver and a regression
+check prevent recurrence; the original measurements and source hashes remain
+unchanged. Core source and dependencies still match merged `db71d51`. Ruff and
+whitespace checks passed. No new full-suite, packaging, or inference run is claimed.
 
 **Decision:** keep merged behavior. Further wording-only tuning of this 8B profile
 has not earned confidence. Next, compare alternative inference profiles/models
