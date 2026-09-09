@@ -66,6 +66,19 @@ deadline. An earlier ancestor deadline still cancels its descendants. Active
 coordinators also prevent idle-only handoff and improvement operations. Handoffs
 retain the stricter source limits and hold unreconciled descendant activity.
 
+Native `write_file` and `edit_file` calls serialize mutations of the same
+canonical path within the owning event loop. A cancelled or timed-out worker
+retains that file lock and its enclosing tool/task/child capacity until the file
+thread finishes. Repeated cancellation cannot release the lock early; a call
+still waiting for the lock can cancel without starting its mutation. Different
+paths remain independent. The terminal explains a wait for a started file change,
+and the tool/run still records cancellation even if that change finishes.
+
+This is serialization of individual native calls, not isolation of a whole
+read/plan/edit workflow or conflict detection for stale reads. Provider-native
+tools, shell commands and other processes do not participate in these locks;
+mixed workflows still need explicit edit ownership or isolated worktrees.
+
 Reports and returned aggregate text are each bounded to 1 MiB. Delivered
 aggregate truncation is explicit and incomplete.
 
@@ -97,5 +110,5 @@ cancellation, provenance, read-only CLI/TUI inspection and task export. A
 controlled catalog test mixes native inference with the real external Codex
 binding using scripted transports. This establishes contract behavior, not live
 provider, installed-plugin or local-model qualification. Shared token/cost
-budgets, edit ownership, plugin reconciliation and isolated improvement
+budgets, broader edit ownership, plugin reconciliation and isolated improvement
 patches/rollback remain ahead. Memory and agent-swarm remain plugins.

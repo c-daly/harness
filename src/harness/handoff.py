@@ -452,6 +452,11 @@ class HandoffGuard:
     async def execute_tool(self, tool, args):
         """A file thread cannot be cancelled; settle it before the run's terminal fact."""
         import asyncio
+        from harness.native_tools import EditFileTool, WriteFileTool
+        if type(tool) in (WriteFileTool, EditFileTool):
+            # Core mutation tools own their worker lifetime. Do not shield their
+            # lock wait: an interrupted waiter must never start a later change.
+            return await tool(args)
         if type(tool).__module__ != "harness.native_tools":
             return await tool(args)  # Configured context providers retain their own cancellation contract.
         work = asyncio.create_task(tool(args))

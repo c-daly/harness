@@ -1294,6 +1294,8 @@ class HarnessApp(App[None]):
                 self.say("! ", "retrying\u2026")
             case CustomEvent(namespace="handoff", name="settling_file_call"):
                 self.say("", "Stopping handoff: waiting for the started file operation to settle.")
+            case CustomEvent(namespace="files", name="settling_mutation"):
+                self.say("", "Stopping: waiting for the started file change to finish.")
             case _:
                 pass
 
