@@ -382,18 +382,24 @@ class HandoffGuard:
         from harness.events import CoordinationStarted, ModelCallStarted, RetryAttempted, SubagentSpawned, ToolCallProposed
         from harness.execution import ExecutionLimits
         from harness.log import read_session
+        # Normalize only the added coordinator fields, without changing the
+        # authenticated checkpoint or bypassing the policy-version check above.
+        defaults = ExecutionLimits()
+        counts = {"active_coordinators": 0, **scope["counts"]}
+        limits = {"max_active_coordinators": defaults.max_active_coordinators,
+                  "coordination_timeout_seconds": defaults.coordination_timeout_seconds, **scope["limits"]}
         later = [e for e in read_session(kernel.session.base, kernel.session.id, repair=False)
                  if e.seq > checkpoint.started_seq]
-        if (scope["counts"]["active_children"] or scope["counts"]["active_coordinators"]
+        if (counts["active_children"] or counts["active_coordinators"]
                 or any(isinstance(e.event, (SubagentSpawned, CoordinationStarted)) for e in later)):
             raise ValueError("child-session reconciliation/accounting is not qualified; handoff held")
         budget = kernel.loop.dispatcher.scope.budget
-        budget.limits = ExecutionLimits(**{k: min(v, scope["limits"][k]) for k, v in asdict(budget.limits).items()})
-        budget.model_calls = max(budget.model_calls, scope["counts"]["model_calls"] + sum(
+        budget.limits = ExecutionLimits(**{k: min(v, limits[k]) for k, v in asdict(budget.limits).items()})
+        budget.model_calls = max(budget.model_calls, counts["model_calls"] + sum(
             isinstance(e.event, (ModelCallStarted, RetryAttempted)) for e in later))
-        budget.tool_calls = max(budget.tool_calls, scope["counts"]["tool_calls"] + sum(
+        budget.tool_calls = max(budget.tool_calls, counts["tool_calls"] + sum(
             isinstance(e.event, ToolCallProposed) for e in later))
-        budget.children = max(budget.children, scope["counts"]["children"])
+        budget.children = max(budget.children, counts["children"])
 
     def check_scope(self):
         now, source = capture_scope(self.kernel.loop.dispatcher), self.checkpoint.scope

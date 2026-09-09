@@ -2241,4 +2241,23 @@ and final nested-activity/legacy-report regressions are included in both passing
 runs. Ruff, whitespace checks, offline sdist/wheel build, CLI help and a fresh
 offline wheel installation/import smoke passed. All 79 core files match the
 wheel, and all 210 source/test hashes remained unchanged through validation.
-Hosted CI and review of this increment are pending publication.
+Hosted Python 3.12/3.13 CI passed at `1e86f5a` before the PR42 review correction
+below.
+
+**PR42 review:** compatible handoff scopes missing coordinator metadata now use
+defaults for only the added fields: zero active coordinators, capacity 16 and a
+600-second deadline. Explicit recorded values and stricter current limits remain
+effective; earlier call reservations are restored after restart. Normalization
+uses local copies and leaves authenticated checkpoint bytes unchanged. The
+existing core-policy fingerprint check still holds snapshots from a different
+implementation; this is not an authority migration across application versions.
+
+Eight restart regressions reproduced the missing count/capacity/deadline keys
+individually and together, with both stricter and looser destination limits.
+Three further cases keep incompatible source versions and recorded worker or
+coordinator activity held before inference. All eleven pass after the correction.
+The affected coordination, handoff, destination/memory recovery, terminal,
+portable-export and prompt-improvement suites passed **150 tests on each Python
+version** (3.13: 54.13 s; 3.12: 56.89 s). Ruff and whitespace checks passed.
+The earlier full-suite/build evidence predates this scoped compatibility fix;
+new hosted CI will validate the review commit.

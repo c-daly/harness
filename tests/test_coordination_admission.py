@@ -251,6 +251,108 @@ async def test_handoff_retains_new_source_limits(tmp_path):
         kernel.session.close()
 
 
+@pytest.mark.parametrize("missing", ["count", "capacity", "deadline", "all"])
+@pytest.mark.parametrize("tighter", [False, True])
+async def test_handoff_resumes_compatible_legacy_scope_without_resetting_limits(tmp_path, monkeypatch, missing, tighter):
+    from dataclasses import replace
+    from harness.handoff import capture_scope, load_record
+    from tests.test_handoff import permissions, source, specification
+
+    def legacy_scope(dispatcher):
+        scope = capture_scope(dispatcher)
+        if missing in {"count", "all"}:
+            scope["counts"].pop("active_coordinators")
+        if missing in {"capacity", "all"}:
+            scope["limits"].pop("max_active_coordinators")
+        if missing in {"deadline", "all"}:
+            scope["limits"].pop("coordination_timeout_seconds")
+        return scope
+
+    # Keep a compatible policy identity to exercise shape compatibility; a
+    # genuinely different implementation must still be held separately.
+    monkeypatch.setattr("harness.handoff.capture_scope", legacy_scope)
+    original_limits = ExecutionLimits(max_model_calls=4, max_tool_calls=2, max_children=3,
+        max_depth=2, max_active_children=1, max_active_coordinators=7, coordination_timeout_seconds=60)
+    kernel, provider = await source(tmp_path, limits=original_limits)
+    try:
+        record = kernel.handoffs.record(specification(kernel))
+        checkpoint_bytes = load_record(kernel.session, record)[0].encoded()
+        session_id = kernel.session.id
+    finally:
+        kernel.session.close()
+    monkeypatch.setattr("harness.handoff.capture_scope", capture_scope)
+    current_limits = ExecutionLimits(max_active_coordinators=2 if tighter else 32,
+                                    coordination_timeout_seconds=15 if tighter else 1200)
+    kernel = build_kernel(base_dir=tmp_path / "sessions", provider=provider, model=ModelId("local"),
+        resume_session_id=session_id, native_tools=True, workspace_root=provider.root,
+        permissions=permissions(), execution_limits=current_limits)
+    provider.steps = ["new", "done"]
+    try:
+        result = await kernel.handoffs.run(record.id)
+        assert result.status == "completed" and (provider.root / "B.txt").read_text() == "stage B\n"
+        defaults = ExecutionLimits()
+        capacity = defaults.max_active_coordinators if missing in {"capacity", "all"} else 7
+        timeout = defaults.coordination_timeout_seconds if missing in {"deadline", "all"} else 60
+        budget = kernel.loop.dispatcher.scope.budget
+        assert budget.limits == replace(original_limits,
+            max_active_coordinators=min(capacity, current_limits.max_active_coordinators),
+            coordination_timeout_seconds=min(timeout, current_limits.coordination_timeout_seconds))
+        assert budget.model_calls == 3 and budget.tool_calls == 2
+        assert load_record(kernel.session, record)[0].encoded() == checkpoint_bytes
+    finally:
+        kernel.session.close()
+
+
+async def test_legacy_handoff_from_different_policy_remains_held(tmp_path, monkeypatch):
+    from harness.handoff import capture_scope
+    from tests.test_handoff import source, specification
+
+    def legacy_scope(dispatcher):
+        scope = capture_scope(dispatcher)
+        scope["version"] = "previous-implementation"
+        scope["counts"].pop("active_coordinators")
+        scope["limits"].pop("max_active_coordinators")
+        scope["limits"].pop("coordination_timeout_seconds")
+        return scope
+
+    monkeypatch.setattr("harness.handoff.capture_scope", legacy_scope)
+    kernel, provider = await source(tmp_path)
+    try:
+        record = kernel.handoffs.record(specification(kernel))
+        monkeypatch.setattr("harness.handoff.capture_scope", capture_scope)
+        before = read_session(kernel.session.base, kernel.session.id)
+        with pytest.raises(ValueError, match="source authority is not portable"):
+            await kernel.handoffs.run(record.id)
+        assert read_session(kernel.session.base, kernel.session.id) == before
+        assert not provider.requests and not (provider.root / "B.txt").exists()
+    finally:
+        kernel.session.close()
+
+
+@pytest.mark.parametrize("counter", ["active_children", "active_coordinators"])
+async def test_legacy_handoff_defaults_do_not_clear_recorded_activity(tmp_path, monkeypatch, counter):
+    from harness.handoff import capture_scope
+    from tests.test_handoff import source, specification
+
+    def legacy_scope(dispatcher):
+        scope = capture_scope(dispatcher)
+        scope["counts"][counter] = 1
+        scope["limits"].pop("max_active_coordinators")
+        scope["limits"].pop("coordination_timeout_seconds")
+        return scope
+
+    monkeypatch.setattr("harness.handoff.capture_scope", legacy_scope)
+    kernel, provider = await source(tmp_path)
+    try:
+        record = kernel.handoffs.record(specification(kernel))
+        monkeypatch.setattr("harness.handoff.capture_scope", capture_scope)
+        with pytest.raises(ValueError, match="reconciliation/accounting"):
+            await kernel.handoffs.run(record.id)
+        assert not provider.requests and not (provider.root / "B.txt").exists()
+    finally:
+        kernel.session.close()
+
+
 async def test_handoff_holds_unreconciled_coordination_even_without_children(tmp_path):
     from tests.test_handoff import source, specification
     kernel, _ = await source(tmp_path)
