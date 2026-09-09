@@ -90,7 +90,7 @@ class AgentDef(_Def):
 
     @model_validator(mode="after")
     def _strategy_requires_valid_name_and_experts(self) -> "AgentDef":
-        if self.require_checks and self.strategy != "escalate":
+        if "require_checks" in self.model_fields_set and self.strategy != "escalate":
             raise ValueError("require_checks is only supported by the escalate strategy")
         if self.strategy is None:
             return self
