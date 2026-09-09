@@ -10,7 +10,7 @@ import pytest
 from aiohttp import ClientSession, web
 
 from harness.catalog import Catalog
-from harness.errors import ProviderError
+from harness.errors import MalformedStreamError, ProviderError
 from harness.inference import InferenceRequest, infer
 from harness.messages import Message
 from harness.provider import TextDelta
@@ -70,11 +70,20 @@ async def endpoint(monkeypatch):
                                                        "finish_reason": finish}]}
             await response.write(("data: " + json.dumps(chunk) + "\n\n").encode())
 
-        await send({"content": "x" * 500 if text == "large" else "ok"})
+        if text.endswith("tool"):
+            await send({"tool_calls": [{"index": 0, "id": "partial-write", "type": "function", "function": {
+                "name": "write_file", "arguments": '{"file_path":"B.txt","content":"partial"}'}}]})
+        else:
+            await send({"content": "x" * 500 if text == "large" else "ok"})
+        if text.startswith("eof-"):
+            return response  # Valid HTTP EOF, but no provider finish_reason.
+        if text.startswith("disconnect-"):
+            req.transport.abort()  # A severed HTTP stream, also without a finish_reason.
+            return response
         if text == "stream":
             streaming.set()
             await release.wait()
-        await send({}, "stop")
+        await send({}, "tool_calls" if text.endswith("tool") else "stop")
         await response.write(b"data: [DONE]\n\n")
         return response
 
@@ -120,6 +129,23 @@ async def test_repeated_deadlines_leave_no_owned_clients_or_sdk_cache_entries(en
         assert_closed(endpoint)
     assert not endpoint.cache.cache_dict
     assert len(endpoint.bodies) == 4
+
+
+@pytest.mark.parametrize("failure", ["eof-text", "eof-tool", "disconnect-text", "disconnect-tool"])
+async def test_missing_provider_finish_cannot_complete_text_or_tool_proposals(endpoint, failure):
+    # Real SDK normalization used to fabricate a successful terminal on EOF,
+    # even for syntactically complete tool arguments. No result may escape.
+    with pytest.raises(MalformedStreamError, match="without a provider finish reason"):
+        await infer(endpoint.provider, request(failure, tool_choice="auto"))
+    assert len(endpoint.bodies) == 1
+    assert_closed(endpoint)
+
+
+async def test_real_provider_tool_finish_remains_usable(endpoint):
+    result = await infer(endpoint.provider, request("complete-tool", tool_choice="auto"))
+    assert result.stop_reason == "tool_use"
+    assert result.message.tool_calls()[0].args == {"file_path": "B.txt", "content": "partial"}
+    assert_closed(endpoint)
 
 
 @pytest.mark.parametrize("failure", ["error", "large"])

@@ -78,6 +78,17 @@ inspect the new checkpoint, and record a fresh handoff for only the remaining
 work. A preflight refusal is labelled `Handoff refused`; that command did not
 start a new attempt. Restoring a service does not automatically retry work.
 
+A busy session is a preflight refusal: settle the other request first. The unused
+record can still run if its checkpoint remains current. Changes to task evidence
+or requirements can make even an unused record stale; inspect and record again
+in that case.
+
+OpenAI-compatible streams must contain a provider finish reason. If a stream ends
+without one, Harness reports `MalformedStreamError` instead of treating partial
+text or complete-looking tool arguments as a completed response. Earlier finished
+file operations remain in the checkpoint; interrupted output cannot authorize new
+tool execution. Inspect those earlier effects before the next reconciliation.
+
 For headless recording and execution, use the same catalog, workspace, native
 tools, and permission configuration as the source session:
 
@@ -154,3 +165,8 @@ adds an offline terminal journey with required-memory loss, a refused reused
 record, and newly reconciled continuation after session restart. Read that record
 for observed outcomes and limits; it does not establish general heterogeneous
 handoff or live-provider qualification.
+
+The [destination recovery record](handoffs/2026-09-09-handoff-destination-recovery/README.md)
+adds busy preflight, process loss after a completed write, and Esc during a
+continuation. It preserves the first failed qualification run and the separately
+frozen diagnostic follow-up, alongside the provider truncation regression.

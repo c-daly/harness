@@ -1,8 +1,8 @@
 # Core agency implementation record
 
-Current implementation branch: `feat/handoff-failure-qualification`, based on merged `main`
-at `216762c` (PR37, repeated 4B/8B context-profile measurements).
-Previous branches: `feat/context-profile-comparison`, `docs/context-experiment-results`, `feat/context-eligibility`, `feat/context-selection-qualification`, `fix/bounded-compaction`, `fix/model-selection-continuity`, `feat/local-model-management`, `feat/assessment-improvement`, `feat/external-handoff`, `feat/assessment-evaluation`, `feat/supervised-improvement`, `feat/local-scheduling`, `feat/task-fallback`, `feat/semantic-context-progress`, `feat/local-assistant-m3`, `feat/resident-workflow`, `feat/task-completion-evidence`, `fix/inference-client-lifecycle`, `feat/local-response-profiles`, `feat/local-tool-recovery`, `feat/local-tool-planning`, `feat/local-qualification`, `feat/semantic-evaluation`, `feat/local-context`, `feat/local-readiness`, `feat/agent-runtimes`,
+Current implementation branch: `feat/handoff-destination-recovery`, based on merged `main`
+at `e248ac7` (PR38, required-memory loss and explicit handoff recovery).
+Previous branches: `feat/handoff-failure-qualification`, `feat/context-profile-comparison`, `docs/context-experiment-results`, `feat/context-eligibility`, `feat/context-selection-qualification`, `fix/bounded-compaction`, `fix/model-selection-continuity`, `feat/local-model-management`, `feat/assessment-improvement`, `feat/external-handoff`, `feat/assessment-evaluation`, `feat/supervised-improvement`, `feat/local-scheduling`, `feat/task-fallback`, `feat/semantic-context-progress`, `feat/local-assistant-m3`, `feat/resident-workflow`, `feat/task-completion-evidence`, `fix/inference-client-lifecycle`, `feat/local-response-profiles`, `feat/local-tool-recovery`, `feat/local-tool-planning`, `feat/local-qualification`, `feat/semantic-evaluation`, `feat/local-context`, `feat/local-readiness`, `feat/agent-runtimes`,
 and `feat/core-agency`.
 
 Committed checkpoints: `0351b75` (roadmap, lifecycle, and storage/result integrity),
@@ -56,7 +56,7 @@ qualification. Milestone completion requires its roadmap gates, not just code.
 | M1 correctness and interaction | In progress | Storage, delegation, controller/UI, MCP capability and explicit-endpoint HTTP cleanup changes are implemented. Durable task obligations and explicit review are visible through the TUI and headless inspection. Broader enforcement/redaction, provider lifecycles and fault qualification remain. |
 | M2 inference / agent contracts | In progress | Bounded inference, native tasks, Codex task binding, explicit execution kinds, nullable usage, core improvement records and recorded task-evidence checks implemented. Remaining adapters, richer artifact predicates and live capability qualification remain. |
 | M3 local core assistant | Complete for the measured CUDA profile | Qwen3-8B passes six full offline project journeys: twelve exact native file writes, changed-record answers after restart, real cancellation, normal memory, and visible task/context status. Four missing-assets/startup-exit recovery cases pass. Shipped profiles and a launcher reproduce the workflow. Actual use exposed missing startup configuration in the normal catalog; the provisioned host's local aliases are now connected. Core `/models` now inspects public GGUF metadata and registers installed weights with startup profiles, with ordinary CLI/TUI CPU smoke evidence. Runtime installation, weight downloads and broader CPU/daily-use qualification remain outside this gate. |
-| M4 bounded semantic agency | In progress | All three shadow functions now exist with explicit CLI/TUI access and evidence validation. The public 8B comparison failed context/progress gates; deterministic behavior remains. Bounded task-preserving fallback and session-tree local scheduling are implemented. Message-prompt pairing and earlier context/correction experiments use core improvement records. Supervised message-prompt proposal/evaluation/adoption/rollback is implemented. Paired context/progress candidate evaluation is implemented with explicit operator controls. Explicit external-to-native reconciliation and bounded handoff are implemented. Supervised assessment proposal/adoption/rollback is implemented per function/model. Core now filters context eligibility before inference and resolves empty eligible sets without a model call. Required normal-memory loss and explicit resumed handoff now have bounded offline terminal evidence. Held-out quality and broader handoff qualification remain. |
+| M4 bounded semantic agency | In progress | All three shadow functions now exist with explicit CLI/TUI access and evidence validation. The public 8B comparison failed context/progress gates; deterministic behavior remains. Bounded task-preserving fallback and session-tree local scheduling are implemented. Message-prompt pairing and earlier context/correction experiments use core improvement records. Supervised message-prompt proposal/evaluation/adoption/rollback is implemented. Paired context/progress candidate evaluation is implemented with explicit operator controls. Explicit external-to-native reconciliation and bounded handoff are implemented. Supervised assessment proposal/adoption/rollback is implemented per function/model. Core now filters context eligibility before inference and resolves empty eligible sets without a model call. Required normal-memory loss, busy preflight, destination loss after a write and Esc during continuation now have bounded offline terminal evidence. Truncated OpenAI-compatible streams cannot fabricate completion. Held-out quality and broader handoff qualification remain. |
 | M5 heterogeneous work / plugins | Pending | Supervision, plugin reconciliation, portable continuation, isolated improvement patches and rollback. |
 | M6 daily-use qualification | Pending | Measured UI, live adapter boundaries, offline and human dogfood gates. |
 
@@ -1991,3 +1991,67 @@ destination loss/busy handling and interruption during continuation. The existin
 network/authentication fallback evidence remains separate from this memory test.
 Live-provider qualification, M5 mixed-agent portability/source-edit improvement,
 and M6 daily use remain open. Memory and agent-swarm remain plugins.
+
+
+## September 9 — Destination loss, interruption and truthful stream completion
+
+PR38 merged at `e248ac7`. The next M4 increment found a correctness bug in a real
+SDK/process test: killing the local destination after B was written could produce
+a fabricated normal finish marker and a completed handoff. The OpenAI-compatible
+adapter now rejects LiteLLM terminal chunks without evidence of a provider finish
+reason. Partial text and complete-looking tool arguments raise
+`MalformedStreamError`; they cannot complete the attempt or dispatch those tools.
+Client cleanup and sanitized failure reporting remain intact.
+
+The core change was frozen at `f894004`. The public HTTP regressions cover EOF,
+severed responses, text, tool proposals and valid completion. The terminal driver
+covers busy preflight, process loss after a successful B write, and Esc during the
+next stream, followed by session restart and explicitly reconciled recovery.
+Memory and agent-swarm remain plugins.
+
+**Evidence:** the final protocol, frozen at `439a173`, passed **6/6 offline journeys
+and 172/172 checks**, with and without the installed normal memory plugin. Busy
+preflight leaves the record unused. A started loss or cancellation consumes it,
+retains completed B, and requires a new record for C. Exact stage writes, original
+evidence, drafts, task identity, fresh context, visible outcomes and unresolved
+operator review survived. Local recovery took **4.144–5.801 s**; all sessions
+stayed within the fixed 45-second recovery bound. Replay needed no inference.
+
+Three earlier development protocols remain failed: **4/6**, **5/6**, and **4/6**.
+Corrections added observable owner outcomes, acknowledged terminal commands,
+controlled consumption of the busy stream, and inspection that distinguishes
+unapplied proposals from completed files. The controlled busy condition uses a
+real stream with client backpressure, not proof of continuous GPU activity.
+Earlier private sessions were deleted; the public rejected-C reproduction does
+not retrospectively establish their exact refusal cause. These are bounded
+smoke journeys, not held-out semantic confirmation or latency distributions.
+
+The [evidence record](../../handoffs/2026-09-09-handoff-destination-recovery/README.md)
+preserves all four protocols/reports. Execution used the unchanged M3 8B CUDA
+profile, no network, four CPUs, 4 GiB host RAM and no swap. The external source was
+a controlled Codex-compatible subprocess with real MCP, without subscription
+credentials. Normal memory/vault mounts were read-only and only metadata was
+exported. All qualification containers and Harness-owned model/memory children
+stopped.
+
+**Validation:** full Python 3.13 suite at the core freeze **1,785 passed, seven
+skipped**, six existing MCP deprecation warnings (401.11 s). Affected Python 3.12
+suites **239 passed** (44.64 s). Final driver and rejected-write reconciliation
+regression **seven passed on each version**. Build and clean wheel smoke passed;
+all 75 core files match the wheel. Ruff and whitespace checks passed. The full
+suite predates only driver/inspection-test and evidence updates; core and
+runtime dependencies did not change afterward.
+
+**Remaining:** M4 semantic held-out quality is still open; context selection stays
+advisory and no new model or improvement candidate was adopted. Live-provider
+handoff qualification, M5 mixed-agent portability/source-edit improvement, and
+M6 daily use remain open. This closes the named bounded destination fault cases,
+not the whole core-agency roadmap.
+
+**PR39 review:** the public HTTP fixture now inherits a socket held by the test
+through startup, process loss and restart, removing the port-allocation race.
+Every fixture launch checks that a competing bind fails, and each journey checks
+both initial and resumed launches. The seven affected tests passed concurrently
+on Python 3.13 (35.23 s) and 3.12 (36.00 s); Ruff and whitespace checks passed.
+This changes test infrastructure only; the frozen core and offline reports remain
+unchanged.
