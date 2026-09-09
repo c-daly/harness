@@ -17,6 +17,7 @@ from harness.catalog import Catalog, UnknownAliasError
 from harness.errors import (
     AuthFailed,
     ContextOverflow,
+    MalformedStreamError,
     NetworkFailed,
     Overloaded,
     ProviderError,
@@ -301,6 +302,7 @@ async def _acomplete(
     """The shared litellm streaming core. Endpoint + key are per-call locals so
     a single provider instance is safe under concurrent (asyncio.gather) calls."""
     import litellm
+    from litellm.litellm_core_utils.streaming_handler import CustomStreamWrapper
 
     _quiet(litellm)
     kwargs: dict[str, Any] = {
@@ -353,7 +355,15 @@ async def _acomplete(
             )
         stream = await litellm.acompletion(**kwargs)
         async for raw in stream:
-            for chunk in _normalize_chunk(raw):
+            chunks = _normalize_chunk(raw)
+            # LiteLLM's OpenAI wrapper synthesizes a stop (including tool_calls)
+            # on EOF without a provider finish_reason. Never turn a severed
+            # response into completed work or executable partial tool arguments.
+            if (isinstance(stream, CustomStreamWrapper) and stream.custom_llm_provider == "openai"
+                    and any(isinstance(chunk, StreamStop) for chunk in chunks)
+                    and not (stream.received_finish_reason or stream.intermittent_finish_reason)):
+                raise MalformedStreamError("OpenAI-compatible response ended without a provider finish reason")
+            for chunk in chunks:
                 yield chunk
     except ProviderError:
         raise
