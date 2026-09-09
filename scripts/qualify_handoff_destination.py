@@ -13,6 +13,7 @@ import subprocess
 import tempfile
 import time
 from datetime import datetime, timezone
+from importlib.metadata import version
 from pathlib import Path
 from unittest.mock import patch
 
@@ -111,6 +112,7 @@ async def journey(root, provider, mode, memory_spec=None):
               "memory_payload_exported": False}
     checks, owner, killed = report["checks"], None, []
     try:
+        report["stage"] = "source"
         app = HarnessApp(kernel, native_tools=True, workspace_root=project, catalog_path=catalog_path)
         async with app.run_test(size=(160, 52)) as pilot:
             await mounted(app, pilot, memory_spec)
@@ -131,12 +133,15 @@ async def journey(root, provider, mode, memory_spec=None):
             checks["source_stopped"] = process_stopped(root)
             checks["source_artifacts_exact"] = ((project / "A.txt").read_text() == "stage A\n"
                 and (project / "native.txt").read_text() == "external native effect" and not (project / "B.txt").exists())
+            report["stage"] = "destination_selection"
             await command(app, pilot, "/model local-small")
             await until(lambda: kernel.loop.model == "local-small", seconds=5)
             kernel.tasks.check()  # Include current evidence in the unused record's snapshot.
+            report["stage"] = "initial_reconciliation"
             initial = await record(app, pilot, root, "B", stream=mode != "busy")
             streaming = asyncio.Event()
             if mode == "busy":
+                report["stage"] = "busy_stream"
                 def observe(chunk):
                     if isinstance(chunk, TextDelta) and chunk.text:
                         streaming.set()
@@ -148,15 +153,24 @@ async def journey(root, provider, mode, memory_spec=None):
                 await until(streaming.is_set, seconds=35)
                 checks["busy_stream_active"] = not owner.done() and kernel.resources.scheduler.activity("local") == ("local-small", 0)
                 before = len(log_events(kernel))
+                report["stage"] = "busy_preflight"
                 await command(app, pilot, f"/handoff run {initial.id}", draft="keep this recovery draft")
                 checks["fault_observed"] = "Handoff refused: handoff requires an idle session" in " ".join(screen(app).split())
                 checks["preflight_did_not_start"] = not any(e.type == "agent_run_started" for e in log_events(kernel)[before:])
-                checks["owner_not_preempted"] = not owner.done()
+                # Completion can race the terminal redraw after refusal. Read
+                # the actual outcome; done() alone is not proof of preemption.
+                outcome = "active"
+                if owner.done():
+                    outcome = "cancelled" if owner.cancelled() else (type(owner.exception()).__name__
+                        if owner.exception() is not None else "completed")
+                report["busy_owner_outcome"] = outcome
+                checks["owner_not_preempted"] = outcome in {"active", "completed"}
                 checks["recovery_guidance_visible"] = "settle active or queued work first" in " ".join(screen(app).split())
                 checks["record_use_correct"] = not any(e.type == "agent_run_started" and e.handoff_id == initial.id for e in log_events(kernel))
                 owner.cancel()
                 await asyncio.gather(owner, return_exceptions=True)
             else:
+                report["stage"] = "post_write_stream"
                 original = kernel.loop.on_chunk
 
                 def observe(chunk):
@@ -176,6 +190,7 @@ async def journey(root, provider, mode, memory_spec=None):
                 await until(streaming.is_set, seconds=40)
                 checks["stream_after_write"] = (project / "B.txt").read_text() == "stage B\n"
                 started = time.monotonic()
+                report["stage"] = "fault_settlement"
                 if mode == "interrupt":
                     await pilot.press("escape")
                 else:
@@ -190,6 +205,7 @@ async def journey(root, provider, mode, memory_spec=None):
                 checks["recovery_guidance_visible"] = ("record a new handoff before another attempt" in visible if mode == "loss"
                     else "Handoff interrupted; reconcile its new effects before another attempt" in visible)
                 checkpoint = snapshot(kernel.session)
+                report["stage"] = "consumed_record_checks"
                 checks["completed_write_retained"] = any(e.call and e.call.args == write_args(project, "B")
                     and e.state == "completed" for e in checkpoint.effects)
                 try:
@@ -210,6 +226,7 @@ async def journey(root, provider, mode, memory_spec=None):
             report["fault_model_terminals"] = [{"type": e.type, "error_type": getattr(e, "error_type", None)}
                 for e in log_events(kernel) if e.type in ("model_call_failed", "model_call_cancelled") and e.call_id in fault_calls]
             session_id = kernel.session.id
+        report["stage"] = "restart"
         checks["source_ui_stopped"] = await finish_app(app) and not kernel.resources._owned
         kernel = make_kernel(root, provider, memory_spec, session_id)
         app = HarnessApp(kernel, native_tools=True, workspace_root=project, catalog_path=catalog_path)
@@ -219,6 +236,7 @@ async def journey(root, provider, mode, memory_spec=None):
             continuation = initial if mode == "busy" else await record(app, pilot, root, "C")
             checks["explicit_recovery"] = (continuation.id == initial.id) == (mode == "busy")
             started = time.monotonic()
+            report["stage"] = "recovery"
             await command(app, pilot, f"/handoff run {continuation.id}")
             report["recovery_seconds"] = time.monotonic() - started
             checks["recovery_deadline"] = report["recovery_seconds"] <= 45
@@ -252,8 +270,15 @@ async def journey(root, provider, mode, memory_spec=None):
         replay = project_tasks(read_session(root / "sessions", session_id))
         checks["replay_preserves_evidence"] = replay.items[task_id].evidence == checked.evidence
         report["passed"] = set(checks) == expected_checks(mode) and all(checks.values())
+        report["stage"] = "complete"
     except Exception as exc:
         report["error_type"] = type(exc).__name__
+        try:
+            report["failure_state"] = {"execution": getattr(kernel.tasks.selected(), "execution", None),
+                "destination_selected": kernel.loop.model == "local-small", "settled": settled(kernel),
+                "stage_files_present": [letter for letter in letters if (project / f"{letter}.txt").exists()]}
+        except Exception as state_error:
+            report["failure_state_error_type"] = type(state_error).__name__
     finally:
         if owner is not None and not owner.done():
             owner.cancel()
@@ -276,7 +301,8 @@ def main():
     models = catalog(args.model_file, "qwen3-8b")
     models = Catalog({**models.entries, "external": {"route": "codex/default", "backend": "codex"}})
     weights = MODEL_PROFILES["qwen3-8b"]
-    report = {"suite": "handoff-destination-recovery-v1", "observed_at": datetime.now(timezone.utc).isoformat(),
+    report = {"suite": "handoff-destination-recovery-v2", "observed_at": datetime.now(timezone.utc).isoformat(),
+        "versions": {name: version(name) for name in ("litellm", "openai", "textual", "mcp")},
         "image": IMAGE, "weights": {k: v for k, v in weights.items() if k != "runtime_args"},
         "catalog": models.entries, "journeys": [], "passed": False,
         "context_policies": {"project": profile(None).model_dump(mode="json"), "memory": profile(True).model_dump(mode="json")},
