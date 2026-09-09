@@ -1,0 +1,14 @@
+{
+  "base_commit": "216762c89103de188f7f8e685c168489dbfac1a2",
+  "execution_commit": "5c6e399cf752f73c78cd9cc32c64a10177d5414d",
+  "artifacts": {
+    "README.md": "ed52c069c3369705b162443c7c6a7e4d74b4a84f41bec46186f55f5b15bb9d7e",
+    "build.txt": "90c3769ef9b1300aed350aa0fbcf3cdf8c66770d91dd0714a9642a0c4067d90c",
+    "offline-report.json": "d60e6b17b457ebe231835212a2a3773d9560b8e1a56eb94f7f97e845ff5f42eb",
+    "protocol.json": "46a5584fce0aa269fbd6b9f5262eedb83456de43eabdf791f5a15537eaa48e1d",
+    "tests-python312.txt": "6010b6d266e69de03231ab347d79c350823b80eb3906d9c2745b11585bdf5eb8",
+    "tests-python313.txt": "95b4641223bffb89e41a4971af2509444efd85b6b549ff7ec55489a5dd5e1606",
+    "validation.json": "0d34d790768851db5088de36a37455313f043ac9f0e49bbcae02ec2a85533e54",
+    "wheel.txt": "a78d9aad08fb9ec1a9d9078856d8d354aaa88b7119bcdf61dd410b5d4235c840"
+  }
+}

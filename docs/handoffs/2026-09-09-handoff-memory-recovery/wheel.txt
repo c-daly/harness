@@ -1,0 +1,170 @@
+== creating a clean venv
+Using CPython 3.13.13
+Creating virtual environment at: /tmp/tmp.GQGKXZikgM/venv
+Activate with: source /tmp/tmp.GQGKXZikgM/venv/bin/activate
+== installing /tmp/harness-handoff-memory-reports/dist/harness-0.0.1-py3-none-any.whl
+Using Python 3.13.13 environment at: /tmp/tmp.GQGKXZikgM/venv
+Resolved 83 packages in 1.45s
+Prepared 1 package in 40ms
+Installed 83 packages in 230ms
+ + aiohappyeyeballs==2.7.1
+ + aiohttp==3.14.3
+ + aiosignal==1.4.0
+ + annotated-types==0.8.0
+ + anyio==4.15.1
+ + attrs==26.1.0
+ + boto3==1.43.90
+ + botocore==1.43.90
+ + certifi==2026.7.22
+ + cffi==2.1.1
+ + charset-normalizer==3.5.1
+ + click==8.5.0
+ + contourpy==1.3.3
+ + cryptography==50.0.1
+ + cycler==0.12.1
+ + distro==1.9.0
+ + fastuuid==0.14.0
+ + filelock==3.32.6
+ + fonttools==4.64.0
+ + frozenlist==1.8.0
+ + fsspec==2026.7.0
+ + h11==0.16.0
+ + harness==0.0.1 (from file:///tmp/harness-handoff-memory-reports/dist/harness-0.0.1-py3-none-any.whl)
+ + hf-xet==1.6.0
+ + httpcore==1.0.9
+ + httpx==0.28.1
+ + httpx-sse==0.4.3
+ + huggingface-hub==1.30.0
+ + idna==3.19
+ + importlib-metadata==8.9.0
+ + jinja2==3.1.6
+ + jiter==0.16.0
+ + jmespath==1.1.0
+ + jsonschema==4.26.0
+ + jsonschema-specifications==2025.9.1
+ + kiwisolver==1.5.1
+ + linkify-it-py==2.2.0
+ + litellm==1.100.0
+ + markdown-it-py==4.2.0
+ + markupsafe==3.0.3
+ + matplotlib==3.11.1
+ + mcp==1.30.0
+ + mdit-py-plugins==0.6.1
+ + mdurl==0.1.2
+ + multidict==6.7.1
+ + numpy==2.5.3
+ + openai==2.54.0
+ + packaging==26.3
+ + pillow==12.3.0
+ + platformdirs==4.11.8
+ + propcache==0.5.2
+ + pycparser==3.0
+ + pydantic==2.13.5
+ + pydantic-core==2.46.5
+ + pydantic-settings==2.15.0
+ + pygments==2.21.0
+ + pyjwt==2.13.0
+ + pyparsing==3.3.2
+ + python-dateutil==2.9.0.post0
+ + python-dotenv==1.2.3
+ + python-multipart==0.0.32
+ + pyyaml==6.0.3
+ + referencing==0.37.0
+ + regex==2026.9.3
+ + requests==2.34.2
+ + rich==15.0.0
+ + rpds-py==2026.6.3
+ + s3transfer==0.19.2
+ + six==1.17.0
+ + sniffio==1.3.1
+ + sse-starlette==3.4.11
+ + starlette==1.6.0
+ + textual==8.2.8
+ + textual-image==0.13.2
+ + tiktoken==0.14.0
+ + tokenizers==0.23.2
+ + tqdm==4.70.0
+ + typing-extensions==4.16.0
+ + typing-inspection==0.4.4
+ + urllib3==2.7.0
+ + uvicorn==0.52.4
+ + yarl==1.24.5
+ + zipp==4.1.0
+== running the console script: harness --help
+ok harness --help
+== importing 74 modules from the installed wheel
+ok harness.agent
+ok harness.agent_runtime
+ok harness.assessment_evaluation
+ok harness.blobs
+ok harness.callctx
+ok harness.catalog
+ok harness.cc_import
+ok harness.cli
+ok harness.compaction
+ok harness.context
+ok harness.controller
+ok harness.dispatcher
+ok harness.errors
+ok harness.events
+ok harness.execution
+ok harness.fallback
+ok harness.fold
+ok harness.frontmatter
+ok harness.handoff
+ok harness.handoff_cli
+ok harness.hooks
+ok harness.improvement
+ok harness.improvement_cli
+ok harness.improvement_journal
+ok harness.inference
+ok harness.interaction
+ok harness.log
+ok harness.loop
+ok harness.math_markdown
+ok harness.mcp_config
+ok harness.mcp_host
+ok harness.mcp_import
+ok harness.mcp_serve
+ok harness.messages
+ok harness.mixture
+ok harness.model_management
+ok harness.model_selection
+ok harness.models_cli
+ok harness.native_tools
+ok harness.parity
+ok harness.permissions
+ok harness.persistence
+ok harness.plugins
+ok harness.prompt_improvement
+ok harness.provider
+ok harness.provider_antigravity
+ok harness.provider_claude_code
+ok harness.provider_codex
+ok harness.provider_litellm
+ok harness.redaction
+ok harness.resident
+ok harness.resources
+ok harness.resume
+ok harness.routing
+ok harness.scheduling
+ok harness.semantic_assessment
+ok harness.semantic_cli
+ok harness.semantic_evaluation
+ok harness.semantics
+ok harness.session
+ok harness.sessions
+ok harness.skills
+ok harness.status_cli
+ok harness.subagent
+ok harness.task_cli
+ok harness.tasks
+ok harness.telemetry
+ok harness.todo
+ok harness.tools
+ok harness.tui
+ok harness.tui_panel
+ok harness.tui_support
+ok harness.types
+ok harness.workspace
+== wheel smoke OK

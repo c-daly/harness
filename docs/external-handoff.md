@@ -70,6 +70,14 @@ plugins, with their normal context and workflow contracts.
    Completion and reconciliation do not accept the task; explicit review and
    acceptance remain separate controls.
 
+If an attempt fails after starting, the terminal and headless controls report
+`Handoff failed` or `Handoff incomplete` and explain that the record was used.
+This includes a required-memory failure before the first model call. Restore the
+source, resume the same session with its original catalog/workspace/MCP settings,
+inspect the new checkpoint, and record a fresh handoff for only the remaining
+work. A preflight refusal is labelled `Handoff refused`; that command did not
+start a new attempt. Restoring a service does not automatically retry work.
+
 For headless recording and execution, use the same catalog, workspace, native
 tools, and permission configuration as the source session:
 
@@ -137,9 +145,12 @@ isolation from other processes or a sandbox for provider-native actions. Histori
 tool success proves the recorded result, not that another process has left the
 artifact unchanged. Operator inspection and explicit acceptance remain necessary.
 
-The [evidence record](handoffs/2026-09-08-external-handoff/README.md) separates
+The [original evidence record](handoffs/2026-09-08-external-handoff/README.md) separates
 regressions, terminal rendering, a controlled external subprocess with real MCP,
 and an offline Qwen3-8B continuation. The subprocess is a public Codex-compatible
-fault fixture, not a live subscription agent. The new local journey exercises
-project context without plugins; it does not extend the earlier normal-memory M3
-qualification to heterogeneous handoffs.
+fault fixture, not a live subscription agent. The
+[normal-memory recovery record](handoffs/2026-09-09-handoff-memory-recovery/README.md)
+adds an offline terminal journey with required-memory loss, a refused reused
+record, and newly reconciled continuation after session restart. Read that record
+for observed outcomes and limits; it does not establish general heterogeneous
+handoff or live-provider qualification.
