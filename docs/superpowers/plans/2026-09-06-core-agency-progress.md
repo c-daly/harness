@@ -2107,3 +2107,13 @@ state, drafts, queues and mutable workspace files are outside the package.
 M4 held-out semantic quality, M5 live mixed-runtime supervision and plugin
 reconciliation, isolated source improvement/rollback, and M6 daily use remain
 open. Memory and agent-swarm remain plugins; export is core.
+
+**PR40 CI correction:** lint passed on both Python versions. The initial Python
+3.13 job failed an existing permission-expiry test that assumed the whole turn
+would settle after a fixed 400 ms pause. The test now observes dialog mounting
+and subsequent inference, verifies the expired dialog is gone while a controlled
+model response keeps the turn active, then awaits the actual worker with a bound.
+The source deadline remains 300 ms, and the denied memory tool must never run.
+All 12 resident-status tests passed on Python 3.13 (6.53 s) and 3.12 (6.75 s);
+Ruff and whitespace checks passed. The correction changes tests and this record
+only; core export behavior and the format remain unchanged.

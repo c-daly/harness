@@ -170,22 +170,44 @@ async def test_context_cancellation_preserves_queue_draft_and_status(tmp_path):
         assert not any(e.event.type == "model_call_proposed" for e in read_session(tmp_path, app.kernel.session.id))
 
 
-async def test_source_deadline_removes_its_expired_permission_modal(tmp_path):
+async def test_source_deadline_removes_its_expired_permission_modal(tmp_path, monkeypatch):
     from harness.permissions import PermissionEngine, PermissionRule, RuleSet
+    from harness.provider import StreamStop, TextDelta
     from harness.tui import PermissionScreen
+    mounted, inference_started, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+    class ObservedPermissionScreen(PermissionScreen):
+        def on_mount(self):
+            mounted.set()
+
+    class DelayedResponse:
+        async def infer(self, request):
+            inference_started.set()
+            await release.wait()
+            yield TextDelta("continued without optional memory")
+            yield StreamStop("end_turn")
+
+    monkeypatch.setattr("harness.tui.PermissionScreen", ObservedPermissionScreen)
     engine = PermissionEngine([RuleSet(rules=[PermissionRule("ask", "memory_lookup")], default="allow")])
-    app = make_app(tmp_path, context_policy=policy(timeout_seconds=0.3), engine=engine)
+    app = make_app(tmp_path, context_policy=policy(timeout_seconds=0.3), engine=engine,
+                   provider=DelayedResponse())
     lookup = Lookup()
     app.kernel.registry.register(lookup)
     async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause(0.1)
         composer = app.query_one("#prompt", Input)
         composer.post_message(Input.Submitted(composer, "work"))
-        await pilot.pause(0.1)
-        assert isinstance(app.screen, PermissionScreen)
-        await pilot.pause(0.4)
-        assert not isinstance(app.screen, PermissionScreen)
-        assert not lookup.calls and app.controller.active is None
+        await asyncio.wait_for(mounted.wait(), 3)
+        # The optional source expires before inference begins. Its dialog must
+        # already be gone even while a slow model keeps the turn active.
+        await asyncio.wait_for(inference_started.wait(), 3)
+        assert not any(isinstance(screen, PermissionScreen) for screen in app.screen_stack)
+        assert not lookup.calls and app.controller.active is not None
+        worker = app._turn_worker
+        assert worker is not None
+        release.set()
+        await asyncio.wait_for(worker.wait(), 3)
+        await pilot.pause()
+        assert app.controller.active is None
         assert "Context normal-memory: timeout" in screen_text(app)
 
 
