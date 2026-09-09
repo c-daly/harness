@@ -86,10 +86,8 @@ async def test_workspace_escape_is_blocked_end_to_end(tmp_path):
     assert completed[0].is_error  # WorkspaceGuard blocked OR the tool raised
 
 
-async def test_resume_seeds_read_state_no_regate(tmp_path):
-    # Seeding law end to end: a file read in the first session must satisfy the
-    # read-before-overwrite gate after resume, proving fold.read_paths ->
-    # resolve_in_workspace -> ReadState survives the rebuild (cli.py seeding).
+async def test_resume_keeps_historical_paths_but_requires_fresh_read(tmp_path):
+    # Recorded paths are routing hints, not evidence of current file contents.
     ws = tmp_path / "ws"
     ws.mkdir(parents=True)
     (ws / "f.txt").write_text("alpha\n")
@@ -112,6 +110,10 @@ async def test_resume_seeds_read_state_no_regate(tmp_path):
                 tool_call_turn(
                     "write", ToolName("write_file"), {"file_path": "f.txt", "content": "beta\n"}
                 ),
+                tool_call_turn("read", ToolName("read_file"), {"file_path": "f.txt"}),
+                tool_call_turn(
+                    "retry", ToolName("write_file"), {"file_path": "f.txt", "content": "beta\n"}
+                ),
                 text_turn("wrote"),
             ]
         ),
@@ -123,11 +125,10 @@ async def test_resume_seeds_read_state_no_regate(tmp_path):
         resume_session_id=sid,
     )
     await run_once(resumed, "overwrite it")
-    # the write must NOT be gated as unread -- the seeded ReadState covers it
     events = [e.event for e in read_session(tmp_path / "data", sid)]
     completed = [e for e in events if isinstance(e, ToolCallCompleted)]
-    write_done = completed[-1]
-    assert not write_done.is_error
+    assert completed[-3].is_error and "read_file" in completed[-3].result_text
+    assert not completed[-1].is_error
     assert (ws / "f.txt").read_text() == "beta\n"
 
 

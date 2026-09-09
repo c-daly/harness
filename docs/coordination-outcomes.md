@@ -74,10 +74,33 @@ still waiting for the lock can cancel without starting its mutation. Different
 paths remain independent. The terminal explains a wait for a started file change,
 and the tool/run still records cancellation even if that change finishes.
 
-This is serialization of individual native calls, not isolation of a whole
-read/plan/edit workflow or conflict detection for stale reads. Provider-native
-tools, shell commands and other processes do not participate in these locks;
-mixed workflows still need explicit edit ownership or isolated worktrees.
+Native reads also remember a SHA-256 digest of the exact file bytes for the
+calling session. Sharing a registry does not let a parent or sibling reuse
+another agent's observation. Writes and edits freeze their expected version
+before waiting for the lock, then compare current bytes while holding it. A
+changed file produces a tool error asking the agent to reread and reapply its
+change. The rejected call leaves the file untouched. This includes changes
+outside a displayed read window, or deletion before a planned overwrite.
+
+A successful delivered write/edit supplies that caller's next version, so
+sequential changes can proceed without extra reads. Concurrent calls cannot
+silently adopt a version written while they were waiting. Cancelled I/O does
+not refresh observations, even if a started write finishes. A missing-file read
+clears that caller's old observation, allowing deliberate recreation; other
+failed reads do not refresh it. Conflict guidance appears in the normal terminal
+tool result, and rereading uses the existing tools and permissions.
+
+After restart, saved read paths remain routing hints, but existing files must
+be read again before mutation. Numbered, windowed or truncated historical tool
+output cannot establish the original file bytes. These are content checks, so
+a timestamp-only change or replacement with identical bytes does not conflict.
+
+This is per-call serialization and stale-content detection for cooperating
+native tools on the owning event loop, not isolation of a whole workflow.
+Provider-native tools, shell commands and other processes do not take these
+locks. Their earlier changes can be detected, but a change between the content
+check and replacement is not an atomic cross-process conflict check. Mixed
+workflows still need explicit edit ownership or isolated worktrees.
 
 Reports and returned aggregate text are each bounded to 1 MiB. Delivered
 aggregate truncation is explicit and incomplete.

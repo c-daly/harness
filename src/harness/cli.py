@@ -212,6 +212,8 @@ def build_kernel(
                     seed.add(str(resolved))
                 except Exception:
                     pass
+        # Retain path hints for routing; only live observations establish file
+        # versions. A resumed agent must reread before overwriting existing files.
         read_state = ReadState(seed)  # noqa: F841 (captured by routing signals below)
         register_native_tools(
             registry,

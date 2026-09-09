@@ -111,21 +111,22 @@ async def test_edit_identical_strings_rejected(tmp_path):
     assert "identical" in str(exc.value)
 
 
-async def test_concurrent_edits_serialize_per_path(tmp_path):
+async def test_concurrent_edits_require_a_current_observation(tmp_path):
     rs = _rs()
     (tmp_path / "c.txt").write_text("v0")
     await ReadFileTool(workspace_root=tmp_path, read_state=rs)({"file_path": "c.txt"})
     tool = EditFileTool(workspace_root=tmp_path, read_state=rs)
-    # Two competing edits on the SAME path, launched together. Edit B (v1->v2) can only
-    # succeed if edit A (v0->v1) has already committed; if the per-path lock failed to
-    # serialize them, B would see "v0", find no "v1", and raise. gather preserves start
-    # order, so A acquires the lock first; the deterministic result is "v2" with neither
-    # call raising.
+    # Both calls are based on v0; the second cannot adopt the first call's write
+    # while waiting for the lock. A deliberate sequential edit can use that result.
     results = await asyncio.gather(
         tool({"file_path": "c.txt", "old_string": "v0", "new_string": "v1"}),
         tool({"file_path": "c.txt", "old_string": "v1", "new_string": "v2"}),
+        return_exceptions=True,
     )
-    assert all("Edited" in r for r in results)
+    assert "Edited" in results[0]
+    assert isinstance(results[1], ToolError) and "changed" in str(results[1])
+    assert (tmp_path / "c.txt").read_text() == "v1"
+    await tool({"file_path": "c.txt", "old_string": "v1", "new_string": "v2"})
     assert (tmp_path / "c.txt").read_text() == "v2"
 
 
