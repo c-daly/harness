@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 
 from harness.agent import DelegationResult
 from harness.frontmatter import AgentDef
+from harness.execution import ExecutionScope, current_scope
 from harness.hooks import HookBus
 from harness.interaction import HeadlessResolver
 from harness.mixture import (
@@ -34,6 +35,11 @@ class FakeRunner:
 
     responses: dict  # alias -> str | callable(prompt)->str
     calls: list = field(default_factory=list)
+    _scopes: dict = field(default_factory=dict)
+
+    def scope_for(self, parent):
+        return current_scope.get() or self._scopes.setdefault(
+            parent.id if parent else None, ExecutionScope(parent, ToolRegistry()))
 
     async def run_result(self, *, prompt, model, parent, agent=None, on_result=None):
         self.calls.append((str(model), prompt))

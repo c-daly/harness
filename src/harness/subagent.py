@@ -42,6 +42,13 @@ class SubagentRunner:
     agents: dict[str, AgentDef] = field(default_factory=dict)
     _root_scopes: dict[str, ExecutionScope] = field(default_factory=dict, init=False, repr=False)
 
+    def scope_for(self, parent: Session) -> ExecutionScope:
+        """Resolve the actual caller and retain one budget for standalone calls."""
+        scope = current_scope.get()
+        if scope is None:
+            scope = self._root_scopes.setdefault(str(parent.id), ExecutionScope(parent, self.registry))
+        return scope
+
     async def run(
         self, *, prompt: str, model: ModelId | None, parent: Session, agent: str | None = None
     ) -> str:
@@ -51,9 +58,7 @@ class SubagentRunner:
         self, *, prompt: str, model: ModelId | None, parent: Session, agent: str | None = None,
         on_result: Callable[[DelegationResult], None] | None = None,
     ) -> DelegationResult:
-        scope = current_scope.get()
-        if scope is None:
-            scope = self._root_scopes.setdefault(str(parent.id), ExecutionScope(parent, self.registry))
+        scope = self.scope_for(parent)
         parent = scope.session  # Includes calls through root-bound coordination tools.
         return await self._run_in_scope(prompt=prompt, model=model, parent=parent,
                                         agent=agent, scope=scope, on_result=on_result)
@@ -82,17 +87,14 @@ class SubagentRunner:
                 experts = [Expert(model=m) for m in (definition.experts or ())]
                 narrowed = (FilteredRegistry(registry, allowed=definition.tools)
                             if definition.tools is not None else registry)
-                try:
-                    scope.budget.reserve_child(scope.depth + 1)
-                except BudgetExceeded as exc:
-                    return DelegationResult(status="blocked", reason=str(exc))
-                token = current_scope.set(ExecutionScope(parent, narrowed, scope.budget, scope.depth + 1,
+                # The strategy owns coordinator admission and increments depth
+                # once, for both configured agents and direct native tools.
+                token = current_scope.set(ExecutionScope(parent, narrowed, scope.budget, scope.depth,
                                                         scope.resources, scope.context_policy))
                 try:
                     return await run_strategy_result(definition.strategy, self, parent, prompt, experts)
                 finally:
                     current_scope.reset(token)
-                    scope.budget.release_child()
             system_prompt = definition.body or system_prompt
             limit = definition.max_output_chars
             if definition.model is not None:

@@ -165,7 +165,10 @@ than `ok`, and the activity panel retains that status even when the enclosing
 tool returns text. [Coordination](coordination-outcomes.md) now consumes typed
 delegation outcomes, preserves partial results and provenance, and settles
 siblings before recording its terminal report. String tool APIs remain compatible;
-their prose does not determine child execution status. Live heterogeneous
+their prose does not determine child execution status. Pure coordinators have
+separate active capacity and an overall deadline while sharing descendant,
+depth and call limits with their workers. Missing aggregate terminals remain
+unconfirmed in inspection and export. Live heterogeneous
 qualification and evidence-based escalation remain open.
 
 ## External agent tasks: Codex migration

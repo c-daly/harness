@@ -149,6 +149,12 @@ are held. Legacy attempts without a captured scope, or attempts from a different
 core source version, are also held. An application upgrade requires a separately
 reviewed migration contract; it cannot silently reinterpret old authority.
 
+For an otherwise compatible captured scope, absent coordinator fields default to
+zero active coordinators, capacity 16 and a 600-second coordination deadline.
+Recorded values take precedence, and continuation uses the stricter of source
+and current limits. This normalization leaves the saved checkpoint bytes intact
+and does not permit handoffs across different core source versions.
+
 The source implementation fingerprint covers the shipped core Python files.
 Native workspace bindings and declared MCP context configuration are checked
 again at dispatch. This is application-level enforcement, not operating-system

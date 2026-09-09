@@ -316,6 +316,15 @@ class SubagentFinished(_Event):
     truncated: bool = False
 
 
+class CoordinationStarted(_Event):
+    type: Literal["coordination_started"] = "coordination_started"
+    id: str
+    call_id: CallId | None = None
+    strategy: str
+    depth: int = Field(ge=1)
+    timeout_seconds: float = Field(gt=0, allow_inf_nan=False)
+
+
 class CoordinationFinished(_Event):
     type: Literal["coordination_finished"] = "coordination_finished"
     id: str
@@ -527,6 +536,7 @@ Event = Annotated[
         PermissionResolved,
         SubagentSpawned,
         SubagentFinished,
+        CoordinationStarted,
         CoordinationFinished,
         AgentRunStarted,
         AgentRunFinished,

@@ -5,7 +5,7 @@ from pathlib import Path
 
 from harness.blobs import BlobIntegrityError, BlobStore, MissingBlobError
 from harness.coordination import load_report
-from harness.events import CoordinationFinished
+from harness.events import CoordinationFinished, CoordinationStarted
 from harness.log import TornLogError, read_session
 
 
@@ -13,13 +13,22 @@ def render_coordination(base, session_id):
     events = read_session(base, session_id, repair=False)
     blobs = BlobStore(base / "sessions" / session_id / "blobs", create=False)
     rows = []
+    finished = {env.event.id for env in events if isinstance(env.event, CoordinationFinished)}
     for env in events:
         event = env.event
+        if isinstance(event, CoordinationStarted) and event.id not in finished:
+            rows.append(f"{event.strategy} {event.id[:8]}: completion unconfirmed; event {env.seq}; "
+                        f"deadline {event.timeout_seconds:g}s")
         if not isinstance(event, CoordinationFinished):
             continue
         report = load_report(blobs, event, session_id).model_dump(mode="json")
         rows.append(f"{event.strategy} {event.id[:8]}: {event.status}; acceptance unverified; event {env.seq}")
         rows.append(f"  Selection: {report['gate']}; disagreement: {report['disagreement']}")
+        if report["admitted"] is not None:
+            rows.append(f"  Admission: {'admitted' if report['admitted'] else 'blocked'}; "
+                        f"deadline {report['timeout_seconds']:g}s")
+        if report["result"]["reason"]:
+            rows.append(f"  Reason: {report['result']['reason']}")
         for member in report["members"]:
             result = member["result"]
             detail = (f"; child {result['child_session_id']}" if result.get("child_session_id") else "")

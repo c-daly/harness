@@ -14,7 +14,8 @@ from zipfile import ZIP_STORED, ZipFile, ZipInfo
 from harness.blobs import BlobStore
 from harness.coordination import load_report
 from harness.events import (
-    AgentRunFinished, AgentRunStarted, ContextPolicyConfigured, ContextSourceObserved, CoordinationFinished,
+    AgentRunFinished, AgentRunStarted, ContextPolicyConfigured, ContextSourceObserved,
+    CoordinationFinished, CoordinationStarted,
     DispatchResolved, ModelCallProposed, ModelCallStarted, SubagentFinished, SubagentSpawned,
     TaskChecked, TaskHandoffRecorded, ToolCallAborted, ToolCallCancelled, ToolCallCompleted, ToolCallProposed,
     UnknownEvent, UserMessage,
@@ -111,7 +112,7 @@ def task_package(base: Path, session_id: str, *, task_id: str | None = None):
     tool_proposals = _one_by_call(events, ToolCallProposed)
     runs, calls, context, children, external, reconciliations = {}, {}, [], {}, [], []
     configurations = {}
-    coordination = []
+    coordination = {}
     current_policy = None
     active_roots = set()
 
@@ -185,12 +186,25 @@ def task_package(base: Path, session_id: str, *, task_id: str | None = None):
                 "status": "unconfirmed", "contents": "not_exported"}
         elif isinstance(event, SubagentFinished) and event.child_session_id in children:
             children[event.child_session_id].update(status=event.status, finished_seq=env.seq)
+        elif isinstance(event, CoordinationStarted) and event.call_id in calls:
+            if event.id in coordination:
+                raise ExportError("ambiguous reused coordination ID")
+            coordination[event.id] = {"source_seq": env.seq, "started_seq": env.seq,
+                "id": event.id, "call_id": event.call_id, "strategy": event.strategy,
+                "status": "unconfirmed", "timeout_seconds": event.timeout_seconds,
+                "report": None, "output": None}
         elif isinstance(event, CoordinationFinished) and event.call_id in calls:
+            previous = coordination.get(event.id, {})
+            if previous and ("finished_seq" in previous or previous["call_id"] != event.call_id
+                             or previous["strategy"] != event.strategy):
+                raise ExportError("ambiguous coordination terminal")
             ref = artifacts.add(ref=event.report)
             report = load_report(artifacts.blobs, event, session_id)
-            coordination.append({"source_seq": env.seq, "id": event.id, "strategy": event.strategy,
+            coordination[event.id] = {**previous, "source_seq": env.seq, "finished_seq": env.seq,
+                "id": event.id, "call_id": event.call_id, "strategy": event.strategy,
+                "timeout_seconds": report.timeout_seconds,
                 "status": event.status, "report": ref, "output": artifacts.add(
-                    ref=report.output) if report.output else None})
+                    ref=report.output) if report.output else None}
         elif isinstance(event, TaskHandoffRecorded) and event.record.task_id == task.definition.id:
             from types import SimpleNamespace
             from harness.handoff import load_record
@@ -229,7 +243,7 @@ def task_package(base: Path, session_id: str, *, task_id: str | None = None):
         "runs": list(runs.values()), "tool_calls": list(calls.values()), "context": context,
         "configured_sources": [s.model_dump(mode="json") for s in current_policy.sources] if current_policy else [],
         "external_executions": external, "child_sessions": list(children.values()),
-        "reconciliations": reconciliations, "coordination": coordination, "limitations": list(LIMITATIONS)}
+        "reconciliations": reconciliations, "coordination": list(coordination.values()), "limitations": list(LIMITATIONS)}
     return package, artifacts.files
 
 
