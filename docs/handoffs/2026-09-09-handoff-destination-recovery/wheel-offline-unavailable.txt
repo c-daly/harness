@@ -1,0 +1,15 @@
+== creating a clean venv
+Using CPython 3.13.13
+Creating virtual environment at: /tmp/tmp.s2zkBG2yKr/venv
+Activate with: source /tmp/tmp.s2zkBG2yKr/venv/bin/activate
+== installing /tmp/harness-handoff-destination-reports/dist/harness-0.0.1-py3-none-any.whl
+Using Python 3.13.13 environment at: /tmp/tmp.s2zkBG2yKr/venv
+  × No solution found when resolving dependencies:
+  ╰─▶ Because jsonschema was not found in the cache and harness==0.0.1 depends
+      on jsonschema>=4.23, we can conclude that harness==0.0.1 cannot be used.
+      And because only harness==0.0.1 is available and you require harness, we
+      can conclude that your requirements are unsatisfiable.
+
+      hint: Packages were unavailable because the network was disabled. When
+      the network is disabled, registry packages may only be read from the
+      cache.

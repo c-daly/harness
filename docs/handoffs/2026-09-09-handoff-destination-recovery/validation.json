@@ -1,0 +1,74 @@
+{
+  "recorded_at": "2026-09-09T13:31:49.771052+00:00",
+  "source_freezes": {
+    "offline-v1-report.json": {
+      "commit": "f894004088de7bb0ce0434f3e28999ce51575a08",
+      "source_hashes_verified": 82,
+      "passed": false,
+      "journeys_passed": 4
+    },
+    "offline-v2-report.json": {
+      "commit": "5270b410418d4543b90976297d6a6ad8e9da0a5c",
+      "source_hashes_verified": 82,
+      "passed": false,
+      "journeys_passed": 5
+    },
+    "offline-v3-report.json": {
+      "commit": "5458515ac9f1891f06672d444ceb28f243f09920",
+      "source_hashes_verified": 82,
+      "passed": false,
+      "journeys_passed": 4
+    },
+    "offline-v4-report.json": {
+      "commit": "439a1734215702e826638fd09d79571c338111b9",
+      "source_hashes_verified": 82,
+      "passed": true,
+      "journeys_passed": 6
+    }
+  },
+  "python313_full_suite": {
+    "passed": 1785,
+    "skipped": 7,
+    "warnings": 6,
+    "seconds": 401.11,
+    "core_commit": "f894004088de7bb0ce0434f3e28999ce51575a08"
+  },
+  "python312_affected_suite": {
+    "passed": 239,
+    "seconds": 44.64
+  },
+  "final_driver_python313": {
+    "passed": 7,
+    "seconds": 26.32
+  },
+  "final_driver_python312": {
+    "passed": 7,
+    "seconds": 26.16
+  },
+  "ruff": true,
+  "whitespace": true,
+  "offline_build": true,
+  "final_offline_wheel_smoke": true,
+  "wheel_imported_modules": 74,
+  "wheel_core_files_byte_matched": 75,
+  "qualification_containers_stopped": true,
+  "package_artifacts": {
+    ".gitignore": {
+      "bytes": 1,
+      "sha256": "684888c0ebb17f374298b65ee2807526c066094c701bcc7ebbe1c1095f494fc1"
+    },
+    "harness-0.0.1-py3-none-any.whl": {
+      "bytes": 280041,
+      "sha256": "891b49822044d67f8b27854c8fc68247152b7bcae2ada26593a8b93353914237"
+    },
+    "harness-0.0.1.tar.gz": {
+      "bytes": 1588327,
+      "sha256": "f1ad8e7415af6876b1338bc5e29327cb6ab82dae780d39caa27c2cc767fee8a8"
+    }
+  },
+  "limitations": [
+    "The full suite ran at the core freeze; later driver-only changes were checked by targeted tests on both Python versions.",
+    "Initial offline dependency resolution failed in the fresh cache; the log is retained, dependencies were fetched, and the final offline smoke passed.",
+    "Four development runs are preserved without regrading. Final 6/6 is bounded fault evidence, not held-out semantic quality or general live-provider qualification."
+  ]
+}

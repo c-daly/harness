@@ -1,0 +1,74 @@
+{
+  "README.md": {
+    "bytes": 7042,
+    "sha256": "8e62a4012a5e875fffb123628a7800433f1a7d5fbd433e7441bdf33f68ac968e"
+  },
+  "acknowledged-protocol.json": {
+    "bytes": 8634,
+    "sha256": "346c427f4a4b287c01547ce394235cc4681a1802c32cd08f12c0a4e4f36b0f11"
+  },
+  "build.txt": {
+    "bytes": 269,
+    "sha256": "a7c4265ed5433214410943be169693d040c848e778e1a6c65ff2dd84e347a192"
+  },
+  "controlled-protocol.json": {
+    "bytes": 9043,
+    "sha256": "850b5ee2cd75b81766a359e42d02d3c9e5db257f78b9f49c369a4eea769bf847"
+  },
+  "controlled-tests-python312.txt": {
+    "bytes": 99,
+    "sha256": "d16fe119b0136bcaed0f2b2905f6a5a74a94c1c1c896e33fd648be15e1e65104"
+  },
+  "controlled-tests-python313.txt": {
+    "bytes": 99,
+    "sha256": "3ec56e7596e77fc94a9efbd76217a3d673c481b301e4c65c711c1d8717e29c4a"
+  },
+  "followup-protocol.json": {
+    "bytes": 8407,
+    "sha256": "70a82ed6a4fbb9d295d64be9b717a3ed1275d21960ab0a44742517e4c81edcef"
+  },
+  "offline-v1-report.json": {
+    "bytes": 22371,
+    "sha256": "78f4f92d24a454ca6aa15c975f1c5488708e8ddd3cef8bbdbad8e45031cadfb6"
+  },
+  "offline-v2-report.json": {
+    "bytes": 23543,
+    "sha256": "14db55c58f94b741f3fed4830e8b0c394bf58ce69e1eb122173f4ac0e4830f2d"
+  },
+  "offline-v3-report.json": {
+    "bytes": 23395,
+    "sha256": "45c8c61a7d7c343136269d70c1f15b92f12a13e9cea655c52d6913aaecbcd0f9"
+  },
+  "offline-v4-report.json": {
+    "bytes": 24418,
+    "sha256": "200a0c129a916e8e2b71aa4ea3e9a5f8dfa37d0a614bb1064112479f322fc804"
+  },
+  "protocol.json": {
+    "bytes": 7609,
+    "sha256": "df3eaf1860adcbab82d9d15becf739898115fdb649042733cc7d73cd0ca7c1dd"
+  },
+  "tests-python312.txt": {
+    "bytes": 341,
+    "sha256": "b4276433aac54632bce75f1f7f20ee15272559e1faeea47f8d213a545ae025f4"
+  },
+  "tests-python313.txt": {
+    "bytes": 2822,
+    "sha256": "a0b1f7e453550dd822ee3c025066bf672ad8a768ca2b118f4cc9610e6c21336f"
+  },
+  "validation.json": {
+    "bytes": 2364,
+    "sha256": "ceb934274aad792ac5bb616263d9217e300ae19ccbe0642bed7b02f9f9da522f"
+  },
+  "wheel-offline-unavailable.txt": {
+    "bytes": 840,
+    "sha256": "25ed0b50f56910a6c8e90286226cc934ad044f01b17a968d02fc4ab4f0bfba6e"
+  },
+  "wheel-online.txt": {
+    "bytes": 4724,
+    "sha256": "530a4a653dc609309d7089fea419d2ca76be244a4bda1444036fbf072d6247be"
+  },
+  "wheel.txt": {
+    "bytes": 3953,
+    "sha256": "2018741bd909e8bc2e5e520ce6347863a24279bba5dad05eaeef680511cbf586"
+  }
+}
