@@ -99,7 +99,8 @@ def fold_agents(events: list[Envelope]) -> list[AgentRow]:
     successful tool return) plus one row per expert spawned by an
     open ensemble/consult_panel/escalate call (status from that expert's own
     SubagentSpawned/SubagentFinished, `strategy` set to the coordination
-    call's call_id so experts of the same call share a grouping key).
+    call's call_id so experts of the same call share a grouping key). Recorded
+    aggregate outcomes get a separate result row in that same strategy group.
     Newest-touched first."""
     rows: dict[str, AgentRow] = {}
     order: list[str] = []
@@ -152,10 +153,13 @@ def fold_agents(events: list[Envelope]) -> list[AgentRow]:
                 status = {"ok": "done", "error": "error", "cancelled": "cancelled",
                           "incomplete": "incomplete"}[ev.status]
                 upsert(row, status=status)
-        elif isinstance(ev, CoordinationFinished) and ev.call_id in open_dispatch:
+        elif isinstance(ev, CoordinationFinished):
             status = {"completed": "done", "incomplete": "incomplete", "failed": "error",
                       "blocked": "error", "cancelled": "cancelled"}[ev.status]
-            upsert(ev.call_id, status=status)
+            if ev.call_id in strategy_calls:
+                upsert(str(ev.call_id), label=f"{ev.strategy} result", status=status, strategy=str(ev.call_id))
+            elif ev.call_id in open_dispatch:
+                upsert(str(ev.call_id), status=status)
 
     return [rows[cid] for cid in reversed(order)]
 

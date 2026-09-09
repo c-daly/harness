@@ -2,6 +2,7 @@
 envelopes built from the real event classes."""
 
 from harness.events import (
+    CoordinationFinished,
     Envelope,
     SubagentFinished,
     SubagentSpawned,
@@ -272,3 +273,24 @@ def test_fold_agents_pre_upgrade_log_without_call_id_yields_no_expert_rows():
     ]
 
     assert fold_agents(events) == []
+
+
+def test_concurrent_aggregates_keep_separate_status_and_preserve_children():
+    from harness.blobs import BlobRef
+    first, second, child = new_call_id(), new_call_id(), new_session_id()
+    ref = BlobRef(sha256="a" * 64, size=0)
+    events = [
+        env(1, ToolCallProposed(call_id=first, tool=ToolName("consult_panel"), args={})),
+        env(2, ToolCallProposed(call_id=second, tool=ToolName("ensemble"), args={})),
+        env(3, SubagentSpawned(child_session_id=child, call_id=first, model=ModelId("m"))),
+        env(4, SubagentFinished(child_session_id=child, status="ok")),
+        # A blocked fan-out has no child row but still needs a visible result.
+        env(5, CoordinationFinished(id="two", call_id=second, strategy="ensemble", status="blocked", report=ref)),
+        env(6, CoordinationFinished(id="one", call_id=first, strategy="panel", status="cancelled", report=ref)),
+        env(7, ToolCallCompleted(call_id=first, result_text="cancelled")),
+        env(8, ToolCallCompleted(call_id=second, result_text="blocked")),
+    ]
+    rows = {row.call_id: row for row in fold_agents(events)}
+    assert rows[first].status == "cancelled" and rows[first].strategy == first
+    assert rows[second].status == "error" and rows[second].strategy == second
+    assert rows[child].status == "done" and rows[child].strategy == first

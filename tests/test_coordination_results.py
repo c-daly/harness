@@ -314,3 +314,42 @@ async def test_coordination_command_does_not_dispatch_plugin_or_model(tmp_path):
         assert "No recorded coordination outcomes." in screen_text(app)
         assert read_session(tmp_path, app.kernel.session.id) == before
         assert not app.kernel.provider.calls
+
+
+@pytest.mark.parametrize("tool,args,answers,strategy", [
+    ("consult_panel", {"proposer": "fake", "critics": ["fake"]},
+     ["proposed answer", "VETO\nThe proposal misses the requirement"], "panel"),
+    ("ensemble", {"models": ["fake", "fake"]}, ["long answer", "long answer"], "ensemble"),
+    ("escalate", {"cheap": "fake", "premium": "fake"}, ["long answer"], "escalate"),
+])
+async def test_workflows_shows_incomplete_aggregate_with_completed_children(
+        tmp_path, monkeypatch, tool, args, answers, strategy):
+    from textual.widgets import TabbedContent
+    from harness.tui_panel import ActivityPanel
+    from tests.test_tui import make_app
+    from tests.test_tui_queue import screen_text
+    from tests.test_tui_tasks import command
+
+    if tool != "consult_panel":
+        monkeypatch.setattr("harness.mixture.MAX_COORDINATION_OUTPUT", 5)
+    provider = FakeProvider([tool_call_turn("", ToolName(tool), {"prompt": "Compare", **args}),
+                             *(text_turn(answer) for answer in answers), text_turn("root finished")])
+    app = make_app(tmp_path, provider=provider, model=ModelId("fake"))
+    async with app.run_test(size=(140, 45)) as pilot:
+        await command(app, pilot, "Compare the answers")
+        worker = app._turn_worker
+        if worker is not None:
+            await asyncio.wait_for(worker.wait(), 3)
+        panel = app.query_one(ActivityPanel)
+        async with asyncio.timeout(3):
+            while not any(isinstance(e.event, CoordinationFinished) for e in panel._events):
+                await pilot.pause(.02)
+        events = read_session(tmp_path, app.kernel.session.id)
+        finished = [e.event for e in events if isinstance(e.event, SubagentFinished)]
+        assert len(finished) == len(answers) and all(e.status == "ok" for e in finished)
+        assert saved_report(app.kernel.session).result.status == "incomplete"
+        await pilot.press("f2")
+        panel.query_one(TabbedContent).active = "tab-workflows"
+        await pilot.pause(.1)
+        assert f"[incomplete] {strategy} result" in screen_text(app)
+        assert "[done] fake" in screen_text(app)

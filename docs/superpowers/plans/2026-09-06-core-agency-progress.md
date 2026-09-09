@@ -2171,3 +2171,14 @@ final coordination suites, including those two added regressions, passed
 small reporting correction. Ruff, whitespace, offline build, CLI help and clean
 wheel smoke passed. All 79 core modules match the final wheel and all 81 final
 core/test hashes remained unchanged through publication preparation.
+
+**PR41 review:** direct `ensemble`, `consult_panel` and `escalate` workflows now
+show their recorded aggregate outcome as a separate result row in the Workflows
+group. Completed children remain completed when their aggregate is incomplete;
+blocked workflows without children and concurrent cancelled/blocked results stay
+visible and correctly attributed. Three real terminal-compositor regressions
+reproduced the missing status before the fix and now pass. The activity-panel,
+coordination and mixture suites passed **74 tests on each Python version**
+(3.13: 3.16 s; 3.12: 3.41 s). Ruff and whitespace checks passed. Both hosted
+Python CI versions had passed before this scoped projection correction; fresh
+CI will validate the new commit. Execution and acceptance policies are unchanged.

@@ -13,6 +13,10 @@ session/run references and the saved report/answer hashes. Inspection reads the
 log and verifies report bytes; it neither repairs the source nor executes work.
 `/panel` continues to show activity. A configured coordination agent's partial
 result remains incomplete even when its tool transport returns successfully.
+Direct ensemble, panel and escalation calls show a separate aggregate result row
+in the Workflows group, alongside each child's own status. Completed participants
+can therefore appear beside an incomplete result when review fails or the
+aggregate answer is truncated. A blocked aggregate is visible even without children.
 
 Core coordinates through `SubagentRunner.run_result()` and
 `run_strategy_result()`. Their `DelegationResult` distinguishes `completed`,
