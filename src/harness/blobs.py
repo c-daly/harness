@@ -33,9 +33,10 @@ class BlobRef(BaseModel):
 
 
 class BlobStore:
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, *, create: bool = True) -> None:
         self._root = root
-        self._root.mkdir(parents=True, exist_ok=True)
+        if create:
+            self._root.mkdir(parents=True, exist_ok=True)
 
     def put(self, data: bytes) -> BlobRef:
         digest = hashlib.sha256(data).hexdigest()

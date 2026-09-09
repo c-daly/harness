@@ -1,8 +1,8 @@
 # Core agency implementation record
 
-Current implementation branch: `feat/handoff-destination-recovery`, based on merged `main`
-at `e248ac7` (PR38, required-memory loss and explicit handoff recovery).
-Previous branches: `feat/handoff-failure-qualification`, `feat/context-profile-comparison`, `docs/context-experiment-results`, `feat/context-eligibility`, `feat/context-selection-qualification`, `fix/bounded-compaction`, `fix/model-selection-continuity`, `feat/local-model-management`, `feat/assessment-improvement`, `feat/external-handoff`, `feat/assessment-evaluation`, `feat/supervised-improvement`, `feat/local-scheduling`, `feat/task-fallback`, `feat/semantic-context-progress`, `feat/local-assistant-m3`, `feat/resident-workflow`, `feat/task-completion-evidence`, `fix/inference-client-lifecycle`, `feat/local-response-profiles`, `feat/local-tool-recovery`, `feat/local-tool-planning`, `feat/local-qualification`, `feat/semantic-evaluation`, `feat/local-context`, `feat/local-readiness`, `feat/agent-runtimes`,
+Current implementation branch: `feat/portable-task-export`, based on merged `main`
+at `5a79173` (PR39, destination fault recovery and truthful stream completion).
+Previous branches: `feat/handoff-destination-recovery`, `feat/handoff-failure-qualification`, `feat/context-profile-comparison`, `docs/context-experiment-results`, `feat/context-eligibility`, `feat/context-selection-qualification`, `fix/bounded-compaction`, `fix/model-selection-continuity`, `feat/local-model-management`, `feat/assessment-improvement`, `feat/external-handoff`, `feat/assessment-evaluation`, `feat/supervised-improvement`, `feat/local-scheduling`, `feat/task-fallback`, `feat/semantic-context-progress`, `feat/local-assistant-m3`, `feat/resident-workflow`, `feat/task-completion-evidence`, `fix/inference-client-lifecycle`, `feat/local-response-profiles`, `feat/local-tool-recovery`, `feat/local-tool-planning`, `feat/local-qualification`, `feat/semantic-evaluation`, `feat/local-context`, `feat/local-readiness`, `feat/agent-runtimes`,
 and `feat/core-agency`.
 
 Committed checkpoints: `0351b75` (roadmap, lifecycle, and storage/result integrity),
@@ -57,7 +57,7 @@ qualification. Milestone completion requires its roadmap gates, not just code.
 | M2 inference / agent contracts | In progress | Bounded inference, native tasks, Codex task binding, explicit execution kinds, nullable usage, core improvement records and recorded task-evidence checks implemented. Remaining adapters, richer artifact predicates and live capability qualification remain. |
 | M3 local core assistant | Complete for the measured CUDA profile | Qwen3-8B passes six full offline project journeys: twelve exact native file writes, changed-record answers after restart, real cancellation, normal memory, and visible task/context status. Four missing-assets/startup-exit recovery cases pass. Shipped profiles and a launcher reproduce the workflow. Actual use exposed missing startup configuration in the normal catalog; the provisioned host's local aliases are now connected. Core `/models` now inspects public GGUF metadata and registers installed weights with startup profiles, with ordinary CLI/TUI CPU smoke evidence. Runtime installation, weight downloads and broader CPU/daily-use qualification remain outside this gate. |
 | M4 bounded semantic agency | In progress | All three shadow functions now exist with explicit CLI/TUI access and evidence validation. The public 8B comparison failed context/progress gates; deterministic behavior remains. Bounded task-preserving fallback and session-tree local scheduling are implemented. Message-prompt pairing and earlier context/correction experiments use core improvement records. Supervised message-prompt proposal/evaluation/adoption/rollback is implemented. Paired context/progress candidate evaluation is implemented with explicit operator controls. Explicit external-to-native reconciliation and bounded handoff are implemented. Supervised assessment proposal/adoption/rollback is implemented per function/model. Core now filters context eligibility before inference and resolves empty eligible sets without a model call. Required normal-memory loss, busy preflight, destination loss after a write and Esc during continuation now have bounded offline terminal evidence. Truncated OpenAI-compatible streams cannot fabricate completion. Held-out quality and broader handoff qualification remain. |
-| M5 heterogeneous work / plugins | Pending | Supervision, plugin reconciliation, portable continuation, isolated improvement patches and rollback. |
+| M5 heterogeneous work / plugins | In progress | Core CLI/TUI exports a documented Markdown/JSON continuation package with task evidence, context snapshots/references, artifacts and original provenance. A controlled independent frontend continues after source-database removal. Live mixed-agent supervision, installed-plugin reconciliation, broader portable continuation, isolated improvement patches and rollback remain. |
 | M6 daily-use qualification | Pending | Measured UI, live adapter boundaries, offline and human dogfood gates. |
 
 `4a98d3f` added durable task requirements and recorded evidence in
@@ -2055,3 +2055,65 @@ both initial and resumed launches. The seven affected tests passed concurrently
 on Python 3.13 (35.23 s) and 3.12 (36.00 s); Ruff and whitespace checks passed.
 This changes test infrastructure only; the frozen core and offline reports remain
 unchanged.
+
+## September 9 — Portable task continuation through core export
+
+PR39 merged at `5a79173`; both Python CI versions and review passed. The named
+bounded offline destination-failure cases are covered, while M4 semantic quality
+remains unqualified. This increment advances the independent M5 portability
+track without promoting any semantic prompt or model.
+
+**Core behavior:** `/export FILE.zip` and `harness export SESSION_ID FILE.zip`
+produce a versioned Markdown/JSON package with the selected task's requirements,
+recorded checks and review, attempts, original event references, verified result
+artifacts, configured context snapshots and memory query references. Operator
+handoff inspection notes travel as historical data. Source scope, execution
+grants and provider bindings do not transfer. The
+[format contract](../../portable-continuation.md) documents these distinctions.
+
+Export opens no provider, invokes no plugin, performs no check and leaves the
+source log unchanged. It refuses active task runs, unreadable records, damaged
+artifacts and existing destinations. Publication is exclusive/atomic and the
+archive is bounded to 32 MiB. The terminal prepares it off the UI thread; Esc
+and new work can discard preparation without a late write. Core `/export` cannot
+be redirected into plugin prompt execution. Markdown renders recorded text as
+quoted data, including criteria containing headings, image links or terminal
+controls.
+
+**Portability evidence:** a public scripted-provider journey used the real native
+file tools to read project context and write A, alongside a controlled memory
+lookup. After export, its source database was deleted. A separate Python `-I -S`
+frontend with no Harness import available verified the package, retained the
+task ID and context references, inspected A, and wrote only B in a copied
+workspace. A's bytes and modification time survived; operator review remained
+unresolved. The archive continued to record the original B/review obligations.
+The destination's explicit fixture command authorized its B write; exported
+arguments alone could not authorize it.
+
+**Validation:** the final full Python 3.13 suite passed **1,811 tests, seven
+skipped**, with six existing MCP deprecation warnings (413.54 s). Python 3.12
+affected suites passed **127 tests** (41.15 s); after the final Markdown quoting
+correction, the export, terminal and blob suites passed **31 tests** (4.88 s).
+The regression checks actual Markdown parsing, not just indentation strings.
+The superseded full run was interrupted to validate the final correction; it
+is not counted as a completed run. Ruff, whitespace, offline build and clean
+wheel smoke passed. All 77 core files match the final wheel, and all 80 recorded
+core/test/consumer hashes remained unchanged during final validation.
+
+**Remaining:** this is a bounded format/continuation test, not live model
+judgment or installed normal-memory interoperability. Child sessions remain
+references; opaque external effects need inspection. System/provider/plugin
+state, drafts, queues and mutable workspace files are outside the package.
+M4 held-out semantic quality, M5 live mixed-runtime supervision and plugin
+reconciliation, isolated source improvement/rollback, and M6 daily use remain
+open. Memory and agent-swarm remain plugins; export is core.
+
+**PR40 CI correction:** lint passed on both Python versions. The initial Python
+3.13 job failed an existing permission-expiry test that assumed the whole turn
+would settle after a fixed 400 ms pause. The test now observes dialog mounting
+and subsequent inference, verifies the expired dialog is gone while a controlled
+model response keeps the turn active, then awaits the actual worker with a bound.
+The source deadline remains 300 ms, and the denied memory tool must never run.
+All 12 resident-status tests passed on Python 3.13 (6.53 s) and 3.12 (6.75 s);
+Ruff and whitespace checks passed. The correction changes tests and this record
+only; core export behavior and the format remain unchanged.

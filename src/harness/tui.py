@@ -1325,7 +1325,7 @@ class HarnessApp(App[None]):
             return
         command = parse_slash_command(text)
         if command is not None:
-            if command.name in self._plugin_commands and command.name not in {"task", "status", "semantics", "improvements", "handoff", "models"}:
+            if command.name in self._plugin_commands and command.name not in {"task", "status", "semantics", "improvements", "handoff", "models", "export"}:
                 expanded = self._plugin_commands[command.name].body.replace("$ARGUMENTS", command.arg)
                 if not self._enqueue_prompt(expanded, expand_mentions=False):
                     return
@@ -1633,7 +1633,7 @@ class HarnessApp(App[None]):
                 "",
                 "/help  /model [alias]  /thoughts [collapse|full|off]  /markdown [on|off]  "
                 "/clear  /compact [alias]  /resume  /panel  /tools [name]  /task  /status  /context  /resources  /models  /semantics  /improvements  "
-                "/handoff inspect|record|show|run  /quit  — @path mentions a file "
+                "/handoff inspect|record|show|run  /export FILE.zip  /quit  — @path mentions a file "
                 "(Tab completes), read for the model only; F2 also toggles the activity panel",
             )
             self.say("", "/queue: inspect, edit, remove, pause, resume, clear; queued prompts are memory only")
@@ -1664,6 +1664,21 @@ class HarnessApp(App[None]):
             self._queue_command(command.arg)
         elif command.name == "task":
             self._task_command(command.arg)
+        elif command.name == "export":
+            import shlex
+            try:
+                words = shlex.split(command.arg)
+                if len(words) != 1:
+                    raise ValueError("expected one path")
+                if self._refuse_if_busy():
+                    return
+                if self._semantic_worker is not None and not self._semantic_worker.is_finished:
+                    self.say("", "Another inspection or operation is running; wait or press Esc first.")
+                    return
+                self._semantic_worker = self.run_worker(self._export_action(Path(words[0]).expanduser()),
+                    group="semantics", exit_on_error=False)
+            except ValueError:
+                self.say("! ", "Usage: /export NEW_FILE.zip (quote paths containing spaces); exports the selected task.")
         elif command.name == "context":
             from harness.context import render_context_policy
             self.say("", render_context_policy(self.kernel.context_policy, self.kernel.loop.registry.specs()))
@@ -1958,6 +1973,26 @@ class HarnessApp(App[None]):
             self.say("! ", failure_message(exc))
         finally:
             self._refresh_tasks()
+
+    async def _export_action(self, output: Path) -> None:
+        from harness.export_cli import failure_message
+        from harness.persistence import atomic_write
+        from harness.portable import prepare_export
+        self.say("", "Preparing continuation package from saved records; Esc cancels before publication.")
+        try:
+            if output.exists() or output.is_symlink():
+                raise FileExistsError("destination exists")
+            session = self.kernel.session
+            data = await asyncio.to_thread(prepare_export, session.base, session.id)
+            # No await between completed preparation and exclusive publication.
+            # Cancelling the read-only worker can never publish a file later.
+            atomic_write(output, data, replace=False)
+            self.say("", "Exported CONTINUE.md, continuation.json and recorded artifacts. Source session unchanged.")
+        except asyncio.CancelledError:
+            self.say("", "Export cancelled before publication.")
+            raise
+        except Exception as exc:
+            self.say("! ", "Export failed: " + failure_message(exc))
 
     async def _semantic_classify(self, text) -> None:
         from harness.semantics import render_semantics
