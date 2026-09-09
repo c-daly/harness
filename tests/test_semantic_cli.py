@@ -106,6 +106,36 @@ def test_context_cli_uses_only_explicit_candidates(tmp_path, monkeypatch, capsys
     assert len(provider.calls) == 1
 
 
+def test_context_cli_reports_core_no_match_without_model_permission(tmp_path, monkeypatch, capsys):
+    from tests.test_semantic_assessment import candidates
+    provider = FakeProvider([])
+    source = tmp_path / "candidates.json"
+    source.write_text(candidates(candidates=[]).model_dump_json())
+    monkeypatch.setattr("harness.semantic_cli.CatalogProvider", lambda catalog: provider)
+    monkeypatch.setattr("sys.argv", ["harness", "semantic", "context", str(source),
+        "--model", "fake", "--base-dir", str(tmp_path), "--catalog", str(catalog_file(tmp_path))])
+    main()
+    output = capsys.readouterr().out
+    assert "no_match" in output and "Core eligibility:" in output and "no model call" in output
+    assert not provider.calls
+
+
+async def test_terminal_distinguishes_core_eligibility_from_a_model_answer(tmp_path):
+    from tests.test_semantic_assessment import candidates
+    from tests.test_tui import make_app
+    from tests.test_tui_queue import screen_text
+    provider = FakeProvider([])
+    app = make_app(tmp_path, provider=provider)
+    async with app.run_test(size=(150, 45)) as pilot:
+        await app.kernel.semantics.select_context(candidates(candidates=[]), model=app.kernel.loop.model)
+        await pilot.click("#prompt")
+        await pilot.press(*"/semantics", "enter")
+        await pilot.pause(0.1)
+        visible = screen_text(app)
+        assert "Core eligibility:" in visible and "no model call" in visible and "no_match" in visible
+        assert not provider.calls
+
+
 def test_assessment_compare_cli_and_saved_plan_replay(tmp_path, monkeypatch, capsys):
     import asyncio
     from harness.improvement_journal import read_improvements

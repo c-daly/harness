@@ -1,0 +1,7 @@
+[models.offline]
+route = "openai/offline"
+api_base = "http://127.0.0.1:65535/v1"
+[models.offline.local]
+auto_start = true
+command = ["/not-installed/llama-server"]
+required_files = ["/not-installed/llama-server", "/not-installed/model.gguf"]

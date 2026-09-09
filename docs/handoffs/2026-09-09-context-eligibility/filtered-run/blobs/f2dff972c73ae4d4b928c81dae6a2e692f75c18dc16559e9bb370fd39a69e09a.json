@@ -1,0 +1,1 @@
+{"query":"What is the current retry limit?","candidates":[{"id":"old","summary":"Retry limit: ten","freshness":"stale","available":true},{"id":"now","summary":"Retry limit: three","freshness":"current","available":true}],"max_selected":1}

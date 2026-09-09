@@ -1,8 +1,8 @@
 # Core agency implementation record
 
-Current implementation branch: `feat/context-selection-qualification`, based on merged `main`
-at `a4f3678` (PR33, bounded compaction and portable driver review fix).
-Previous branches: `fix/bounded-compaction`, `fix/model-selection-continuity`, `feat/local-model-management`, `feat/assessment-improvement`, `feat/external-handoff`, `feat/assessment-evaluation`, `feat/supervised-improvement`, `feat/local-scheduling`, `feat/task-fallback`, `feat/semantic-context-progress`, `feat/local-assistant-m3`, `feat/resident-workflow`, `feat/task-completion-evidence`, `fix/inference-client-lifecycle`, `feat/local-response-profiles`, `feat/local-tool-recovery`, `feat/local-tool-planning`, `feat/local-qualification`, `feat/semantic-evaluation`, `feat/local-context`, `feat/local-readiness`, `feat/agent-runtimes`,
+Current implementation branch: `feat/context-eligibility`, based on merged `main`
+at `eb1e6fb` (PR34, declared held-out evaluation gates and failed development trials).
+Previous branches: `feat/context-selection-qualification`, `fix/bounded-compaction`, `fix/model-selection-continuity`, `feat/local-model-management`, `feat/assessment-improvement`, `feat/external-handoff`, `feat/assessment-evaluation`, `feat/supervised-improvement`, `feat/local-scheduling`, `feat/task-fallback`, `feat/semantic-context-progress`, `feat/local-assistant-m3`, `feat/resident-workflow`, `feat/task-completion-evidence`, `fix/inference-client-lifecycle`, `feat/local-response-profiles`, `feat/local-tool-recovery`, `feat/local-tool-planning`, `feat/local-qualification`, `feat/semantic-evaluation`, `feat/local-context`, `feat/local-readiness`, `feat/agent-runtimes`,
 and `feat/core-agency`.
 
 Committed checkpoints: `0351b75` (roadmap, lifecycle, and storage/result integrity),
@@ -56,7 +56,7 @@ qualification. Milestone completion requires its roadmap gates, not just code.
 | M1 correctness and interaction | In progress | Storage, delegation, controller/UI, MCP capability and explicit-endpoint HTTP cleanup changes are implemented. Durable task obligations and explicit review are visible through the TUI and headless inspection. Broader enforcement/redaction, provider lifecycles and fault qualification remain. |
 | M2 inference / agent contracts | In progress | Bounded inference, native tasks, Codex task binding, explicit execution kinds, nullable usage, core improvement records and recorded task-evidence checks implemented. Remaining adapters, richer artifact predicates and live capability qualification remain. |
 | M3 local core assistant | Complete for the measured CUDA profile | Qwen3-8B passes six full offline project journeys: twelve exact native file writes, changed-record answers after restart, real cancellation, normal memory, and visible task/context status. Four missing-assets/startup-exit recovery cases pass. Shipped profiles and a launcher reproduce the workflow. Actual use exposed missing startup configuration in the normal catalog; the provisioned host's local aliases are now connected. Core `/models` now inspects public GGUF metadata and registers installed weights with startup profiles, with ordinary CLI/TUI CPU smoke evidence. Runtime installation, weight downloads and broader CPU/daily-use qualification remain outside this gate. |
-| M4 bounded semantic agency | In progress | All three shadow functions now exist with explicit CLI/TUI access and evidence validation. The public 8B comparison failed context/progress gates; deterministic behavior remains. Bounded task-preserving fallback and session-tree local scheduling are implemented. Message-prompt pairing and earlier context/correction experiments use core improvement records. Supervised message-prompt proposal/evaluation/adoption/rollback is implemented. Paired context/progress candidate evaluation is implemented with explicit operator controls. Explicit external-to-native reconciliation and bounded handoff are implemented. Supervised assessment proposal/adoption/rollback is implemented per function/model. Held-out quality and broader handoff qualification remain. |
+| M4 bounded semantic agency | In progress | All three shadow functions now exist with explicit CLI/TUI access and evidence validation. The public 8B comparison failed context/progress gates; deterministic behavior remains. Bounded task-preserving fallback and session-tree local scheduling are implemented. Message-prompt pairing and earlier context/correction experiments use core improvement records. Supervised message-prompt proposal/evaluation/adoption/rollback is implemented. Paired context/progress candidate evaluation is implemented with explicit operator controls. Explicit external-to-native reconciliation and bounded handoff are implemented. Supervised assessment proposal/adoption/rollback is implemented per function/model. Core now filters context eligibility before inference and resolves empty eligible sets without a model call. Held-out quality and broader handoff qualification remain. |
 | M5 heterogeneous work / plugins | Pending | Supervision, plugin reconciliation, portable continuation, isolated improvement patches and rollback. |
 | M6 daily-use qualification | Pending | Measured UI, live adapter boundaries, offline and human dogfood gates. |
 
@@ -1799,3 +1799,56 @@ context eligibility in code before model relevance selection. That change still
 requires its own development and fresh confirmation evidence. Broader M4 handoff
 qualification, M5 heterogeneous supervision/portable continuation/source-edit
 experiments, and M6 daily use remain open.
+
+
+## September 9 — Core context eligibility before inference
+
+PR34 merged at `eb1e6fb`, with Python 3.12/3.13 CI and review passing. The next
+core change applies the existing available/current predicate before inference.
+Only eligible summaries reach the model; the original scoped input remains in
+its existing artifact, and `inference_input` records the filtered payload.
+
+An enabled request within its original input-size limit now returns `no_match`
+without inference when no candidates are eligible. It requires no model grant,
+budget, runtime startup, or free model slot because no model work occurs. Other
+requests retain normal permission, budget, readiness, and output validation.
+The record marks `decision_source: eligibility`, and CLI/TUI inspection visibly
+says “Core eligibility” and “no model call.” Old observations default to model
+provenance. Core answers cannot seed prompt-improvement evidence; paired prompt
+evaluation applies the same predicate to both arms and records each source.
+Memory and agent-swarm remain plugins; no context is automatically injected.
+
+**Measured public result:** one implementation variant, unchanged builtin prompt,
+six public cases. The frozen baseline at `eb1e6fb` scored **4/6**; the changed
+selection path scored **5/6**, consisting of **4/5 model answers** and **one
+correct core answer**. The unavailable-context case changed from invalid model
+output (963 ms) to a core no-match (0.2 ms recorded duration, no model call). All
+previously passing cases stayed correct. Ambiguity still failed.
+
+Both versions ran the existing Qwen3-8B Q4_K_M / llama.cpp b9603 profile offline
+with 28 GPU layers, 4,096-token context, thinking disabled and presence penalty
+zero. The container allowed four CPUs, 4 GiB host RAM, and no swap. Both settled
+calls, preserved task and selection state, and stopped their owned runtimes.
+Maximum filtered case latency was 912 ms; total recorded latency was 0.809
+times baseline. These are sequential public development measurements, not a
+randomized confirmation, model-learning claim, or performance certification.
+
+The [handoff](../../handoffs/2026-09-09-context-eligibility/README.md) retains the
+protocol, executed driver, original/filtered input blobs, model events, source
+hashes, reports, and comparison. The baseline hashes match its Git object and
+the filtered hashes match the core implementation. The semantic critical gate
+still failed, so no fresh confirmation cases were authored or consumed.
+
+**Validation:** full Python 3.13 suite **1,756 passed, 7 skipped**, six existing
+MCP warnings in 377.06 seconds. Python 3.12's affected checks passed **140 tests**
+in 29.19 seconds, including CLI and rendered terminal provenance. A real CLI
+probe in a network-disabled container with no GPU, no model grant, and
+nonexistent configured model/runtime assets returned core no-match; its log
+contains zero model calls or runtime requests and ends cleanly. Ruff, whitespace,
+sdist/wheel build and clean wheel installation/import passed; all 75 core files
+match the wheel bytes.
+
+**Remaining:** M4 reliable disambiguation, fresh semantic confirmation and broader
+handoff evidence; M5 mixed-agent supervision/portability/source-edit experiments;
+M6 sustained daily use. This closes a deterministic empty-context failure and
+keeps model confidence separate from core correctness.

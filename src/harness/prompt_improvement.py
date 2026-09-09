@@ -92,7 +92,8 @@ def repeated_failures(session, model, prompt, function="message_kind"):
             continue
         observation = env.event.observation
         if isinstance(env.event, AssessmentObserved) and (
-                observation.function != function or observation.evaluation_run_id is not None):
+                observation.function != function or observation.evaluation_run_id is not None
+                or observation.decision_source != "model"):
             continue
         if (observation.model != model or observation.prompt != prompt
                 or observation.reason != "invalid_output" or observation.id in seen):

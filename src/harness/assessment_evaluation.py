@@ -245,6 +245,7 @@ def prepare_assessment_experiment(kernel, experiment: AssessmentExperiment):
     observations = [env for env in read_session(session.base, session.id, repair=False)
         if isinstance(env.event, AssessmentObserved)
         and env.event.observation.evaluation_run_id is None
+        and env.event.observation.decision_source == "model"
         and env.event.observation.function == experiment.suite.function
         and env.event.observation.model == experiment.configuration.model
         and env.event.observation.prompt == incumbent

@@ -48,6 +48,12 @@ class ContextSelection(_Record):
     reason: Literal["selected", "no_match", "uncertain"]
 
 
+def eligible_context(data: ContextSelectionInput) -> ContextSelectionInput:
+    """Narrow an already scoped input without retrieving or interpreting text."""
+    return data.model_copy(update={"candidates": tuple(
+        c for c in data.candidates if c.available and c.freshness == "current")})
+
+
 class ProgressRequirement(_Record):
     id: Identity
     description: str = Field(min_length=1, max_length=2048)
@@ -144,7 +150,7 @@ def function_version(function):
 
 def validate_selection(data: ContextSelectionInput, result: ContextSelection):
     unique(result.selected_ids)
-    eligible = {c.id for c in data.candidates if c.available and c.freshness == "current"}
+    eligible = {c.id for c in eligible_context(data).candidates}
     if (not set(result.selected_ids) <= eligible or len(result.selected_ids) > data.max_selected
             or bool(result.selected_ids) != (result.reason == "selected")):
         raise ValueError("selection exceeds supplied eligible candidates")

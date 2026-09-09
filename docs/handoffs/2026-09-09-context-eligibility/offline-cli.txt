@@ -1,0 +1,7 @@
+Session: 4206696ca6b14c0f9b70635cf5c6d010
+Semantic observations: 1 (shadow mode)
+context_selection: no_match; 0 ms; model=offline; prompt=684106fe456a
+  Prompt selection: builtin; change=none
+  Core eligibility: no available, current candidates; no model call.
+  Suggested context: none
+Suggestions do not accept tasks, change routing, or activate candidates.

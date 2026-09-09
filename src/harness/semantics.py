@@ -13,7 +13,7 @@ from harness.blobs import BlobRef
 from harness.semantic_assessment import (
     CONTEXT_PROMPT, PROGRESS_PROMPT, ContextSelection,
     ContextSelectionInput, ProgressAssessment, ProgressEvidence, ProgressInput, function_version, progress_snapshot,
-    load_assessment_prompt, validate_progress, validate_selection,
+    eligible_context, load_assessment_prompt, validate_progress, validate_selection,
 )
 from harness.types import CallId, ModelId
 
@@ -93,6 +93,8 @@ class AssessmentObservation(_Observation):
     selection_status: str = "explicit"
     evaluation_run_id: str | None = Field(default=None, min_length=1, max_length=128)
     input: BlobRef | None = None  # Only bounded accepted inputs are saved.
+    decision_source: Literal["model", "eligibility"] = "model"
+    inference_input: BlobRef | None = None  # Filtered payload, if inference was attempted.
     source_seq: int | None = Field(default=None, ge=1)
     evidence: ProgressEvidence | None = None
     result: Annotated[ContextSelection | ProgressAssessment, Field(discriminator="function")] | None = None
@@ -202,6 +204,7 @@ class SemanticService:
             return dict(result=result, status="abstained" if reason == "uncertain" else "ok",
                         reason=reason if reason in {"uncertain", "no_match"} else "assessed")
 
+        filtered = eligible_context(data) if isinstance(data, ContextSelectionInput) else None
         return await self._observe(data.model_dump_json(), model=model, prompt=prompt, profile=profile,
             schema=schema.model_json_schema(), validate=assess, limits=limits or ASSESSMENT_LIMITS,
             enabled=enabled, observation_type=AssessmentObservation,
@@ -210,10 +213,12 @@ class SemanticService:
                     "evaluation_run_id": evaluation_run_id,
                     "source_seq": getattr(data, "source_seq", None),
                     "evidence": ProgressEvidence.from_snapshot(data) if isinstance(data, ProgressInput) else None},
-            save_input=True)
+            save_input=True, inference_text=filtered.model_dump_json() if filtered is not None else None,
+            deterministic=ContextSelection(selected_ids=(), reason="no_match").model_dump()
+                if filtered is not None and not filtered.candidates else None)
 
     async def _observe(self, text, *, model, prompt, profile, schema, validate, limits, enabled,
-                       observation_type, fields, save_input=False):
+                       observation_type, fields, save_input=False, inference_text=None, deterministic=None):
         from harness.dispatcher import ModelDispatchBlocked
         from harness.errors import ContextOverflow, LocalBusy, MalformedStreamError, ProviderError
         from harness.events import AssessmentObserved, SemanticObserved
@@ -246,6 +251,8 @@ class SemanticService:
             return record("disabled")
         if oversized:
             return record("input_limit")
+        if deterministic is not None:
+            return record(**validate(deterministic), decision_source="eligibility")
         if self._lock.locked():
             return record("busy")
         provider = self.provider()
@@ -256,9 +263,12 @@ class SemanticService:
             if resource.status == "busy" and not resource.stale:
                 return record("busy")
         async with self._lock:
+            if inference_text is not None:
+                fields["inference_input"] = session.blobs.put(inference_text.encode())
             request = InferenceRequest(
                 model=model, purpose=f"semantic:{fields['id']}",
-                messages=(Message.system_text(profile.instructions), Message.user_text(text)),
+                messages=(Message.system_text(profile.instructions),
+                          Message.user_text(text if inference_text is None else inference_text)),
                 response_schema=schema, temperature=0,
                 **limits.model_dump(exclude={"max_message_bytes"}),
             )
@@ -314,6 +324,8 @@ def render_semantics(observations) -> str:
                            f"model={item.model}; prompt={item.prompt.sha256[:12]}"))
         lines.append(_safe(f"  Prompt selection: {item.selection_status}; change={item.selection_id or 'none'}"))
         if isinstance(item, AssessmentObservation):
+            if item.decision_source == "eligibility":
+                lines.append("  Core eligibility: no available, current candidates; no model call.")
             if item.evaluation_run_id is not None:
                 lines.append(_safe(f"  Evaluation fixture; run={item.evaluation_run_id}. Not live task evidence."))
             elif item.source_seq is not None:

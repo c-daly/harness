@@ -1,0 +1,1 @@
+{"query":"Find its policy","candidates":[{"id":"deploy","summary":"Deployment policy","freshness":"current","available":true},{"id":"access","summary":"Access policy","freshness":"current","available":true}],"max_selected":1}

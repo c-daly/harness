@@ -18,7 +18,7 @@ from harness.provider import FakeProvider, text_turn
 from harness.resume import resume_session
 from harness.semantic_assessment import (
     CONTEXT_PROMPT, PROGRESS_PROMPT, AssessmentPrompt, ContextCandidate, ContextSelection,
-    ContextSelectionInput, ProgressAssessment, validate_progress, validate_selection,
+    ContextSelectionInput, ProgressAssessment, eligible_context, validate_progress, validate_selection,
 )
 from harness.semantic_evaluation import evaluator_version, run_evaluation
 from harness.semantics import read_semantics, render_semantics
@@ -62,7 +62,7 @@ class AssessmentProvider(FakeProvider):
         if self.seed or candidate and self.bad_candidate:
             output = {"score": 1, "accepted": True}
         else:
-            case = next(c for c in self.spec.suite.cases if c.input.model_dump_json() == request.messages[-1].text())
+            case = requested_case(self.spec, request)
             output = case.expected.model_dump(mode="json")
             if case.partition == "held_out" and not candidate:
                 if case.function == "context_selection":
@@ -71,6 +71,13 @@ class AssessmentProvider(FakeProvider):
                     output.update(focus_ids=[], next_action="uncertain")
         for chunk in text_turn(json.dumps(output)):
             yield chunk
+
+
+def requested_case(spec, request):
+    data = json.loads(request.messages[-1].text())
+    return next(c for c in spec.suite.cases if (
+        c.input.query == data.get("query") if isinstance(c.input, ContextSelectionInput)
+        else c.input.model_dump(mode="json") == data))
 
 
 async def seed(kernel, provider):
@@ -109,16 +116,25 @@ async def test_paired_assessments_grade_fixed_oracles_and_preserve_live_task(tmp
         assert report["metrics"]["rules"]["samples"] == count
         assert report["metrics"]["candidate"]["held_out"]["samples"] == 1
         assert not report["activation_qualified"] and report["held_out_provenance"] == "operator_declared"
-        assert len(provider.requests) == count * 2
+        called = iter(provider.requests)
+        expected_calls = 0
         for index, case in enumerate(spec.suite.cases):
-            left, right = provider.requests[2*index:2*index+2]
+            data = eligible_context(case.input) if function == "context_selection" else case.input
+            if function == "context_selection" and not data.candidates:
+                continue
+            expected_calls += 2
+            left, right = next(called), next(called)
             assert (left.messages[0].text() == "candidate") == bool(index % 2)
             for request in (left, right):
-                assert request.messages[-1].text() == case.input.model_dump_json()
+                assert request.messages[-1].text() == data.model_dump_json()
                 assert len(request.messages) == 2 and not request.tools
                 assert "sentinel" not in request.messages[0].text()
+        assert len(provider.requests) == expected_calls
         observations = read_semantics(tmp_path, kernel.session.id)[1:]
         assert all(o.evaluation_run_id == result.run_id for o in observations)
+        if function == "context_selection":
+            automatic = [o for o in observations if o.decision_source == "eligibility"]
+            assert len(automatic) == 2 and all(o.reason == "no_match" and o.call_id is None for o in automatic)
         assert "Evaluation fixture" in render_semantics(observations)
         assert "Recorded evidence as of event" not in render_semantics(observations)
         assert not fold(read_session(tmp_path, kernel.session.id)).messages
@@ -141,7 +157,10 @@ async def test_invalid_candidate_cannot_self_grade_or_erase_critical_failure(tmp
         result = await kernel.improvement_service.compare_assessment(spec)
         plan = kernel.improvements.state.plans[result.plan_id]
         assert verdict(plan, result) == "failed"
-        assert all(row.candidate_passed is False for row in result.observations)
+        for row in result.observations:
+            # The unavailable-context case is answered by core in both arms;
+            # every actual candidate inference still fails the validator.
+            assert row.candidate_passed is (function == "context_selection" and row.case_id == "critical-unavailable")
         assert verdict(plan, result.model_copy(update={"completion": "cancelled"})) == "failed"
         assert not any(e.event.type == "tool_call_proposed" for e in read_session(tmp_path, kernel.session.id))
     finally:
@@ -303,12 +322,14 @@ async def test_unavailable_inference_cannot_count_as_correct_uncertainty(tmp_pat
             provider.infer = unavailable
         result = await kernel.improvement_service.compare_assessment(spec)
         assert verdict(kernel.improvements.state.plans[result.plan_id], result) == "inconclusive"
-        assert all(row.incumbent_passed is None and row.candidate_passed is None for row in result.observations)
+        for row in result.observations:
+            expected = True if row.case_id == "critical-unavailable" else None
+            assert row.incumbent_passed is expected and row.candidate_passed is expected
         artifact = kernel.session.blobs.get(result.artifact)
         assert b"private-provider-sentinel" not in artifact
         report = json.loads(artifact)
-        assert report["metrics"]["candidate"]["measured"] == 0
-        assert report["metrics"]["candidate"]["abstentions"] == len(spec.suite.cases)
+        assert report["metrics"]["candidate"]["measured"] == 1
+        assert report["metrics"]["candidate"]["abstentions"] == len(spec.suite.cases) - 1
         assert not provider.requests
     finally:
         kernel.session.close()
