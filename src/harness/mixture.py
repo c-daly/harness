@@ -91,12 +91,13 @@ async def _fanout(calls):
         raise
 
 
-async def _coordinate(strategy, runner, parent, prompt, experts, *, judge=None):
+async def _coordinate(strategy, runner, parent, prompt, experts, *, judge=None, require_checks=False):
     """Preserve participant facts even when a coordinator is interrupted."""
     from harness.events import CoordinationFinished, CoordinationStarted
     scope = runner.scope_for(parent)
     parent = scope.session
     members = []
+    requirements = None
     report = {"version": 1, "id": uuid4().hex, "strategy": strategy,
               "acceptance": "unverified", "members": members, "disagreement": False,
               "gate": "none", "unresolved": [], "source_session_id": parent.id if parent else None,
@@ -106,13 +107,17 @@ async def _coordinate(strategy, runner, parent, prompt, experts, *, judge=None):
         member = {"role": role, "model": expert.model, "agent": expert.agent,
                   "result": {"status": "cancelled", "reason": "no delivered outcome"}}
         members.append(member)
+        before = parent._seq if parent is not None else 0
+        checked = requirements is not None and role in ("cheap", "premium")
 
         def observe(result):
             member["result"] = result.model_dump(mode="json", exclude={"text"})
 
         try:
             result = await runner.run_result(prompt=text, model=ModelId(expert.model),
-                                             parent=parent, agent=expert.agent, on_result=observe)
+                                             parent=parent, agent=expert.agent, on_result=observe,
+                                             **({"requirements": requirements,
+                                                 "requirement_title": report["check_source"]["objective"]} if checked else {}))
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -120,9 +125,17 @@ async def _coordinate(strategy, runner, parent, prompt, experts, *, judge=None):
             raise
         result = DelegationResult.model_validate(result.model_dump())
         observe(result)
+        if checked:
+            from harness.coordination_checks import check_child_result
+            evidence = await asyncio.to_thread(check_child_result, parent, result, requirements, after_seq=before,
+                                              objective=report["check_source"]["objective"])
+            member["evidence"] = [e.model_dump(mode="json") for e in evidence]
         return result
 
     async def execute():
+        nonlocal requirements
+        if type(require_checks) is not bool or require_checks and strategy != "escalate":
+            return DelegationResult(status="blocked", reason="require_checks must be a boolean for escalation")
         if not experts or len(experts) > 16:
             return DelegationResult(status="blocked", reason="coordination requires 1 to 16 experts")
         if (strategy == "draft_refine" and len(experts) > 2 or
@@ -132,6 +145,15 @@ async def _coordinate(strategy, runner, parent, prompt, experts, *, judge=None):
                e.agent is not None and (not isinstance(e.agent, str) or not 1 <= len(e.agent) <= 128)
                for e in [*experts, *([judge] if judge else [])]):
             return DelegationResult(status="blocked", reason="expert aliases and agent names require 1 to 128 characters")
+        if strategy == "escalate":
+            from harness.coordination_checks import capture_requirements
+            requirements, source = capture_requirements(parent)
+            if requirements is not None:
+                report["requirements"] = [r.model_dump(mode="json") for r in requirements]
+                report["check_source"] = source
+                report["gate"] = "recorded_checks"
+            elif require_checks:
+                return DelegationResult(status="blocked", reason="escalation requires an active task with declared requirements")
         if strategy == "ensemble":
             results = await _fanout([run(e, "expert") for e in experts])
             usable = [r for r in results if _usable(r)]
@@ -166,16 +188,25 @@ async def _coordinate(strategy, runner, parent, prompt, experts, *, judge=None):
         if strategy == "escalate":
             answer = await run(experts[0], "cheap")
             passed = _usable(answer)
-            report["gate"] = "execution_only"
+            if requirements is not None:
+                passed = passed and all(e["status"] == "passed" for e in members[-1]["evidence"])
+            else:
+                report["gate"] = "execution_only"
             if passed and len(experts) > 2:
                 verdict = await run(experts[2], "verifier", _VERIFY_PROMPT.format(task=prompt, answer=answer.text))
                 lines = verdict.text.strip().splitlines()
                 passed = _usable(verdict) and bool(lines) and lines[0].strip().casefold() == "pass"
-                report["gate"] = "advisory_review"
+                if requirements is None:
+                    report["gate"] = "advisory_review"
                 report["disagreement"] = _usable(verdict) and not passed
             if passed:
                 return answer
-            return await run(experts[1] if len(experts) > 1 else experts[0], "premium")
+            fallback = await run(experts[1] if len(experts) > 1 else experts[0], "premium")
+            if requirements is not None and not all(e["status"] == "passed" for e in members[-1]["evidence"]):
+                report["unresolved"].append("premium result did not pass all recorded checks")
+                if fallback.status == "completed":
+                    fallback = fallback.model_copy(update={"status": "incomplete", "reason": "escalation checks failed or unverified"})
+            return fallback
         return DelegationResult(status="blocked", reason=f"unknown strategy {strategy!r}")
 
     def finish(result):
@@ -283,12 +314,14 @@ async def escalate(
     cheap: Expert,
     premium: Expert,
     verify: Expert | None = None,
+    require_checks: bool = False,
 ) -> str:
     """Cheap expert first; a verify gate decides whether to escalate to premium.
-    The optional verifier is advisory. With no verifier, only execution status
-    and truncation determine escalation. Neither policy verifies acceptance."""
+    Declared requirements of the active task gate both stages. Without them,
+    require_checks blocks; otherwise legacy execution/advisory selection applies.
+    The optional verifier is advisory and never overrides a failed check."""
     return (await _coordinate("escalate", runner, parent, prompt,
-                              [cheap, premium, *([verify] if verify else [])])).render()
+                              [cheap, premium, *([verify] if verify else [])], require_checks=require_checks)).render()
 
 
 async def run_strategy(
@@ -304,8 +337,8 @@ async def run_strategy(
     return (await run_strategy_result(strategy, runner, parent, prompt, experts)).render()
 
 
-async def run_strategy_result(strategy, runner, parent, prompt, experts):
-    return await _coordinate(strategy, runner, parent, prompt, experts)
+async def run_strategy_result(strategy, runner, parent, prompt, experts, *, require_checks=False):
+    return await _coordinate(strategy, runner, parent, prompt, experts, require_checks=require_checks)
 
 
 # --- model-driven native tools ---
@@ -394,8 +427,10 @@ class EscalateTool:
         self.spec = ToolSpec(
             name=ToolName("escalate"),
             description=(
-                "Cost-aware: try a cheap model, escalate to a premium model only if an "
-                "execution or advisory verify gate fails. This does not verify task acceptance. "
+                "Try a cheap model first. Declared requirements of the active task gate both "
+                "cheap and premium results using recorded evidence. With no requirements, "
+                "selection uses execution/advisory review unless require_checks is true. "
+                "This does not accept the task. "
                 "Args: prompt (required), cheap (required alias), "
                 "premium (required alias), verify (optional alias gating escalation)."
             ),
@@ -406,6 +441,8 @@ class EscalateTool:
                     "cheap": {"type": "string"},
                     "premium": {"type": "string"},
                     "verify": {"type": "string"},
+                    "require_checks": {"type": "boolean", "default": False,
+                        "description": "Block if the active task has no declared requirements; existing requirements always apply."},
                 },
                 "required": ["prompt", "cheap", "premium"],
             },
@@ -420,6 +457,7 @@ class EscalateTool:
             cheap=Expert(model=args["cheap"]),
             premium=Expert(model=args["premium"]),
             verify=verify,
+            require_checks=args.get("require_checks", False),
         )
 
 

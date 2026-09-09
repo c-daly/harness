@@ -190,6 +190,15 @@ both are enforced at load time, so a bad definition fails when the plugin loads
 rather than at dispatch. A coordination agent ignores `max_output_chars`: it
 returns before the leaf path, and each expert applies its own.
 
+For `strategy: escalate`, `require_checks: true` requires a running tracked task
+with declared requirements before any expert starts. Core owns those criteria,
+records the original objective and requirements in both candidate sessions, and
+checks their execution evidence. Existing task requirements apply even when this
+flag is false. A plugin cannot supply replacement criteria through the agent
+definition. The flag is a strict boolean and is rejected for other strategies.
+See [checked escalation](coordination-outcomes.md) for the core terminal workflow,
+inspection surface and the distinction between selection and task acceptance.
+
 ---
 
 ## Hooks (Python)

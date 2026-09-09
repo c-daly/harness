@@ -325,7 +325,7 @@ class TaskService:
         task = state.items.get(state.selected_id)
         if task is None:
             raise ValueError("no task selected")
-        evidence = tuple(_check_requirement(req, task, events, self.session.blobs)
+        evidence = tuple(check_requirement(req, task, events, self.session.blobs)
                          for req in task.requirements.values() if req.check.kind != "review")
         self.session.append(TaskChecked(task_id=task.definition.id, basis_seq=task.basis_seq,
                                         evidence=evidence))
@@ -364,7 +364,8 @@ def _review_note(note):
     return note
 
 
-def _check_requirement(requirement, task, events, blobs):
+def check_requirement(requirement, task, events, blobs):
+    """Check immutable execution records; model opinions never confirm review."""
     from harness.events import (
         AgentRunFinished, AgentRunStarted, DispatchResolved, ToolCallCompleted, ToolCallProposed,
         ToolCallAborted, ToolCallCancelled, HookDecided,
@@ -374,6 +375,8 @@ def _check_requirement(requirement, task, events, blobs):
     def result(status, reason, **extra):
         return RequirementEvidence(**details, status=status, reason=reason, **extra)
 
+    if isinstance(requirement.check, ReviewCheck):
+        return result("unverified", "operator review required")
     if task.run_id is None:
         return result("unverified", "no execution")
     starts = [e for e in events if isinstance(e.event, AgentRunStarted) and e.event.run_id == task.run_id]
@@ -495,7 +498,7 @@ def _inherited_check(requirement, task, events, blobs):
     if (previous is None or previous.run_id != checkpoint.run_id
             or previous.requirements.get(requirement.id) != requirement):
         return None
-    evidence = _check_requirement(requirement, previous, previous_events, blobs)
+    evidence = check_requirement(requirement, previous, previous_events, blobs)
     return evidence if evidence.status == "passed" else None
 
 

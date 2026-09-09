@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, ConfigDict, ValidationError, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 _NAME_RE = re.compile(r"[A-Za-z0-9_-]+")
 _VALID_STRATEGIES = frozenset({"ensemble", "panel", "draft_refine", "escalate"})
@@ -69,6 +69,7 @@ class AgentDef(_Def):
     # running a single child loop.
     strategy: str | None = None  # ensemble | panel | draft_refine | escalate
     experts: tuple[str, ...] | None = None
+    require_checks: bool = Field(default=False, strict=True)
     # None = unbounded. Bounds what the child RETURNS to its parent, not what
     # the child's own model produced.
     max_output_chars: int | None = None
@@ -89,6 +90,8 @@ class AgentDef(_Def):
 
     @model_validator(mode="after")
     def _strategy_requires_valid_name_and_experts(self) -> "AgentDef":
+        if self.require_checks and self.strategy != "escalate":
+            raise ValueError("require_checks is only supported by the escalate strategy")
         if self.strategy is None:
             return self
         if self.strategy not in _VALID_STRATEGIES:

@@ -29,6 +29,9 @@ def render_coordination(base, session_id):
                         f"deadline {report['timeout_seconds']:g}s")
         if report["result"]["reason"]:
             rows.append(f"  Reason: {report['result']['reason']}")
+        if report["check_source"]:
+            source = report["check_source"]
+            rows.append(f"  Checks: task {source['task_id']}; run {source['run_id']}; basis event {source['basis_seq']}")
         for member in report["members"]:
             result = member["result"]
             detail = (f"; child {result['child_session_id']}" if result.get("child_session_id") else "")
@@ -37,6 +40,15 @@ def render_coordination(base, session_id):
             if result.get("truncated"):
                 detail += "; truncated output"
             rows.append(f"  {member['role']} {member['model']}: {result['status']}{detail}")
+            if report["requirements"] and member["role"] in ("cheap", "premium") and member["evidence"] is None:
+                rows.append("    Checks unconfirmed: verification did not finish")
+            for evidence in member["evidence"] or ():
+                detail = f"; child event {evidence['source_seq']}" if evidence["source_seq"] is not None else ""
+                if evidence["artifact"]:
+                    detail += f"; child blob {evidence['artifact']['sha256']}"
+                if evidence["actual_sha256"]:
+                    detail += f"; actual sha256 {evidence['actual_sha256']}"
+                rows.append(f"    {evidence['requirement_id']}: {evidence['status']}: {evidence['reason']}{detail}")
         rows.extend(f"  Unresolved: {note}" for note in report["unresolved"])
         if report["output"]:
             rows.append(f"  Recorded answer: {report['output']['sha256']} (this session's blobs)")
