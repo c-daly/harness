@@ -1940,8 +1940,7 @@ class HarnessApp(App[None]):
             self.say("! ", f"Improvement refused: {refusal_message(exc)}")
 
     async def _handoff_action(self, words) -> None:
-        from harness.handoff_cli import perform
-        from harness.improvement_cli import refusal_message
+        from harness.handoff_cli import failure_message, perform
         self.say("", "Running handoff control; Esc cancels, new work takes priority.")
         try:
             result = await perform(self.kernel, words, on_progress=self._on_agent_progress)
@@ -1956,7 +1955,7 @@ class HarnessApp(App[None]):
             raise
         except Exception as exc:
             self._clear_live()
-            self.say("! ", f"Handoff refused: {refusal_message(exc)}")
+            self.say("! ", failure_message(exc))
         finally:
             self._refresh_tasks()
 
