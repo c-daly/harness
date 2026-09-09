@@ -1,0 +1,58 @@
+import asyncio
+import hashlib
+import json
+from pathlib import Path
+import sys
+import harness
+from harness.cli import build_kernel
+from harness.assessment_evaluation import AssessmentGrader
+from harness.improvement_journal import read_improvements
+from harness.fold import fold
+from harness.log import read_session
+from harness.permissions import PermissionEngine, PermissionRule, RuleSet
+from harness.provider_litellm import CatalogProvider
+from scripts.qualify_assessment_evaluation import public_experiments
+from scripts.qualify_local import catalog, close, isolation
+
+out=Path('/reports')/sys.argv[1]
+out.mkdir()
+models=catalog(Path('/models/8b.gguf'),'qwen3-8b')
+entry=models.entries['local-small']
+entry['max_input_tokens']=4096
+entry['local']['startup_seconds']=120
+command=entry['local']['command']
+for flag,value in (('--n-gpu-layers','28'),('--ctx-size','4096'),('--presence-penalty','0')):
+    command[command.index(flag)+1]=value
+suite=public_experiments()[0].suite
+grader=AssessmentGrader(suite.model_dump())
+report={'stage':'public_core_eligibility_comparison','quality_qualification':False,'isolation':isolation(),
+    'catalog':models.entries,'suite':suite.model_dump(mode='json'),'cases':[],
+    'source_sha256':{p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(Path(harness.__file__).parent.glob('*.py'))}}
+def save(): (out/'report.json').write_text(json.dumps(report,indent=2)+'\n')
+async def run():
+    kernel=build_kernel(base_dir=out/'state',model='local-small',provider=CatalogProvider(models),
+        permissions=PermissionEngine([RuleSet(rules=[PermissionRule('allow','model:local-small')],default='deny')]))
+    try:
+        await kernel.loop.start()
+        async with kernel.resources.use(models.resolve('local-small'),emit=kernel.session.append): pass
+        report['warmup']=(await kernel.semantics.select_context(suite.cases[0].input,model='local-small')).model_dump(mode='json')
+        before=kernel.tasks.state()
+        for case in suite.cases:
+            observed=await kernel.semantics.select_context(case.input,model='local-small')
+            correct=grader.matches(case,grader.output(observed))
+            report['cases'].append({'id':case.id,'correct':correct,'observation':observed.model_dump(mode='json'),
+                'rules_correct':grader.matches(case,grader.rules(case))})
+            save()
+            print(case.id,correct,observed.reason,round(observed.duration_ms,1),flush=True)
+        state=fold(read_session(kernel.session.base,kernel.session.id))
+        report['checks']={'task_preserved':kernel.tasks.state()==before,
+            'no_selection':not read_improvements(kernel.session.base,kernel.session.id).prompt_changes,
+            'settled':not (state.open_model_intents or state.open_evaluations),'no_actions':not state.messages}
+    finally:
+        await close(kernel)
+        report['owned_runtime_stopped']=not kernel.resources._owned
+save()
+try: asyncio.run(run())
+except Exception as exc: report['error_type']=type(exc).__name__
+finally: save()
+print(json.dumps({k:report[k] for k in ('checks','owned_runtime_stopped','error_type') if k in report}),flush=True)

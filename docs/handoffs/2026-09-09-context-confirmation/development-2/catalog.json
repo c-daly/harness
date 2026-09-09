@@ -1,0 +1,62 @@
+{
+  "local-small": {
+    "route": "openai/local-small",
+    "api_base": "http://127.0.0.1:8080/v1",
+    "max_input_tokens": 4096,
+    "verified": false,
+    "local": {
+      "auto_start": true,
+      "cwd": "/app",
+      "probe_kind": "llamacpp",
+      "startup_seconds": 120,
+      "probe_seconds": 2,
+      "required_files": [
+        "/app/llama-server",
+        "/models/8b.gguf"
+      ],
+      "env_names": [
+        "LD_LIBRARY_PATH"
+      ],
+      "command": [
+        "/app/llama-server",
+        "--model",
+        "/models/8b.gguf",
+        "--alias",
+        "local-small",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "8080",
+        "--n-gpu-layers",
+        "28",
+        "--ctx-size",
+        "4096",
+        "--parallel",
+        "1",
+        "--threads",
+        "4",
+        "--threads-batch",
+        "4",
+        "--flash-attn",
+        "on",
+        "--jinja",
+        "--cache-ram",
+        "0",
+        "--fit",
+        "off",
+        "--chat-template-kwargs",
+        "{\"enable_thinking\":false}",
+        "--temp",
+        "0.7",
+        "--top-p",
+        "0.8",
+        "--top-k",
+        "20",
+        "--min-p",
+        "0",
+        "--presence-penalty",
+        "0"
+      ]
+    }
+  }
+}

@@ -1,0 +1,53 @@
+{
+  "base_commit": "db71d51b1b65467dfb7d8bf97c8a6f8c924a075b",
+  "prompt_candidates": [
+    {
+      "candidate": 1,
+      "verdict": "failed",
+      "incumbent_correct": 5,
+      "candidate_correct": 5,
+      "rules_correct": 4,
+      "max_candidate_latency_ms": 1896.6568739997456,
+      "total_latency_ratio": 1.0793620596275708,
+      "failed_cases": [
+        "public-paraphrase"
+      ],
+      "mechanics_passed": true,
+      "owned_runtime_stopped": true
+    },
+    {
+      "candidate": 2,
+      "verdict": "failed",
+      "incumbent_correct": 5,
+      "candidate_correct": 5,
+      "rules_correct": 4,
+      "max_candidate_latency_ms": 1242.8222840026137,
+      "total_latency_ratio": 1.0062586107741596,
+      "failed_cases": [
+        "critical-ambiguous"
+      ],
+      "mechanics_passed": true,
+      "owned_runtime_stopped": true
+    }
+  ],
+  "confirmation_cases_authored": 0,
+  "confirmation_runs": 0,
+  "prompt_adopted": false,
+  "schema_change_retained": false,
+  "schema_variant": {
+    "correct": 5,
+    "failed_cases": [
+      "critical-ambiguous"
+    ],
+    "max_case_latency_ms": 2057.549728997401,
+    "checks": {
+      "task_preserved": true,
+      "no_selection": true,
+      "settled": true,
+      "no_actions": true
+    },
+    "owned_runtime_stopped": true,
+    "gate": "failed",
+    "limits": "One sequential source-format development run on a shared host; no causal latency or generalization claim."
+  }
+}

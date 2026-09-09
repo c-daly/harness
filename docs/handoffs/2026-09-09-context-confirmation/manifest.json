@@ -1,0 +1,30 @@
+{
+  "base_commit": "db71d51b1b65467dfb7d8bf97c8a6f8c924a075b",
+  "production_changes": false,
+  "artifacts": {
+    "README.md": "9c36c38a2bb9efdd274e564401e2097a902fbfb5afa19dc3a7a74ac69d2c9445",
+    "candidate-1.json": "198cde291d8f55109203ec2de9449f6a24254d7a4a73a6817dc9811b34f3d24c",
+    "candidate-2.json": "749ff95066953d26124a7bdf5b84fdfd32130dac93474f51c2fbdd9cdfb2d121",
+    "development-1/catalog.json": "e7f9672d3c270801364491f31993e110de6c395eb240da4d09d8da1394bf5cec",
+    "development-1/frozen-experiment.json": "90a22a08626db11b39f81df88cc00730b990d9e3a3b42e950f02cff5a22d4172",
+    "development-1/inference-events.jsonl": "ebe5685759161f8ab5d905a617f9c2d8e0b524f7b1963a9bedf29727b13012d5",
+    "development-1/referenced-inputs.json": "593264073221394fb4fc32313e0b0aa125b3c88adf9742c06acbc994c5174a9e",
+    "development-1/report.json": "0af9155da4d2ad3d54645e5b005f606cbae989d9787717d17d872ecfa9d53b5c",
+    "development-2/catalog.json": "e7f9672d3c270801364491f31993e110de6c395eb240da4d09d8da1394bf5cec",
+    "development-2/frozen-experiment.json": "c94d1519589a6a21749f825c252883c070960aa24057e8b7a838826ba0da55ab",
+    "development-2/inference-events.jsonl": "3fb46553732cbef03496da75248a935eb6d355adb939314510f545b336eb348a",
+    "development-2/referenced-inputs.json": "027b2815d3b9b31954f944247ae6f16ec476c1b9d29f636925bd8bf51a6d22e8",
+    "development-2/report.json": "6c0212f9349f446b078e253936df4607330b6c56c04fd346e11c2435d286041a",
+    "metadata-correction.json": "f16825822c5efb6bf290a6514dbdab19dfb51192152ea83dfd8e6627aaa71b01",
+    "protocol.json": "e2494ae4c14939a5e0fe891ce4806d9be42fd7d028bdd50088d4e50ccfba77d2",
+    "schema-development/inference-events.jsonl": "f340cc73ece9d8a68b57ba16097ba62a2f053d37fa7b8e15692bb93d7338b341",
+    "schema-development/referenced-inputs.json": "f15c79f6170e53904f5d77f24db5758316d78bd5d833976d003d66a776422931",
+    "schema-development/report.json": "1b5abaf8b0ec919685fdac9f193f73d13d258e2aa8254aaf6856ce6935f8051d",
+    "schema-development-driver.py.txt": "58020b1993bacf8eabb8e0743a1d7c29d017bfce264c1ced28b356f3f9d2a3c0",
+    "schema-order.patch": "6e8a302058a399533763057ddf067778fe68aaa075c124468e31525adc3dc57d",
+    "schema-protocol.json": "1a1bc5eb652ea0f1b301b422b87b042570713c2143330d75b65ce270a403ae76",
+    "semantic_assessment.experimental.py.txt": "b1dc97a06eff34db69da5e055b1af7606349917b0b3f8d74d828d3bb2755347e",
+    "summary.json": "52245105e707e0d302ae6baf711bd385cd8c20f42f288a8370c486bf4a6e8e38",
+    "validation.json": "30db82269f35791793e4306a60f606d8dc071fd981f82546c808e121d2cc7daf"
+  }
+}

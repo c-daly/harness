@@ -1,0 +1,6 @@
+--- a/src/harness/semantic_assessment.py
++++ b/src/harness/semantic_assessment.py
+@@ -46,0 +47 @@
++    reason: Literal["selected", "no_match", "uncertain"]
+@@ -48 +48,0 @@
+-    reason: Literal["selected", "no_match", "uncertain"]

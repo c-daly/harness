@@ -1,0 +1,43 @@
+{
+  "reason": "The original reports copied unmodified profile defaults into weights.runtime_args. The executed catalog commands override those defaults.",
+  "original_commit": "e48eac4374f39d73a6749b459f4bdf7c10ca0487",
+  "change": "Remove runtime defaults from weight identity and copy runtime_command from each retained catalog.json. No inference was rerun; observations, results, timestamps and executed source hashes are unchanged.",
+  "reports": {
+    "development-1/report.json": {
+      "original_sha256": "4dddfa63cf3e52409328dfac932917c26be28e68494479eedd1269b09ebec8da",
+      "catalog_sha256": "e7f9672d3c270801364491f31993e110de6c395eb240da4d09d8da1394bf5cec",
+      "removed_profile_default_runtime_args": [
+        "--chat-template-kwargs",
+        "{\"enable_thinking\":false}",
+        "--temp",
+        "0.7",
+        "--top-p",
+        "0.8",
+        "--top-k",
+        "20",
+        "--min-p",
+        "0",
+        "--presence-penalty",
+        "1.5"
+      ]
+    },
+    "development-2/report.json": {
+      "original_sha256": "d3a19157a1db0ecc67295e236a2c9e7b22386ef06c143541cb4c68037c824aed",
+      "catalog_sha256": "e7f9672d3c270801364491f31993e110de6c395eb240da4d09d8da1394bf5cec",
+      "removed_profile_default_runtime_args": [
+        "--chat-template-kwargs",
+        "{\"enable_thinking\":false}",
+        "--temp",
+        "0.7",
+        "--top-p",
+        "0.8",
+        "--top-k",
+        "20",
+        "--min-p",
+        "0",
+        "--presence-penalty",
+        "1.5"
+      ]
+    }
+  }
+}
