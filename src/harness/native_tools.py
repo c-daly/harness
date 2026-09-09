@@ -1,8 +1,9 @@
 """Native tools: read/write/edit/glob/grep/bash. Workspace-confined; raise on failure (L1).
 
 Failure modes raise ToolError (the dispatcher renders "tool error: <msg>", is_error=True,
-never blob-spilled). Informational non-failures return strings. Blocking I/O offloads via
-asyncio.to_thread; bash uses an async subprocess (see BashTool, Task 5).
+never blob-spilled). Informational non-failures return strings. Blocking I/O runs
+in the thread pool; mutations retain ownership until their worker settles.
+Bash uses an async subprocess (see BashTool, Task 5).
 """
 
 import asyncio
@@ -11,6 +12,7 @@ import os
 import re
 import signal
 import weakref
+from contextvars import copy_context
 from pathlib import Path
 from typing import Any
 
@@ -55,7 +57,8 @@ class ReadState:
         return frozenset(self._paths)
 
 
-# asyncio.Lock is not loop-bound since Python 3.10; safe to cache across event-loop instances.
+# Live native mutations share one event loop. Weak references keep idle paths
+# from accumulating; a running operation retains its lock until its thread ends.
 _PATH_LOCKS: "weakref.WeakValueDictionary[str, asyncio.Lock]" = weakref.WeakValueDictionary()
 
 
@@ -65,6 +68,41 @@ def _path_lock(path: str) -> asyncio.Lock:
         lock = asyncio.Lock()
         _PATH_LOCKS[path] = lock
     return lock
+
+
+async def _run_mutation(tool, path: Path, operation, *args):
+    # Waiting for ownership is cancellable. Once scheduled, a file thread must
+    # settle before ownership or any enclosing tool/task capacity is released.
+    async with _path_lock(str(path)):
+        # Keep the executor future itself: cancelling all asyncio tasks must not
+        # cancel a wrapper task and falsely imply its underlying thread stopped.
+        work = asyncio.get_running_loop().run_in_executor(None, copy_context().run, operation, path, *args)
+        try:
+            return await asyncio.shield(work)
+        except asyncio.CancelledError as cancelled:
+            if not work.done():
+                from harness.callctx import current_call_id
+                from harness.events import CustomEvent
+                from harness.execution import current_scope
+                scope = current_scope.get()
+                if scope is not None:
+                    try:
+                        scope.session.append(CustomEvent(namespace="files", name="settling_mutation",
+                            data={"call_id": current_call_id(), "tool": str(tool.spec.name), "path": str(path)}))
+                    except Exception as exc:
+                        # A failed notice must not release the lock or turn an
+                        # interruption into a successful tool return.
+                        cancelled.add_note(f"File cleanup notice failed ({type(exc).__name__})")
+            while not work.done():
+                try:
+                    await asyncio.shield(work)
+                except asyncio.CancelledError:
+                    continue
+                except Exception:
+                    break
+            if not work.cancelled():
+                work.exception()  # Observe late failure; the cancellation still wins.
+            raise
 
 
 def _resolve(root: Path, raw: object) -> Path:
@@ -202,8 +240,7 @@ class WriteFileTool:
     async def __call__(self, args: dict[str, Any]) -> str:
         path = _resolve(self._root, args.get("file_path", ""))
         content = str(args.get("content", ""))
-        async with _path_lock(str(path)):
-            return await asyncio.to_thread(self._write, path, content)
+        return await _run_mutation(self, path, self._write, content)
 
     def _write(self, path: Path, content: str) -> str:
         if path.is_dir():
@@ -264,8 +301,7 @@ class EditFileTool:
         old = str(args.get("old_string", ""))
         new = str(args.get("new_string", ""))
         replace_all = bool(args.get("replace_all", False))
-        async with _path_lock(str(path)):
-            return await asyncio.to_thread(self._edit, path, old, new, replace_all)
+        return await _run_mutation(self, path, self._edit, old, new, replace_all)
 
     def _edit(self, path: Path, old: str, new: str, replace_all: bool) -> str:
         if not path.exists():

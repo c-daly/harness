@@ -1,8 +1,8 @@
 # Core agency implementation record
 
-Current implementation branch: `feat/coordination-admission`, based on merged
-`main` at `2c44465` (PR41, typed coordination and aggregate activity status).
-Previous branches: `feat/typed-coordination-results`, `feat/portable-task-export`, `feat/handoff-destination-recovery`, `feat/handoff-failure-qualification`, `feat/context-profile-comparison`, `docs/context-experiment-results`, `feat/context-eligibility`, `feat/context-selection-qualification`, `fix/bounded-compaction`, `fix/model-selection-continuity`, `feat/local-model-management`, `feat/assessment-improvement`, `feat/external-handoff`, `feat/assessment-evaluation`, `feat/supervised-improvement`, `feat/local-scheduling`, `feat/task-fallback`, `feat/semantic-context-progress`, `feat/local-assistant-m3`, `feat/resident-workflow`, `feat/task-completion-evidence`, `fix/inference-client-lifecycle`, `feat/local-response-profiles`, `feat/local-tool-recovery`, `feat/local-tool-planning`, `feat/local-qualification`, `feat/semantic-evaluation`, `feat/local-context`, `feat/local-readiness`, `feat/agent-runtimes`,
+Current implementation branch: `fix/file-mutation-lifetime`, based on merged
+`main` at `f76a24c` (PR42, coordinator admission and handoff compatibility).
+Previous branches: `feat/coordination-admission`, `feat/typed-coordination-results`, `feat/portable-task-export`, `feat/handoff-destination-recovery`, `feat/handoff-failure-qualification`, `feat/context-profile-comparison`, `docs/context-experiment-results`, `feat/context-eligibility`, `feat/context-selection-qualification`, `fix/bounded-compaction`, `fix/model-selection-continuity`, `feat/local-model-management`, `feat/assessment-improvement`, `feat/external-handoff`, `feat/assessment-evaluation`, `feat/supervised-improvement`, `feat/local-scheduling`, `feat/task-fallback`, `feat/semantic-context-progress`, `feat/local-assistant-m3`, `feat/resident-workflow`, `feat/task-completion-evidence`, `fix/inference-client-lifecycle`, `feat/local-response-profiles`, `feat/local-tool-recovery`, `feat/local-tool-planning`, `feat/local-qualification`, `feat/semantic-evaluation`, `feat/local-context`, `feat/local-readiness`, `feat/agent-runtimes`,
 and `feat/core-agency`.
 
 Committed checkpoints: `0351b75` (roadmap, lifecycle, and storage/result integrity),
@@ -57,7 +57,7 @@ qualification. Milestone completion requires its roadmap gates, not just code.
 | M2 inference / agent contracts | In progress | Bounded inference, native tasks, Codex task binding, explicit execution kinds, nullable usage, core improvement records and recorded task-evidence checks implemented. Remaining adapters, richer artifact predicates and live capability qualification remain. |
 | M3 local core assistant | Complete for the measured CUDA profile | Qwen3-8B passes six full offline project journeys: twelve exact native file writes, changed-record answers after restart, real cancellation, normal memory, and visible task/context status. Four missing-assets/startup-exit recovery cases pass. Shipped profiles and a launcher reproduce the workflow. Actual use exposed missing startup configuration in the normal catalog; the provisioned host's local aliases are now connected. Core `/models` now inspects public GGUF metadata and registers installed weights with startup profiles, with ordinary CLI/TUI CPU smoke evidence. Runtime installation, weight downloads and broader CPU/daily-use qualification remain outside this gate. |
 | M4 bounded semantic agency | In progress | All three shadow functions now exist with explicit CLI/TUI access and evidence validation. The public 8B comparison failed context/progress gates; deterministic behavior remains. Bounded task-preserving fallback and session-tree local scheduling are implemented. Message-prompt pairing and earlier context/correction experiments use core improvement records. Supervised message-prompt proposal/evaluation/adoption/rollback is implemented. Paired context/progress candidate evaluation is implemented with explicit operator controls. Explicit external-to-native reconciliation and bounded handoff are implemented. Supervised assessment proposal/adoption/rollback is implemented per function/model. Core now filters context eligibility before inference and resolves empty eligible sets without a model call. Required normal-memory loss, busy preflight, destination loss after a write and Esc during continuation now have bounded offline terminal evidence. Truncated OpenAI-compatible streams cannot fabricate completion. Held-out quality and broader handoff qualification remain. |
-| M5 heterogeneous work / plugins | In progress | Core CLI/TUI exports a documented Markdown/JSON continuation package with task evidence, context snapshots/references, artifacts and original provenance. A controlled independent frontend continues after source-database removal. Coordination now consumes typed child outcomes, preserves partial work/disagreement/provenance, settles cancelled siblings and exports its reports; `/coordination` inspects them. Pure coordinators have separate active admission and an overall deadline while retaining shared descendant/depth limits; interrupted starts remain unconfirmed. Evidence-based escalation, shared token/cost budgets, edit ownership, live mixed-agent supervision, installed-plugin reconciliation, broader portable continuation, isolated improvement patches and rollback remain. |
+| M5 heterogeneous work / plugins | In progress | Core CLI/TUI exports a documented Markdown/JSON continuation package with task evidence, context snapshots/references, artifacts and original provenance. A controlled independent frontend continues after source-database removal. Coordination now consumes typed child outcomes, preserves partial work/disagreement/provenance, settles cancelled siblings and exports its reports; `/coordination` inspects them. Pure coordinators have separate active admission and an overall deadline while retaining shared descendant/depth limits; interrupted starts remain unconfirmed. Native file mutations retain per-path ownership through cancellation and settle before descendant terminal facts. Evidence-based escalation, shared token/cost budgets, broader edit ownership, live mixed-agent supervision, installed-plugin reconciliation, broader portable continuation, isolated improvement patches and rollback remain. |
 | M6 daily-use qualification | Pending | Measured UI, live adapter boundaries, offline and human dogfood gates. |
 
 `4a98d3f` added durable task requirements and recorded evidence in
@@ -2259,5 +2259,59 @@ coordinator activity held before inference. All eleven pass after the correction
 The affected coordination, handoff, destination/memory recovery, terminal,
 portable-export and prompt-improvement suites passed **150 tests on each Python
 version** (3.13: 54.13 s; 3.12: 56.89 s). Ruff and whitespace checks passed.
-The earlier full-suite/build evidence predates this scoped compatibility fix;
-new hosted CI will validate the review commit.
+The earlier full-suite/build evidence predates this scoped compatibility fix.
+Hosted Python 3.12/3.13 CI and automated review subsequently passed at `03a8466`
+before PR42 merged.
+
+
+## September 9 — Retain native file ownership through cancellation
+
+PR42 merged at `f76a24c`. This increment addresses M5's concurrent-editing
+boundary: cancelling a native write/edit previously released its canonical-path
+lock while the mutation thread could still be running. Another agent could then
+enter the same file's mutation, and task/coordination terminal facts could precede
+completion of the actual file effect.
+
+**Core behavior:** native writes and edits now retain their file lock until the
+executor future settles. Waiting for a lock remains cancellable without starting
+a file mutation; different paths can still run independently. Repeated
+cancellation, deadline expiry, late thread failure and event-loop task shutdown
+cannot release ownership before the thread settles. Worker context is preserved.
+The enclosing tool/run still reports interruption rather than converting a
+completed file effect into task success. This is cooperative cleanup and may
+extend beyond a deadline when a file operation is slow.
+
+The core records a cleanup notice in the actual calling session, and the terminal
+explains the wait while preserving the unsent draft. Failure to save that notice
+does not shorten cleanup or permit later model calls. Handoffs use the same native
+mutation lifetime, allowing an interrupted lock waiter to stop before its worker
+starts; other handoff file operations retain their existing cleanup contract.
+
+**Evidence:** six initial regressions reproduced early ownership release for
+writes/edits and late failures. Controlled worker barriers exercise competing
+tool instances through canonical-path aliases, independent paths, repeated
+cancellation, waiting cancellation and recovery after failure. Real task and
+delegation journeys check terminal ordering, descendant capacity, retained file
+effects and stopped inference under cancellation/deadlines and failed notices.
+Further tests exercise event-loop shutdown, a handoff waiting on a file lock, and
+Escape/draft preservation against the final terminal compositor.
+
+**Remaining:** per-call serialization is not stale-read conflict detection or
+whole-workflow ownership. Provider-native tools, shell commands and other
+processes do not participate; cross-process ownership/isolated worktrees and live
+mixed-agent qualification remain M5 work. Shared token/cost budgets,
+evidence-based escalation, plugin reconciliation, and isolated source improvement
+experiments/adoption/rollback also remain. The M4 held-out quality,
+user-correction-to-repair and M6 daily-use gaps remain open. Memory and agent-swarm
+remain plugins; this mutation lifetime is core.
+
+**Validation:** the full Python 3.13 suite passed **1,899 tests, seven skipped**,
+with six existing MCP deprecation warnings (438.58 s). Affected native-tool,
+delegation, coordination, handoff/recovery and terminal suites passed **225 tests
+on Python 3.12** (60.37 s). All 19 new regressions are included in both runs. The
+skips remain missing Anthropic/Ollama conformance fixtures and the opt-in live
+Antigravity probe. Ruff, whitespace checks, offline sdist/wheel build, CLI help
+and clean offline wheel import smoke passed. All 79 core files match the wheel;
+all 211 core/test hashes remained unchanged through validation. These are
+controlled core-contract and terminal checks, not live provider/plugin or
+local-model qualification. Hosted CI and review are pending publication.

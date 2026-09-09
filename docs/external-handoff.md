@@ -63,7 +63,8 @@ plugins, with their normal context and workflow contracts.
    and run `/handoff run ID`. These controls require an idle session. Esc cancels;
    new prompts wait for cancellation to settle. An already-started file operation
    finishes before the interrupted attempt is recorded, because a worker thread
-   cannot safely be preempted. The terminal shows that wait.
+   cannot safely be preempted. The terminal shows that wait. A write or edit still
+   waiting for another native call's file lock cancels without starting a change.
 5. Use `/task check` and inspect the resulting files. Earlier successful tool-result
    evidence can retain its original event and artifact through an explicit
    handoff. Output checks and operator review still require fresh evidence.
