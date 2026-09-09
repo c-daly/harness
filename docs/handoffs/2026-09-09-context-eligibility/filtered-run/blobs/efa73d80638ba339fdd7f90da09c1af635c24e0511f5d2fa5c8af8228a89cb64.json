@@ -1,0 +1,1 @@
+{"query":"How are recollections kept between visits?","candidates":[{"id":"storage","summary":"Persistent memory uses SQLite","freshness":"current","available":true},{"id":"display","summary":"The screen uses a terminal renderer","freshness":"current","available":true}],"max_selected":4}

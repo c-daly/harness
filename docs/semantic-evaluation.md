@@ -95,6 +95,22 @@ IDs, duplicates, and excess selections cannot enter a successful result.
 memory or inject/prune context. A plugin can supply its scoped candidates to
 `kernel.semantics.select_context(ContextSelectionInput(...), model=...)`.
 
+Core filters the supplied set to available, current candidates **before**
+inference. If none remain, an enabled, size-bounded request returns `no_match`
+immediately with `decision_source: eligibility`, no model call, and no runtime
+startup. It can do so when model access is denied, unavailable, or busy because
+it performs no inference. Disabled assessments and the original input-size bound
+still apply. All other selections retain the usual model permissions, budgets,
+readiness checks, and output validation.
+
+The observation's `input` and `input_sha256` retain the original scoped input;
+`inference_input` retains the filtered payload when inference is attempted.
+Model-based observations use `decision_source: model`; old records default to
+that value and need no migration. `/semantics` labels deterministic answers
+“Core eligibility” and explicitly says that no model call occurred. These
+answers cannot seed prompt-improvement evidence. They establish eligibility,
+not relevance, task completion, or authority to inject context.
+
 Progress reads the selected task's existing log evidence, or the task named by
 `--task-id`. It does not run checks or inspect mutable files. The snapshot records
 the session/event boundary, task ID, execution state, all requirements, passed or
@@ -110,7 +126,7 @@ In the TUI, `/semantics progress` and `/semantics context FILE.json` run explici
 assessments using the selected model and compatible prompt version. Its worker leaves the composer responsive, supports Esc, and cancels and
 settles before newly submitted work, model switching, compaction, session rebuild,
 or shutdown. It refuses to start behind active/queued work. All semantic
-functions share a non-waiting lock and abstain when their local alias has a fresh
+functions that require inference share a non-waiting lock and abstain when their local alias has a fresh
 busy observation. Core [session-tree scheduling](local-scheduling.md) also arbitrates local aliases;
 remote generation preemption remains runtime-dependent.
 

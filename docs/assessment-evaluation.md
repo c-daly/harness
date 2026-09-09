@@ -92,6 +92,15 @@ obligations; it ignores ID ordering. A valid `uncertain` is correct only when th
 oracle expects it. Invalid output/timeouts fail; unavailable inference remains
 unknown, including on expected-uncertainty cases.
 
+Context eligibility runs identically in both prompt arms. When no supplied
+candidate is available and current, core returns `no_match` without inference;
+each observation records `decision_source: eligibility` and no call ID. The
+paired report grades this deterministic answer, while other cases still require
+model responses. Aggregate correct counts describe the complete selection path,
+not model-only accuracy; per-case provenance identifies the core answers. These
+identical decisions cannot produce a paired prompt improvement, and ordinary
+eligibility observations cannot seed a prompt comparison or proposal.
+
 Reports include both prompts' grades, a lexical context baseline or deterministic
 progress baseline, sample counts, abstentions, and maximum/p95 latency, overall
 and by partition. The runtime and held-out provenance remain operator declarations;

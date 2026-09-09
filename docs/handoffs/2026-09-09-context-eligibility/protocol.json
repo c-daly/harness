@@ -1,0 +1,24 @@
+{
+  "baseline_commit": "eb1e6fb6fb52a745afb18f11d45fa0163747295f",
+  "implementation_variants": 1,
+  "hypothesis": "Apply the existing available/current predicate before inference; resolve an empty eligible set deterministically. Keep builtin instructions and output validation unchanged.",
+  "development_suite": "Existing six public context-selection cases; never fresh confirmation evidence.",
+  "comparison": "Run the same public inputs and unchanged builtin on a frozen baseline source and changed source. Do not credit deterministic gains to the model or a prompt.",
+  "product_gates": [
+    "No stale/unavailable/unknown summaries sent to inference",
+    "Original scoped input preserved",
+    "Empty eligible set yields no_match without model work, including offline/busy cases",
+    "Disabled and input limits remain effective",
+    "Explicit decision provenance survives replay and is visible",
+    "Deterministic decisions cannot seed prompt-improvement evidence",
+    "Task state and candidate selection unchanged"
+  ],
+  "semantic_gates": {
+    "critical_failures_allowed": 0,
+    "regressions_allowed": 0,
+    "max_case_latency_ms": 2000,
+    "max_latency_ratio": 1.2
+  },
+  "confirmation_policy": "A failed public semantic gate does not proceed to fresh confirmation. Deterministic product correctness is separate from M4 model-quality qualification.",
+  "runtime": "Pinned Qwen3-8B Q4_K_M / llama.cpp b9603, GPU28, c4096, presence0, temperature0, thinking false; 120s cold startup; 5s semantic timeout; Docker network none, 4 CPUs, 4GiB host RAM, no swap."
+}

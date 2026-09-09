@@ -75,11 +75,12 @@ async def test_invalid_selection_is_an_abstention_not_a_partial_selection(tmp_pa
 
 
 @pytest.mark.parametrize("reason", ["no_match", "uncertain"])
-async def test_empty_candidate_set_supports_explicit_abstention(tmp_path, reason):
+async def test_empty_candidate_set_is_resolved_without_asking_the_model(tmp_path, reason):
     kernel = await kernel_for(tmp_path, FakeProvider([text_turn(json.dumps(selection([], reason)))]))
     try:
         result = await kernel.semantics.select_context(candidates(candidates=[]), model=MODEL)
-        assert result.reason == reason and not result.result.selected_ids
+        assert result.reason == "no_match" and not result.result.selected_ids
+        assert result.decision_source == "eligibility" and not kernel.provider.calls
     finally:
         kernel.session.close()
 

@@ -10,6 +10,7 @@ from harness.provider import text_turn
 from harness.session import Session
 from harness.types import ModelId, SessionId
 from tests.test_assessment_improvement import LearningAssessmentProvider, evaluation, seed_failures
+from tests.test_assessment_evaluation import requested_case
 from tests.test_improvement import records
 from tests.test_prompt_improvement import (
     HELD_OUT, LearningProvider, experiment as message_experiment, seed_failures as seed_message_failures,
@@ -42,7 +43,7 @@ class DevelopmentOnlyGain(LearningAssessmentProvider):
                 yield chunk
             return
         self.requests.append(request)
-        case = next(c for c in self.spec.suite.cases if c.input.model_dump_json() == request.messages[-1].text())
+        case = requested_case(self.spec, request)
         output = case.expected.model_dump(mode="json")
         candidate = request.messages[0].text() == "candidate"
         if case.partition == "held_out" or case.id == "critical-stale" and not candidate:

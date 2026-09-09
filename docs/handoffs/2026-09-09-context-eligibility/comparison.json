@@ -1,0 +1,23 @@
+{
+  "stage": "public_development",
+  "held_out": false,
+  "quality_qualified": false,
+  "baseline_commit": "eb1e6fb6fb52a745afb18f11d45fa0163747295f",
+  "same_builtin_prompt": true,
+  "baseline_correct": 4,
+  "filtered_correct": 5,
+  "filtered_model_correct": 4,
+  "filtered_model_cases": 5,
+  "core_eligibility_correct": 1,
+  "regressions": [],
+  "critical_failures": [
+    "critical-ambiguous"
+  ],
+  "max_case_latency_ms": 912.1667509971303,
+  "total_latency_ratio": 0.8085951334413475,
+  "confirmation_cases_authored": 0,
+  "confirmation_runs": 0,
+  "adopted_prompt": false,
+  "semantic_gate": "failed",
+  "comparison_limit": "Sequential before/after source experiment, one pass per version; public cases, not a randomized confirmation or prompt-improvement claim."
+}
