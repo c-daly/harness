@@ -116,6 +116,8 @@ class AgentLoop:
     async def start(self) -> None:
         self.session.start()
         self.dispatcher.scope.budget.usage.attach(self.session)
+        from harness.execution_controls import record_execution_limits
+        record_execution_limits(self.dispatcher)
         self.record_model_selection()
         if self.dispatcher.scope.context_policy is not None:
             self.session.append(ContextPolicyConfigured(policy=self.dispatcher.scope.context_policy))
@@ -139,7 +141,8 @@ class AgentLoop:
         self, task: AgentTask, *, on_progress: Callable[[AgentProgress], None] | None = None,
     ) -> AgentResult:
         """Execute one bounded task; completion leaves acceptance unverified."""
-        task = AgentTask.model_validate(task.model_dump())
+        from harness.agent import bound_task
+        task = bound_task(task, self.dispatcher.scope.budget.limits)
         policy = self.dispatcher.scope.context_policy
         if policy is not None:
             limits = {"max_input_bytes": min(task.limits.max_input_bytes, policy.max_input_bytes)}
@@ -249,7 +252,7 @@ class AgentLoop:
                             max_output_bytes=task.limits.max_response_bytes,
                             max_output_tokens=task.limits.max_output_tokens,
                             max_stream_chunks=task.limits.max_stream_chunks,
-                            timeout_seconds=min(120, task.limits.timeout_seconds),
+                            timeout_seconds=task.limits.timeout_seconds,
                         ),
                         before_work=iteration == 1,
                         on_chunk=chunk_received,

@@ -200,7 +200,7 @@ def _scratch_home() -> str:
 class AntigravityProvider:
     execution_kind = "agent"
 
-    def __init__(self, *, binary: str = "agy", timeout_s: float = 600.0) -> None:
+    def __init__(self, *, binary: str = "agy", timeout_s: float | None = None) -> None:
         self.binary = binary
         self.timeout_s = timeout_s
         self._dispatch = None  # bound post-kernel-build: dispatcher.dispatch_tool
@@ -269,7 +269,8 @@ class AntigravityProvider:
         # racing our SIGKILL. 5s of headroom, floored at 1s so a short
         # provider timeout never renders "0s" (or a negative duration) into
         # agy's Go-duration flag parser.
-        print_timeout_s = max(1, int(self.timeout_s) - 5)
+        from harness.execution import agent_timeout
+        print_timeout_s = max(1, int(agent_timeout(self.timeout_s)) - 5)
         argv = [
             self.binary,
             "-p", _PROMPT_PREFIX,
@@ -358,7 +359,8 @@ class AntigravityProvider:
         timed_out = False
         try:
             try:
-                async with asyncio.timeout(self.timeout_s):
+                from harness.execution import agent_timeout
+                async with asyncio.timeout(agent_timeout(self.timeout_s)):
                     assert proc.stdout is not None
                     async for raw in proc.stdout:
                         line = raw.decode("utf-8", errors="replace").strip()
@@ -420,7 +422,7 @@ class AntigravityProvider:
                 await stderr_task
 
         if timed_out:
-            raise ProviderError(f"antigravity turn timed out after {self.timeout_s}s")
+            raise ProviderError(f"antigravity turn timed out after {agent_timeout(self.timeout_s):g}s")
         if proc.returncode not in (0, None) and not saw_result:
             stderr = b""
             if stderr_task.done() and not stderr_task.cancelled():

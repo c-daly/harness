@@ -377,6 +377,11 @@ class Dispatcher:
             if exact_model and effective_model != model:
                 raise ModelDispatchBlocked("routing changed the required inference model")
             execution_kind = kind_for(effective_model)
+            if purpose == "conversation" and execution_kind != "agent":
+                # Decide after routing: a native request and an external agent
+                # have different lifetimes even when sharing this transport.
+                request = request.model_copy(update={"timeout_seconds": min(
+                    request.timeout_seconds, self.scope.budget.limits.inference_timeout_seconds)})
             from harness.handoff import current_handoff
             guard = current_handoff.get()
             if guard is not None:
@@ -424,6 +429,8 @@ class Dispatcher:
             token = current_dispatch_tool.set(self.dispatch_tool)
             scope_token = current_scope.set(self.scope)
             model_token = current_model_call_id.set(call.call_id)
+            from harness.execution import current_agent_timeout
+            timeout_token = current_agent_timeout.set(request.timeout_seconds if execution_kind == "agent" else None)
             try:
                 while True:
                     try:
@@ -497,6 +504,7 @@ class Dispatcher:
                 current_dispatch_tool.reset(token)
                 current_scope.reset(scope_token)
                 current_model_call_id.reset(model_token)
+                current_agent_timeout.reset(timeout_token)
         except asyncio.CancelledError:
             self.session.append(ModelCallCancelled(call_id=call.call_id, duration_ms=elapsed()))
             raise

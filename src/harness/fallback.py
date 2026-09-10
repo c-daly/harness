@@ -163,10 +163,11 @@ class TaskFallback:
 
         if self.policy is None or not self.policy.models:
             return await attempt(request, loop.pricing)
-        deadline = time.monotonic() + request.timeout_seconds
+        began = time.monotonic()
+        deadline = began + request.timeout_seconds
         pricing = getattr(loop.provider, "catalog", None)
         pricing = pricing.resolve(str(self.model)).pricing_dict() if self.selected and pricing else loop.pricing
-        async with asyncio.timeout(request.timeout_seconds):
+        async with asyncio.timeout_at(deadline) as timer:
             while True:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
@@ -176,6 +177,12 @@ class TaskFallback:
                         "timeout_seconds": remaining}), pricing)
                 except FAILURES as exc:
                     self.failed_calls += 1
+                    if exc.execution_kind == "inference":
+                        # The effective route is now known. A replacement
+                        # inherits the first native request's remaining budget;
+                        # it cannot acquire a fresh inference timeout.
+                        deadline = min(deadline, began + loop.dispatcher.scope.budget.limits.inference_timeout_seconds)
+                        timer.reschedule(deadline)
                     resolved = self.choose(exc, before_work=before_work, tools=request.tools)
                     if resolved is None:
                         raise

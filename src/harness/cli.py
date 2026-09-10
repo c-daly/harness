@@ -150,6 +150,7 @@ def build_kernel(
     explicit_model_selection: bool = False,
     catalog_path: Path | None = None,
     execution_limits: ExecutionLimits | None = None,
+    execution_overrides: dict | None = None,
     usage_limits: UsageLimits | None = None,
     resources=None,
     context_policy: ContextPolicy | None = None,
@@ -157,6 +158,12 @@ def build_kernel(
     fallback_policy: FallbackPolicy | None = None,
 ) -> Kernel:
     from harness.resume import resume_session
+    from dataclasses import replace
+
+    # Validate before creating/reopening a session. Omitted fields retain the
+    # destination's stored settings; explicit operator changes are recorded.
+    execution_overrides = execution_overrides or {}
+    replace(execution_limits or ExecutionLimits(), **execution_overrides)
 
     resolver = resolver or HeadlessResolver()
     if fallback_policy is None and routing_rules is not None:
@@ -169,7 +176,9 @@ def build_kernel(
     resumed = False
     if resume_session_id is not None:
         def configure(state):
-            nonlocal provider, model, model_pinned, pricing, pricing_for, context_policy
+            nonlocal provider, model, model_pinned, pricing, pricing_for, context_policy, execution_limits
+            if execution_limits is None:
+                execution_limits = state.execution_limits
             if state.usage_budget.root_session_id is not None:
                 raise UsageBudgetConfigError(f"shared usage accounting belongs to session {state.usage_budget.root_session_id}; "
                                  "resume that root session")
@@ -296,11 +305,19 @@ def build_kernel(
         loop.record_model_selection()
     from harness.resources import LocalResources
     scope = ExecutionScope(session, effective_registry,
-                           ExecutionBudget(execution_limits or ExecutionLimits(), usage=usage_budget),
+                           ExecutionBudget(replace(execution_limits or ExecutionLimits(), **execution_overrides),
+                                           usage=usage_budget),
                            resources=resources if resources is not None else LocalResources(),
                            context_policy=context_policy)
     loop.dispatcher.scope = scope
     runner._root_scopes[str(session.id)] = scope
+    if resumed:
+        from harness.execution_controls import record_execution_limits
+        try:
+            record_execution_limits(loop.dispatcher)
+        except BaseException:
+            session.close()
+            raise
     if resumed and (context_policy is not None or not inherit_context_policy):
         from harness.events import ContextPolicyConfigured
         session.append(ContextPolicyConfigured(policy=context_policy))
@@ -561,6 +578,11 @@ def _run_main() -> None:
         "--no-plugins", action="store_true", help="Disable plugin discovery entirely."
     )
     parser.add_argument("--workspace", type=Path, default=None)
+    from dataclasses import asdict
+    for name, default in asdict(ExecutionLimits()).items():
+        parser.add_argument("--" + name.replace("_", "-"), default=None,
+                            type=float if name.endswith("_seconds") else int,
+                            help=f"Core execution limit (new session default: {default:g}); retained on resume when omitted.")
     parser.add_argument("--budget-input-tokens", type=int, default=None,
                         help="Shared input-token stop limit; resumed sessions retain stricter stored limits.")
     parser.add_argument("--budget-output-tokens", type=int, default=None,
@@ -574,6 +596,9 @@ def _run_main() -> None:
                                help="Explicitly clear an inherited context profile when resuming.")
     args = parser.parse_args()
     try:
+        execution_overrides = {name: getattr(args, name) for name in asdict(ExecutionLimits())
+                               if getattr(args, name) is not None}
+        ExecutionLimits(**execution_overrides)
         usage_limits = UsageLimits(max_input_tokens=args.budget_input_tokens,
                                   max_output_tokens=args.budget_output_tokens,
                                   max_cost_usd=args.budget_cost_usd)
@@ -731,6 +756,7 @@ def _run_main() -> None:
             workspace_root=args.workspace,
             native_tools=True,
             usage_limits=usage_limits,
+            execution_overrides=execution_overrides,
             pricing_for=pricing_for,
             routing_rules=routing_rules,
             model_pinned=model_pinned,
@@ -766,6 +792,7 @@ def _run_main() -> None:
         inherit_context_policy=not args.no_context_profile,
         resume_session_id=resume_session_id,
         usage_limits=usage_limits,
+        execution_overrides=execution_overrides,
         permissions=engine,
         tags=args.tag,
         mcp=mcp_specs or None,

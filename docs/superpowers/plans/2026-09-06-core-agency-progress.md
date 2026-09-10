@@ -1,7 +1,8 @@
 # Core agency implementation record
 
-Current implementation branch: `feat/shared-inference-budget`, based on merged
-`main` at `0184e00` (PR45, escalation against declared task evidence).
+Current implementation branch: `feat/execution-controls`, based on `b0e540b`
+from the still-open PR46 (`feat/shared-inference-budget`). This increment is
+stacked above PR46; it does not imply that shared usage accounting has merged.
 Previous branches: `feat/evidence-escalation`, `feat/native-file-conflicts`, `fix/file-mutation-lifetime`, `feat/coordination-admission`, `feat/typed-coordination-results`, `feat/portable-task-export`, `feat/handoff-destination-recovery`, `feat/handoff-failure-qualification`, `feat/context-profile-comparison`, `docs/context-experiment-results`, `feat/context-eligibility`, `feat/context-selection-qualification`, `fix/bounded-compaction`, `fix/model-selection-continuity`, `feat/local-model-management`, `feat/assessment-improvement`, `feat/external-handoff`, `feat/assessment-evaluation`, `feat/supervised-improvement`, `feat/local-scheduling`, `feat/task-fallback`, `feat/semantic-context-progress`, `feat/local-assistant-m3`, `feat/resident-workflow`, `feat/task-completion-evidence`, `fix/inference-client-lifecycle`, `feat/local-response-profiles`, `feat/local-tool-recovery`, `feat/local-tool-planning`, `feat/local-qualification`, `feat/semantic-evaluation`, `feat/local-context`, `feat/local-readiness`, `feat/agent-runtimes`,
 and `feat/core-agency`.
 
@@ -57,7 +58,7 @@ qualification. Milestone completion requires its roadmap gates, not just code.
 | M2 inference / agent contracts | In progress | Bounded inference, native tasks, Codex task binding, explicit execution kinds, nullable usage, core improvement records and recorded task-evidence checks implemented. Remaining adapters, richer artifact predicates and live capability qualification remain. |
 | M3 local core assistant | Complete for the measured CUDA profile | Qwen3-8B passes six full offline project journeys: twelve exact native file writes, changed-record answers after restart, real cancellation, normal memory, and visible task/context status. Four missing-assets/startup-exit recovery cases pass. Shipped profiles and a launcher reproduce the workflow. Actual use exposed missing startup configuration in the normal catalog; the provisioned host's local aliases are now connected. Core `/models` now inspects public GGUF metadata and registers installed weights with startup profiles, with ordinary CLI/TUI CPU smoke evidence. Runtime installation, weight downloads and broader CPU/daily-use qualification remain outside this gate. |
 | M4 bounded semantic agency | In progress | All three shadow functions now exist with explicit CLI/TUI access and evidence validation. The public 8B comparison failed context/progress gates; deterministic behavior remains. Bounded task-preserving fallback and session-tree local scheduling are implemented. Message-prompt pairing and earlier context/correction experiments use core improvement records. Supervised message-prompt proposal/evaluation/adoption/rollback is implemented. Paired context/progress candidate evaluation is implemented with explicit operator controls. Explicit external-to-native reconciliation and bounded handoff are implemented. Supervised assessment proposal/adoption/rollback is implemented per function/model. Core now filters context eligibility before inference and resolves empty eligible sets without a model call. Required normal-memory loss, busy preflight, destination loss after a write and Esc during continuation now have bounded offline terminal evidence. Truncated OpenAI-compatible streams cannot fabricate completion. Held-out quality and broader handoff qualification remain. |
-| M5 heterogeneous work / plugins | In progress | Core CLI/TUI exports a documented Markdown/JSON continuation package with task evidence, context snapshots/references, artifacts and original provenance. A controlled independent frontend continues after source-database removal. Coordination now consumes typed child outcomes, preserves partial work/disagreement/provenance, settles cancelled siblings and exports its reports; `/coordination` inspects them. Pure coordinators have separate active admission and an overall deadline while retaining shared descendant/depth limits; interrupted starts remain unconfirmed. Native file mutations retain per-path ownership through cancellation and settle before descendant terminal facts. Per-session content observations now reject stale writes/edits and support reread recovery. Escalation applies frozen active-task requirements to both cheap and premium participants, with read-only evidence checks, inspection and export. Shared usage stop limits and durable root accounting now cover descendants and restart, with explicit unknown usage and CLI/TUI inspection. Exact pre-call reservations, live accounting qualification, broader edit ownership, live mixed-agent supervision, installed-plugin reconciliation, broader portable continuation, isolated improvement patches and rollback remain. |
+| M5 heterogeneous work / plugins | In progress | Core CLI/TUI exports a documented Markdown/JSON continuation package with task evidence, context snapshots/references, artifacts and original provenance. A controlled independent frontend continues after source-database removal. Coordination now consumes typed child outcomes, preserves partial work/disagreement/provenance, settles cancelled siblings and exports its reports; `/coordination` inspects them. Pure coordinators have separate active admission and an overall deadline while retaining shared descendant/depth limits; interrupted starts remain unconfirmed. Native file mutations retain per-path ownership through cancellation and settle before descendant terminal facts. Per-session content observations now reject stale writes/edits and support reread recovery. Escalation applies frozen active-task requirements to both cheap and premium participants, with read-only evidence checks, inspection and export. Shared usage stop limits and durable root accounting now cover descendants and restart, with explicit unknown usage and CLI/TUI inspection. Core operator controls now expose task, native-request, coordination and admission limits, retain settings across resume, and propagate process deadlines without hidden adapter defaults. Exact pre-call reservations, live accounting qualification, broader edit ownership, live mixed-agent supervision, installed-plugin reconciliation, broader portable continuation, isolated improvement patches and rollback remain. |
 | M6 daily-use qualification | Pending | Measured UI, live adapter boundaries, offline and human dogfood gates. |
 
 `4a98d3f` added durable task requirements and recorded evidence in
@@ -2503,3 +2504,62 @@ worktrees, live mixed-agent and installed-plugin reconciliation; and isolated
 source improvement validation/promotion/rollback. M4 held-out quality and the
 explicit correction-to-repair loop remain open, as does M6 daily-use qualification.
 No improved prompt, model, or source patch is automatically adopted here.
+
+
+## Core execution controls
+
+This increment returns to M5 runtime configuration on `feat/execution-controls`,
+stacked above the still-open PR46 at `b0e540b`. The independent small-model
+measurement branch is preserved and is not part of this change.
+
+**Implemented:** `/execution` inspection and idle operator configuration, plus
+matching CLI flags for task, native conversational request, coordination,
+call-count, descendant, depth and active-capacity limits. Settings are recorded
+before changes, restored on resume, inherited by children and `/clear`, and
+restored from the destination on `/resume`. Partial CLI overrides retain the
+other stored fields. Invalid stored settings refuse resume before its boundary
+or the current TUI's teardown. Changes do not refund current counters.
+
+Fresh tasks inherit the configured task timeout. Explicit/serialized task caps
+and reconciled source handoff limits remain binding. Source narrowing is durable.
+Native request limits apply after routing. Fallback retains the original native
+request's remaining budget across replacements. Codex, Claude Code and
+Antigravity default process timers follow the owned call through context-local
+bindings; explicit adapter caps and setup/server bounds still apply. No plugin
+implementation or live model configuration is changed.
+
+**Stop semantics:** an expired task time budget remains an incomplete `deadline`
+outcome with a readable error. An inner operation timeout before that budget
+expires is recorded separately as `timeout`. Cancellation and cleanup ownership
+remain unchanged. These are finite elapsed-time controls, not a claim that the
+harness can detect a hang from silence or assess useful progress.
+
+**Validation:** 49 new regressions cover both CLI paths, rendered TUI inspection,
+draft preservation, core command precedence, session rebuilds, event validation,
+failed configuration writes, explicit/replayed task caps, child inheritance,
+source handoff, timeout causes and cleanup, and actual subprocess adapters with
+scripted responses. The broader fallback checks caught and corrected timeout
+refunding at replacement; the 84 focused execution/fallback checks pass.
+The Python 3.13 full-suite checkpoint finished with **2,054 passed, seven
+skipped and one failed** (427.13 s): the existing math-width failure described
+below. Python 3.12 passed **477 affected tests, one skipped** (228.76 s). All 225
+core/test files remained unchanged during that checkpoint. A final injected
+resume-write failure exposed a live-lock leak; after fixing it and adding its
+regression, **130 affected tests passed on each version** (26.77 / 26.00 s).
+The full suite was not repeated after that localized cleanup fix. Ruff,
+whitespace checks, offline sdist/wheel build, clean wheel CLI startup and all
+82 module imports pass; all 83 packaged core files match source. Process tests
+use scripted external executables, not live provider qualification.
+
+**Remaining:** activity/progress-sensitive supervision, suspected-stall recovery,
+active-budget extension, durable call/descendant consumption and exact usage
+reservations; live mixed-agent accounting, edit/worktree ownership, installed
+plugin reconciliation, isolated source-improvement validation/promotion/rollback,
+and M4/M6 empirical and daily-use gates. Settings persistence does not make the
+existing per-process call counters a durable spending ledger. The user guide is
+[execution controls](../../execution-controls.md).
+
+The broad suite also exposed `test_complex_inline_math_wraps_with_prose_in_document_order`
+exceeding its 78-cell width bound. The same assertion fails on an untouched
+archive of the `b0e540b` base in this environment. This is a separate existing
+rendering issue and remains open; it must not be described as a green full suite.

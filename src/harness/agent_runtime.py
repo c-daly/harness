@@ -67,7 +67,8 @@ class ExternalAgentRuntime:
     async def run_task(
         self, task: AgentTask, *, on_progress: Callable[[AgentProgress], None] | None = None,
     ) -> AgentResult:
-        task = AgentTask.model_validate(task.model_dump())
+        from harness.agent import bound_task
+        task = bound_task(task, self.dispatcher.scope.budget.limits)
         policy = self.dispatcher.scope.context_policy
         if policy is not None:
             task = task.model_copy(update={"limits": task.limits.model_copy(update={

@@ -17,6 +17,7 @@ from harness.events import (
     DispatchResolved,
     Envelope,
     Event,
+    ExecutionConfigured,
     EvaluationRunStarted,
     EvaluationRunFinished,
     ImprovementRecorded,
@@ -38,6 +39,7 @@ from harness.events import (
     ToolCallCompleted,
     ToolCallProposed,
     UserMessage,
+    UnknownEvent,
 )
 from harness.messages import Message
 from harness.context import ContextPolicy
@@ -47,10 +49,12 @@ from harness.agent import AgentResult
 from harness.types import CallId
 from harness.tasks import TaskState
 from harness.usage_budget import UsageState
+from harness.execution import ExecutionLimits
 
 
 @dataclass
 class FoldedState:
+    execution_limits: ExecutionLimits | None = None
     usage_budget: UsageState = field(default_factory=UsageState)
     tasks: TaskState = field(default_factory=TaskState)
     messages: list[Message] = field(default_factory=list)
@@ -95,6 +99,8 @@ def fold(envelopes: list[Envelope]) -> FoldedState:
         state.tasks.apply(env)
         state.usage_budget.apply(env.event)
         ev = env.event
+        if isinstance(ev, UnknownEvent) and ev.raw.get("type") == "execution_configured":
+            raise ValueError("invalid stored execution configuration; refusing to reset limits")
         state.last_seq = max(state.last_seq, env.seq)
         if isinstance(ev, UserMessage):
             state._append(env.seq, Message.user_text(ev.text))
@@ -106,6 +112,8 @@ def fold(envelopes: list[Envelope]) -> FoldedState:
             state.open_agent_runs[ev.run_id] = ev
         elif isinstance(ev, ContextPolicyConfigured):
             state.context_policy = ev.policy
+        elif isinstance(ev, ExecutionConfigured):
+            state.execution_limits = ExecutionLimits(**ev.limits)
         elif isinstance(ev, ModelSelected):
             state.model_selection = ev
         elif isinstance(ev, FallbackConfigured):

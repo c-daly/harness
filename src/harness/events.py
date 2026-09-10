@@ -7,7 +7,7 @@ never makes newer logs unreadable.
 
 from typing import Annotated, Any, ClassVar, Literal, Union
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from harness.blobs import BlobRef
 from harness.agent import AgentResult
@@ -59,6 +59,21 @@ class SessionResumed(_Event):
     runs as SessionStarted|SessionResumed ... SessionEnded; the fold ignores it."""
 
     type: Literal["session_resumed"] = "session_resumed"
+
+
+class ExecutionConfigured(_Event):
+    type: Literal["execution_configured"] = "execution_configured"
+    is_intent: ClassVar[bool] = True
+    limits: dict
+
+    @field_validator("limits")
+    @classmethod
+    def validate_limits(cls, value):
+        from dataclasses import asdict
+        from harness.execution import ExecutionLimits
+        if set(value) != set(asdict(ExecutionLimits())):
+            raise ValueError("execution configuration must record every limit")
+        return asdict(ExecutionLimits(**value))
 
 
 class UsageBudgetConfigured(_Event):
@@ -555,6 +570,7 @@ class UnknownEvent(_Event):
 
 Event = Annotated[
     Union[
+        ExecutionConfigured,
         UsageBudgetConfigured,
         UsageBudgetLinked,
         UsageAttemptStarted,

@@ -26,10 +26,12 @@ class ExecutionLimits:
     max_active_children: int = 16
     max_active_coordinators: int = 16
     coordination_timeout_seconds: float = 600.0
+    task_timeout_seconds: float = 600.0
+    inference_timeout_seconds: float = 120.0
 
     def __post_init__(self):
         for name, value in vars(self).items():
-            if name == "coordination_timeout_seconds":
+            if name.endswith("_timeout_seconds"):
                 if (type(value) not in (int, float) or not math.isfinite(value) or value <= 0):
                     raise ValueError(f"{name} must be positive and finite")
                 continue
@@ -106,3 +108,16 @@ class ExecutionScope:
 
 current_scope: ContextVar[ExecutionScope | None] = ContextVar("harness_execution_scope", default=None)
 current_model_call_id: ContextVar[str | None] = ContextVar("harness_model_call_id", default=None)
+current_agent_timeout: ContextVar[float | None] = ContextVar("harness_agent_timeout", default=None)
+
+
+def agent_timeout(configured: float | None) -> float:
+    """Default process timers follow the owned call; explicit adapter caps remain.
+
+    A context-local binding avoids mutating a provider shared by concurrent
+    children. Standalone adapter calls keep the historical 600 second default.
+    """
+    owned = current_agent_timeout.get()
+    if owned is None:
+        return configured if configured is not None else 600.0
+    return min(configured, owned) if configured is not None else owned
