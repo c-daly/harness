@@ -46,10 +46,12 @@ from harness.improvement import ExperimentResult
 from harness.agent import AgentResult
 from harness.types import CallId
 from harness.tasks import TaskState
+from harness.usage_budget import UsageState
 
 
 @dataclass
 class FoldedState:
+    usage_budget: UsageState = field(default_factory=UsageState)
     tasks: TaskState = field(default_factory=TaskState)
     messages: list[Message] = field(default_factory=list)
     # call_id -> seq of the proposing event; an intent with no terminal fact
@@ -91,6 +93,7 @@ def fold(envelopes: list[Envelope]) -> FoldedState:
     state = FoldedState()
     for env in envelopes:
         state.tasks.apply(env)
+        state.usage_budget.apply(env.event)
         ev = env.event
         state.last_seq = max(state.last_seq, env.seq)
         if isinstance(ev, UserMessage):

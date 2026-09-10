@@ -74,6 +74,7 @@ class SubagentRunner:
         agent: str | None, scope: ExecutionScope, on_result=None, requirements=None, requirement_title=None,
     ) -> DelegationResult:
         system_prompt = "You are a focused subagent. Complete the task and report."
+        scope.budget.usage.attach(parent)
         registry: ToolRegistry | FilteredRegistry = scope.registry
         limit: int | None = None
         chosen = model or self.default_model

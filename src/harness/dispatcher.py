@@ -417,6 +417,9 @@ class Dispatcher:
             deadline = time.monotonic() + request.timeout_seconds
             attempt = 0
             budget = self.scope.budget
+            stamped_pricing = dict(pricing_for(effective_model) if pricing_for is not None else (pricing or {}))
+            accounting = getattr(provider, "usage_accounting", "unknown")
+            accounting = accounting(effective_model) if callable(accounting) else accounting
             activity_before = (budget.tool_calls, budget.children)
             token = current_dispatch_tool.set(self.dispatch_tool)
             scope_token = current_scope.set(self.scope)
@@ -429,23 +432,47 @@ class Dispatcher:
                         if remaining <= 0:
                             raise TimeoutError("generation deadline exceeded")
                         attempt_request = request.model_copy(update={"timeout_seconds": remaining})
-                        if execution_kind == "agent":
-                            source = provider.complete(
-                                model=effective_model, messages=resolved_messages, tools=tools,
-                            )
-                            message, usage, stop_reason = await collect_bounded(
-                                source, attempt_request, on_chunk=observed,
-                            )
-                            if required_runtime is not None and message.tool_calls():
-                                raise ProviderError("agent runtime returned unexecuted tool proposals")
-                            result = InferenceResult(message, usage, stop_reason)
-                        else:
-                            bounded_provider = provider if hasattr(provider, "infer") else LegacyCompletionAdapter(provider)
-                            result = await infer(
-                                bounded_provider, attempt_request,
-                                on_chunk=observed,
-                            )
-                            message, usage, stop_reason = result.message, result.usage, result.stop_reason
+                        usage_id = budget.usage.begin(self.session, call_id=call.call_id,
+                            model=effective_model, purpose=purpose, attempt=attempt,
+                            pricing=stamped_pricing, accounting=accounting)
+                        attempt_usage = Usage()
+                        attempt_status = "failed"
+
+                        def measured(value):
+                            nonlocal attempt_usage
+                            # Provider reports are cumulative snapshots. Preserve
+                            # the high-water mark, including on malformed streams.
+                            attempt_usage = Usage(**{key: max(v for v in (old, value.as_dict()[key]) if v is not None)
+                                if old is not None or value.as_dict()[key] is not None else None
+                                for key, old in attempt_usage.as_dict().items()})
+
+                        try:
+                            if execution_kind == "agent":
+                                source = provider.complete(
+                                    model=effective_model, messages=resolved_messages, tools=tools,
+                                )
+                                message, usage, stop_reason = await collect_bounded(
+                                    source, attempt_request, on_chunk=observed, on_usage=measured,
+                                )
+                                if required_runtime is not None and message.tool_calls():
+                                    raise ProviderError("agent runtime returned unexecuted tool proposals")
+                                result = InferenceResult(message, usage, stop_reason)
+                            else:
+                                bounded_provider = provider if hasattr(provider, "infer") else LegacyCompletionAdapter(provider)
+                                result = await infer(
+                                    bounded_provider, attempt_request,
+                                    on_chunk=observed, on_usage=measured,
+                                )
+                                message, usage, stop_reason = result.message, result.usage, result.stop_reason
+                            attempt_status = "completed"
+                        except asyncio.CancelledError:
+                            attempt_status = "cancelled"
+                            raise
+                        finally:
+                            complete = attempt_status == "completed" and (
+                                usage.input_tokens == attempt_usage.input_tokens and
+                                usage.output_tokens == attempt_usage.output_tokens)
+                            budget.usage.finish(usage_id, attempt_usage, status=attempt_status, complete=complete)
                         break
                     except ProviderError as exc:
                         # Even a provider declared as inference can dispatch a
@@ -470,9 +497,6 @@ class Dispatcher:
                 current_dispatch_tool.reset(token)
                 current_scope.reset(scope_token)
                 current_model_call_id.reset(model_token)
-            stamped_pricing = (
-                pricing_for(effective_model) if pricing_for is not None else (pricing or {})
-            )
         except asyncio.CancelledError:
             self.session.append(ModelCallCancelled(call_id=call.call_id, duration_ms=elapsed()))
             raise

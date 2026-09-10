@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 import math
 from typing import TYPE_CHECKING
 from harness.resources import LocalResources
+from harness.usage_budget import UsageBudget
 
 if TYPE_CHECKING:
     from harness.context import ContextPolicy
@@ -43,8 +44,8 @@ class ExecutionBudget:
     Counts never refund work. Active-child capacity is released on all exits;
     exhaustion rejects a spawn rather than deadlocking ancestors waiting on
     descendants. Pure coordinators have separate active capacity but consume
-    the same cumulative descendant and depth limits. Shared token/cost limits
-    remain separate work.
+    the same cumulative descendant and depth limits. Usage stop limits use a
+    durable ledger shared by this tree.
     """
 
     limits: ExecutionLimits = field(default_factory=ExecutionLimits)
@@ -53,6 +54,7 @@ class ExecutionBudget:
     children: int = 0
     active_children: int = 0
     active_coordinators: int = 0
+    usage: UsageBudget = field(default_factory=UsageBudget)
 
     @property
     def busy(self) -> bool:

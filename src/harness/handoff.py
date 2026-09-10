@@ -190,6 +190,7 @@ def capture_scope(dispatcher):
         "context_bindings": context_bindings(dispatcher),
         "context_policy": dispatcher.scope.context_policy.model_dump(mode="json")
                           if dispatcher.scope.context_policy is not None else None,
+        "usage_limits": budget.usage.limits.model_dump(),
         "limits": asdict(budget.limits), "counts": {name: getattr(budget, name)
             for name in ("model_calls", "tool_calls", "children", "active_children", "active_coordinators")}}
 
@@ -403,6 +404,10 @@ class HandoffGuard:
 
     def check_scope(self):
         now, source = capture_scope(self.kernel.loop.dispatcher), self.checkpoint.scope
+        from harness.usage_budget import UsageLimits
+        current = UsageLimits(**now["usage_limits"])
+        if UsageLimits(**source.get("usage_limits", {})).narrow(current) != current:
+            raise ValueError("handoff cannot remove the source usage limits")
         if now["workspaces"] != source["workspaces"] or now["context_policy"] != source["context_policy"]:
             raise ValueError("workspace or context policy differs from the reconciled source scope")
         if (now["context_bindings"] != source["context_bindings"]

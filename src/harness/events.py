@@ -20,6 +20,7 @@ from harness.scheduling import LocalRequestObservation
 from harness.semantics import AssessmentObservation, SemanticObservation
 from harness.tasks import RequirementEvidence, TaskDefinition, TaskRequirement
 from harness.types import SCHEMA_VERSION, AgentId, CallId, ModelId, SessionId, ToolName
+from harness.usage_budget import UsageLimits
 
 
 class _Event(BaseModel):
@@ -58,6 +59,47 @@ class SessionResumed(_Event):
     runs as SessionStarted|SessionResumed ... SessionEnded; the fold ignores it."""
 
     type: Literal["session_resumed"] = "session_resumed"
+
+
+class UsageBudgetConfigured(_Event):
+    type: Literal["usage_budget_configured"] = "usage_budget_configured"
+    is_intent: ClassVar[bool] = True
+    limits: UsageLimits
+    untracked_prior_work: int = Field(default=0, ge=0, le=1, strict=True)
+
+
+class UsageBudgetLinked(_Event):
+    type: Literal["usage_budget_linked"] = "usage_budget_linked"
+    is_intent: ClassVar[bool] = True
+    root_session_id: SessionId
+
+
+class UsageAttemptStarted(_Event):
+    type: Literal["usage_attempt_started"] = "usage_attempt_started"
+    is_intent: ClassVar[bool] = True
+    id: str
+    source_session_id: SessionId
+    call_id: CallId
+    model: ModelId
+    purpose: str
+    attempt: int = Field(ge=0, strict=True)
+    pricing: dict[str, float]
+
+
+class UsageAttemptFinished(_Event):
+    type: Literal["usage_attempt_finished"] = "usage_attempt_finished"
+    id: str
+    input_tokens: int | None = Field(default=None, ge=0, strict=True)
+    output_tokens: int | None = Field(default=None, ge=0, strict=True)
+    complete: bool = Field(strict=True)
+    status: Literal["completed", "failed", "cancelled", "aborted"]
+
+
+class UsageBudgetBlocked(_Event):
+    type: Literal["usage_budget_blocked"] = "usage_budget_blocked"
+    source_session_id: SessionId
+    call_id: CallId
+    reason: str
 
 
 class ModelSelected(_Event):
@@ -513,6 +555,11 @@ class UnknownEvent(_Event):
 
 Event = Annotated[
     Union[
+        UsageBudgetConfigured,
+        UsageBudgetLinked,
+        UsageAttemptStarted,
+        UsageAttemptFinished,
+        UsageBudgetBlocked,
         SessionStarted,
         SessionEnded,
         SessionResumed,

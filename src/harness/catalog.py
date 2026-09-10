@@ -44,6 +44,7 @@ class ResolvedModel:
     verified: bool
     execution_kind: Literal["inference", "agent"] = "inference"
     local: LocalProfile | None = None
+    usage_accounting: Literal["reported", "unknown"] = "unknown"
 
     def pricing_dict(self) -> dict[str, float]:
         """Stamp-ready pricing for ModelCallCompleted; empty when unknown."""
@@ -84,6 +85,9 @@ class Catalog:
                 f"model {alias!r}: execution_kind must be {inferred_kind!r} for this backend"
             )
         local = LocalProfile.model_validate(entry["local"]) if "local" in entry else None
+        usage_accounting = entry.get("usage_accounting", "unknown")
+        if usage_accounting not in ("reported", "unknown"):
+            raise ValueError("usage_accounting must be reported or unknown")
         api_base = entry.get("api_base")
         if local is not None:
             if backend is not None or not route.startswith("openai/"):
@@ -106,6 +110,7 @@ class Catalog:
             verified=entry.get("verified", False),
             execution_kind=execution_kind,
             local=local,
+            usage_accounting=usage_accounting,
         )
 
     def aliases(self) -> tuple[str, ...]:

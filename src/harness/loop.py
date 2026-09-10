@@ -115,6 +115,7 @@ class AgentLoop:
 
     async def start(self) -> None:
         self.session.start()
+        self.dispatcher.scope.budget.usage.attach(self.session)
         self.record_model_selection()
         if self.dispatcher.scope.context_policy is not None:
             self.session.append(ContextPolicyConfigured(policy=self.dispatcher.scope.context_policy))

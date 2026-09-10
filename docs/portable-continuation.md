@@ -26,6 +26,13 @@ your chosen frontend or agent. `continuation.json` supplies the exact data and
 workspace separately and explicitly map any source paths to the destination.
 Absolute paths in recorded checks remain historical source paths.
 
+The `usage_budget` entry records the source root's shared usage stop limits,
+reported totals, unknown and pending accounting, and its event boundary. A root
+export uses the task's saved event prefix. A child export also reads one prefix
+of the linked root ledger and records that separate boundary. These figures
+describe source usage; the destination must establish its own budget enforcement.
+See [shared usage budgets](usage-budgets.md) for accounting and restart semantics.
+
 The package contains the selected task's recorded requests, all of its recorded
 attempts, requirements, evidence, review and acceptance notes, tool calls, and
 configured context snapshots. This can include private project or memory text

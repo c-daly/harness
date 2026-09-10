@@ -231,7 +231,9 @@ def task_package(base: Path, session_id: str, *, task_id: str | None = None):
             "checked_seq": checked_seq if evidence else None,
             "confirmation": {"source_seq": confirmation[0], "note": confirmation[1]} if confirmation else None,
             "status": "passed" if confirmation else evidence.status if evidence else "unverified"})
+    from harness.budget_cli import budget_snapshot
     package = {"format": "harness-continuation", "version": 1,
+        "usage_budget": budget_snapshot(base, session_id, events=events),
         "source": {"session_id": session_id, "through_seq": events[-1].seq, "recorded_at": events[-1].ts,
             "canonical_events_sha256": hashlib.sha256(b"".join(
                 (e.model_dump_json() + "\n").encode() for e in events)).hexdigest()},

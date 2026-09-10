@@ -99,6 +99,7 @@ async def collect_bounded(
     request: InferenceRequest,
     *,
     on_chunk: Callable[[Chunk], None] | None = None,
+    on_usage: Callable[[Usage], None] | None = None,
 ) -> tuple[Message, Usage, str]:
     """Bound an owned response stream without changing its execution kind.
 
@@ -112,6 +113,9 @@ async def collect_bounded(
         size = count = 0
         terminal = False
         async for chunk in source:
+            # Accounting survives a subsequently rejected frame or response.
+            if isinstance(chunk, UsageReport) and on_usage is not None:
+                on_usage(chunk.usage)
             count += 1
             # Include identifiers, signatures, metadata, and empty frames so an
             # adapter cannot evade limits by emitting many tiny/non-text chunks.
@@ -158,6 +162,7 @@ async def infer(
     request: InferenceRequest,
     *,
     on_chunk: Callable[[Chunk], None] | None = None,
+    on_usage: Callable[[Usage], None] | None = None,
 ) -> InferenceResult:
     # Copy and revalidate nested mutable values and model_copy bypasses at entry.
     request = InferenceRequest.model_validate(request.model_dump())
@@ -165,7 +170,7 @@ async def infer(
     method = getattr(provider, "infer", None)
     if method is None:
         raise ProviderError("provider has no bounded inference contract")
-    message, usage, stop = await collect_bounded(method(request), request, on_chunk=on_chunk)
+    message, usage, stop = await collect_bounded(method(request), request, on_chunk=on_chunk, on_usage=on_usage)
     if message.tool_calls() and request.tool_choice == "none":
         raise MalformedStreamError("inference proposed an unadvertised tool with tool_choice=none")
     if request.parallel_tool_calls is False and len(message.tool_calls()) > 1:
