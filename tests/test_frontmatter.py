@@ -141,6 +141,39 @@ def test_load_agent_valid_strategy_and_experts_loads(tmp_path):
     assert agent.experts == ("a", "b")
 
 
+@pytest.mark.parametrize("strategy", [None, "ensemble", "panel", "draft_refine"])
+@pytest.mark.parametrize("require_checks", ["true", "false"])
+def test_load_agent_rejects_explicit_require_checks_outside_escalation(
+    tmp_path, strategy, require_checks
+):
+    path = tmp_path / "bad.md"
+    strategy_fields = f"strategy: {strategy}\nexperts: [a, b]\n" if strategy else ""
+    path.write_text(
+        "---\nname: bad\ndescription: d\n"
+        f"{strategy_fields}require_checks: {require_checks}\n---\nbody"
+    )
+    with pytest.raises(FrontmatterError, match="only supported by the escalate strategy"):
+        load_agent(path)
+
+
+@pytest.mark.parametrize("strategy", [None, "ensemble", "panel", "draft_refine", "escalate"])
+def test_load_agent_allows_omitted_require_checks(tmp_path, strategy):
+    path = tmp_path / "default.md"
+    strategy_fields = f"strategy: {strategy}\nexperts: [a, b]\n" if strategy else ""
+    path.write_text(f"---\nname: default\ndescription: d\n{strategy_fields}---\nbody")
+    assert load_agent(path).require_checks is False
+
+
+@pytest.mark.parametrize("require_checks", [True, False])
+def test_load_agent_escalation_accepts_both_require_checks_values(tmp_path, require_checks):
+    path = tmp_path / "checked.md"
+    path.write_text(
+        "---\nname: checked\ndescription: d\nstrategy: escalate\nexperts: [a, b]\n"
+        f"require_checks: {str(require_checks).lower()}\n---\nbody"
+    )
+    assert load_agent(path).require_checks is require_checks
+
+
 def test_load_agent_rejects_non_positive_max_output_chars(tmp_path):
     path = tmp_path / "bad.md"
     path.write_text("---\nname: bad\ndescription: d\nmax_output_chars: 0\n---\nbody")

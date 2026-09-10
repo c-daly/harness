@@ -15,6 +15,7 @@ from harness.interaction import Resolver
 from harness.loop import AgentLoop
 from harness.provider import ModelProvider
 from harness.session import Session
+from harness.tasks import TaskRequirement, TaskService
 from harness.tools import FilteredRegistry, ToolRegistry, ToolSpec
 from harness.types import AgentId, ModelId, ToolName, new_session_id
 
@@ -57,15 +58,20 @@ class SubagentRunner:
     async def run_result(
         self, *, prompt: str, model: ModelId | None, parent: Session, agent: str | None = None,
         on_result: Callable[[DelegationResult], None] | None = None,
+        requirements: tuple[TaskRequirement, ...] | None = None,
+        requirement_title: str | None = None,
     ) -> DelegationResult:
+        if requirements is not None:
+            requirements = tuple(TaskRequirement.model_validate(r.model_dump()) for r in requirements)
         scope = self.scope_for(parent)
         parent = scope.session  # Includes calls through root-bound coordination tools.
         return await self._run_in_scope(prompt=prompt, model=model, parent=parent,
-                                        agent=agent, scope=scope, on_result=on_result)
+                                        agent=agent, scope=scope, on_result=on_result, requirements=requirements,
+                                        requirement_title=requirement_title)
 
     async def _run_in_scope(
         self, *, prompt: str, model: ModelId | None, parent: Session,
-        agent: str | None, scope: ExecutionScope, on_result=None,
+        agent: str | None, scope: ExecutionScope, on_result=None, requirements=None, requirement_title=None,
     ) -> DelegationResult:
         system_prompt = "You are a focused subagent. Complete the task and report."
         registry: ToolRegistry | FilteredRegistry = scope.registry
@@ -80,6 +86,8 @@ class SubagentRunner:
                 available = ", ".join(sorted(self.agents)) or "(none)"
                 return DelegationResult(status="blocked", reason=f"unknown agent {agent!r}; available: {available}")
             if definition.strategy is not None:
+                if requirements is not None:
+                    return DelegationResult(status="blocked", reason="recorded checks require a direct child execution")
                 # a coordination agent-def fans out to its experts instead of
                 # running one child loop (experts become children of `parent`)
                 from harness.mixture import Expert, run_strategy_result
@@ -92,7 +100,8 @@ class SubagentRunner:
                 token = current_scope.set(ExecutionScope(parent, narrowed, scope.budget, scope.depth,
                                                         scope.resources, scope.context_policy))
                 try:
-                    return await run_strategy_result(definition.strategy, self, parent, prompt, experts)
+                    return await run_strategy_result(definition.strategy, self, parent, prompt, experts,
+                                                     require_checks=definition.require_checks)
                 finally:
                     current_scope.reset(token)
             system_prompt = definition.body or system_prompt
@@ -114,12 +123,12 @@ class SubagentRunner:
             return await self._run_child(prompt=prompt, parent=parent, agent=agent,
                                          chosen=chosen, pinned=pinned, registry=registry,
                                          system_prompt=system_prompt, limit=limit, scope=scope,
-                                         on_result=on_result)
+                                         on_result=on_result, requirements=requirements, requirement_title=requirement_title)
         finally:
             scope.budget.release_child()
 
     async def _run_child(self, *, prompt, parent, agent, chosen, pinned, registry,
-                         system_prompt, limit, scope, on_result=None):
+                         system_prompt, limit, scope, on_result=None, requirements=None, requirement_title=None):
         child_id = new_session_id()
         spawn_env = parent.append(
             SubagentSpawned(
@@ -177,7 +186,16 @@ class SubagentRunner:
                                      scope.resources, scope.context_policy),
             )
             await loop.start()
-            result = await loop.run_task(AgentTask(prompt=prompt, agent=AgentId(agent) if agent else None))
+            task = AgentTask(prompt=prompt, agent=AgentId(agent) if agent else None)
+            if requirements is not None:
+                service = TaskService(child)
+                service.create(requirement_title if requirement_title is not None else prompt[:4096])
+                for requirement in requirements:
+                    service.add_requirement(requirement)
+                task = service.prepare(prompt).model_copy(update={"agent": task.agent})
+            result = await loop.run_task(task)
+            if requirements is not None:
+                service.check()
             try:
                 await loop.end()
             except Exception as exc:

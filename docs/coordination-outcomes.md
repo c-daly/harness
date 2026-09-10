@@ -114,14 +114,55 @@ the proposal is explicitly recorded as unreviewed. An optional escalation verifi
 an exact `PASS` first line. A successful premium fallback can recover execution
 while earlier failed participants remain in the report.
 
-These are advisory model-review policies. Without a verifier, escalation checks
-execution status and truncation only. Neither agreement, synthesis, `APPROVE`,
-nor `PASS` is evidence that the user's acceptance criteria have been met. Tracked
-requirements, checks and explicit operator acceptance remain separate. Replacing
-the advisory selection policy with evidence-based escalation is still an M5 gate.
+Escalation automatically uses the declared requirements of the task owning the
+actual calling run. It freezes that task's objective, requirements and source
+session/task/run/basis before starting a participant. Each cheap/premium child
+records those requirements before execution and receives them in its task context.
+Core then rechecks the child's immutable output/tool records, including matching
+arguments, successful terminal facts, current-run boundaries and artifact hashes.
+The report records `recorded_checks` as its selection policy. A passing cheap
+result avoids premium execution. A failed or unverified cheap result triggers
+premium, which must pass the same checks; an unsuccessful premium result remains
+incomplete with its answer and evidence retained. Truncated/incomplete executions
+cannot pass even when their recorded bytes match.
+
+The optional verifier remains advisory: it can request premium after a passing
+cheap check, but `PASS` cannot override failed evidence. Existing requirements
+always apply; a model cannot remove them by supplying tool arguments. The
+`require_checks: true` argument additionally blocks before spawning children if
+there is no active task with declared requirements. Configured escalation agents
+can set the same boolean in frontmatter. Core provides this behavior with both
+memory and agent-swarm absent; plugin workflow policy can invoke it normally.
+
+For a small reproducible terminal example, declare an exact-output requirement:
+
+```text
+/task new Return exactly READY
+/task require-json {"id":"answer","description":"Return READY without extra text","check":{"kind":"output","sha256":"c2e3ac47f4a325469c1a2d5f117e463ec943c721986d5d9f09ac4540b7d80526"}}
+```
+
+Then ask the agent to call `escalate` with the prompt `Return exactly READY`, your
+catalog's `cheap` and `premium` aliases, and `require_checks: true`. `/tools escalate`
+shows the full parameters. `/coordination` shows the frozen task source and each
+participant's passed/failed/unverified checks, with child event/artifact references.
+An interrupted verifier remains unconfirmed; a late read-only check cannot revive
+an interrupted coordinator. Inspection and replay do not rerun the checks or models.
+
+These checks establish matching recorded evidence, not general answer quality or
+current workspace correctness. A `tool_result` check does not itself execute a
+test. User-review requirements remain unverified and cannot be satisfied by a
+model opinion; a workflow with only review requirements cannot automatically pass.
+Selection evidence does not accept the parent task or automatically import child
+evidence into `/task check`; the parent's existing evidence rules and explicit
+operator acceptance still apply. Ordinary delegated subtasks do not implicitly
+inherit a parent's requirements: the gate uses the tracked task owning the actual
+calling run. With no such requirements and `require_checks` omitted/false,
+escalation retains its legacy execution/advisory policy. Agreement, synthesis,
+`APPROVE` and `PASS` alone do not verify user acceptance.
 
 [Portable export](portable-continuation.md) includes coordination reports attached
 to the exported task's tool calls and copies their aggregate answer artifacts.
+Checked reports also retain the frozen requirements/source and participant grades.
 Member output/report references remain source-session references; child logs and
 artifacts are not recursively exported. A saved start without a terminal travels
 as an unconfirmed entry without a report or aggregate output. Earlier logs may
