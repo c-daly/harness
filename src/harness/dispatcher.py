@@ -33,7 +33,7 @@ from harness.hooks import (
     ProposedToolCall,
     decision_to_payload,
 )
-from harness.execution import BudgetExceeded, ExecutionScope, current_model_call_id, current_scope
+from harness.execution import BudgetExceeded, ExecutionBudget, ExecutionScope, current_model_call_id, current_scope
 from harness.interaction import PermissionRequest, Resolver
 from harness.inference import (
     InferenceRequest, InferenceResult, LegacyCompletionAdapter, check_input, collect_bounded, infer,
@@ -92,7 +92,7 @@ class Dispatcher:
         self.resolver = resolver
         self.retry_delays = retry_delays
         self._redact = redact
-        self.scope = scope or ExecutionScope(session, registry)
+        self.scope = scope or ExecutionScope(session, registry, session._execution_budget or ExecutionBudget())
         self.terminal_tools: dict = {}
 
     async def _run_chain(self, action, *, purpose=None) -> tuple[object | None, str | None]:
@@ -164,6 +164,7 @@ class Dispatcher:
             return await self._dispatch_tool(call, purpose=purpose)
 
     async def _dispatch_tool(self, call: ProposedToolCall, *, purpose=None) -> ToolOutcome:
+        self.scope.budget.attach(self.session)
         active_run = current_agent_run.get()
         lineage = {"task_id": active_run.task.id, "agent_run_id": active_run.run_id,
                    "purpose": "conversation" if active_run.runtime == "harness" else "agent-task"} if active_run else {}
@@ -175,7 +176,7 @@ class Dispatcher:
         scope_token = current_scope.set(self.scope)
         try:
             try:
-                self.scope.budget.reserve_call("tool")
+                self.scope.budget.reserve_call("tool", session=self.session, call_id=call.call_id)
             except BudgetExceeded as exc:
                 result = ToolOutcome(text=str(exc), blob=None, is_error=True)
                 self.session.append(ToolCallCompleted(
@@ -382,6 +383,7 @@ class Dispatcher:
 
         call = ProposedModelCall(call_id=new_call_id(), model=model, pinned=pinned)
         observation.call_id = str(call.call_id)
+        self.scope.budget.attach(self.session)
         active_run = current_agent_run.get()
         lineage = {"task_id": active_run.task.id, "agent_run_id": active_run.run_id} if active_run else {}
         self.session.append(
@@ -463,7 +465,7 @@ class Dispatcher:
             try:
                 while True:
                     try:
-                        self.scope.budget.reserve_call("model")
+                        self.scope.budget.reserve_call("model", session=self.session, call_id=call.call_id)
                         remaining = deadline - time.monotonic()
                         if remaining <= 0:
                             raise TimeoutError("generation deadline exceeded")

@@ -50,11 +50,13 @@ from harness.types import CallId
 from harness.tasks import TaskState
 from harness.usage_budget import UsageState
 from harness.execution import ExecutionLimits
+from harness.execution_counts import ExecutionCounts
 
 
 @dataclass
 class FoldedState:
     execution_limits: ExecutionLimits | None = None
+    execution_counts: ExecutionCounts = field(default_factory=ExecutionCounts)
     usage_budget: UsageState = field(default_factory=UsageState)
     tasks: TaskState = field(default_factory=TaskState)
     messages: list[Message] = field(default_factory=list)
@@ -98,6 +100,7 @@ def fold(envelopes: list[Envelope]) -> FoldedState:
     for env in envelopes:
         state.tasks.apply(env)
         state.usage_budget.apply(env.event)
+        state.execution_counts.apply(env.event)
         ev = env.event
         if isinstance(ev, UnknownEvent) and ev.raw.get("type") == "execution_configured":
             # Additive fields parse as ExecutionConfigured. Only malformed

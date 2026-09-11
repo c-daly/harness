@@ -50,7 +50,13 @@ def render_execution(scope) -> str:
         "Task budgets cover native turns and external agents, including waiting; cleanup can finish after expiry.",
         "Inference budgets cap native conversational model requests; external agents use the task budget.",
         "Delegated work shares these limits; explicit task caps and enclosing deadlines can stop it sooner.",
-        "Settings persist on resume. Call/child counters are per process lifetime; token/cost accounting is durable.",
+        "Settings and admission counts persist on resume; active capacity starts empty. Token/cost accounting is separate.",
         "Change idle settings with /execution task-timeout-seconds 1800 (applies to subsequent tasks).",
     ]
+    if scope.budget.ledger.state.legacy:
+        lines.append("Earlier root work is counted conservatively; some recorded attempts may not have executed.")
+    if scope.budget.ledger.state.incomplete:
+        lines.append("Admission held: legacy descendant counts are incomplete. Export the task and start a new session.")
+    if not scope.budget.ledger.healthy:
+        lines.append("Admission held: an accounting write failed. Restart to reconcile the ledger.")
     return "\n".join([*lines, render_run_budgets(scope)])

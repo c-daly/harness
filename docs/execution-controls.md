@@ -137,12 +137,56 @@ session to the source's captured limits and records that narrowing. The source
 task's recorded timeout remains binding as well. Handoff's existing source
 version and effect-reconciliation requirements still apply.
 
-**Persistence of settings is distinct from persistence of consumption.** Call
-and descendant counters retain their existing per-process lifetime semantics;
-normal restart does not reconstruct them. The separate token/cost usage ledger
-is durable across restart and can only be tightened on resume; see
-[usage stop limits](usage-budgets.md). Execution configuration does not change
-those accounting rules or reserve a prediction of future usage.
+Model-attempt, tool-call and descendant admission counts are durable across
+restart. Every admitted reservation is recorded in the root session before
+execution; descendants share that owner and write ownership links in their own
+logs. Restoring a tracked root requires no child logs. A retry consumes another
+model reservation; a tool denied after admission still consumes its reservation.
+A refusal at the count limit does not. Failure, cancellation and a crash before
+execution do not refund admitted work. These are admission counts, not a claim
+that every reserved operation executed successfully. Counters cover Harness
+dispatch and coordination boundaries; unobserved provider-native calls and
+tools remain outside this accounting.
+
+Active child/coordinator slots, live activity and timers start empty on restart.
+Their historical records do not prove that an external process stopped; normal
+effect reconciliation and handoff requirements still apply. Restoring durable
+counts does not authorize independently resuming a child as a new budget root.
+The TUI checks ownership and stored count integrity before replacing its current
+session. Malformed records, regressing totals and duplicate reservations refuse
+resume before a new run boundary is appended.
+
+A failed or rewritten accounting append prevents the operation from running and
+holds further admission throughout the live tree. Restart reads the durable
+prefix: if the reservation reached disk before the failure, it remains consumed.
+Core writes use synchronous, fsynced intents on the owning event loop. Embedders
+must share the session's execution scope; a second independent ledger cannot
+claim the same live session. Pure in-memory budget objects without a session
+have no persistence guarantee.
+
+### Upgrading older sessions
+
+Older root-only sessions use a conservative projection of recorded model starts,
+retry announcements and tool proposals. This can overcount work that was refused
+or never reached execution; `/execution` makes that distinction visible. Existing
+coordinator starts count as descendants. A legacy child spawn makes total tree
+consumption unknown: admission is held, and the operator can export the task and
+start a new session. Increasing limits does not remove that accounting gap.
+Legacy child sessions cannot resume independently as fresh roots.
+
+New counts retain their source session, enclosing call ID where available, and
+monotone totals in `execution_counts_recorded` intents. An attachment record
+establishes the accounting boundary for each process lifetime; child logs carry
+`execution_counts_linked`. Older binaries preserve and skip these new event
+types, so they cannot enforce this ledger. If they resume and perform work, the
+next upgrade projects that interval conservatively and holds untracked child
+work instead of trusting the older saved totals. A handoff can retain a higher
+captured count through a durable record; it cannot reduce consumed work.
+
+The separate token/cost usage ledger remains durable and can only be tightened
+on resume; see [usage stop limits](usage-budgets.md). Admission counts do not
+estimate future tokens or reserve a monetary charge. Exact pre-call token/cost
+reservations remain separate work.
 
 A task timer expiring records an incomplete run with reason `deadline` and a
 visible “task time budget exhausted” error. A nested operation timing out before
@@ -164,6 +208,6 @@ Live task, call, descendant and wait observations are now available through
 Inspection does not change budgets or classify silence as a hang.
 
 Still pending: progress-sensitive supervision, suspected-stall
-inspection and recovery, extending independent provider/child/coordinator timers, durable call-count accounting,
+inspection and recovery, extending independent provider/child/coordinator timers, exact pre-call token/cost reservations,
 and live mixed-provider qualification. A heartbeat, emitted token, or silence
 alone does not establish useful progress or a hang.

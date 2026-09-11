@@ -177,6 +177,7 @@ def build_kernel(
     if resume_session_id is not None:
         def configure(state):
             nonlocal provider, model, model_pinned, pricing, pricing_for, context_policy, execution_limits
+            state.execution_counts.check_root()
             if execution_limits is None:
                 execution_limits = state.execution_limits
             if state.usage_budget.root_session_id is not None:
@@ -314,6 +315,7 @@ def build_kernel(
     if resumed:
         from harness.execution_controls import record_execution_limits
         try:
+            scope.budget.attach(session)
             record_execution_limits(loop.dispatcher)
         except BaseException:
             session.close()

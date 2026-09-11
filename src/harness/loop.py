@@ -115,6 +115,7 @@ class AgentLoop:
 
     async def start(self) -> None:
         self.session.start()
+        self.dispatcher.scope.budget.attach(self.session)
         self.dispatcher.scope.budget.usage.attach(self.session)
         from harness.execution_controls import record_execution_limits
         record_execution_limits(self.dispatcher)

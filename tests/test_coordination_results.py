@@ -136,7 +136,11 @@ async def test_model_budget_exhaustion_remains_incomplete_with_its_run_id(parent
 async def test_unreadable_child_terminal_does_not_hide_parent_failure(parent, tmp_path, monkeypatch):
     runner = _runner(tmp_path, FakeProvider([]))
 
-    def unreadable(*args, **kwargs):
+    def unreadable(base, session_id, **kwargs):
+        # Root admission restoration remains readable; only child terminal
+        # inspection fails in this scenario.
+        if session_id == parent.id:
+            return read_session(base, session_id, **kwargs)
         raise TornLogError("unreadable child")
 
     monkeypatch.setattr("harness.log.read_session", unreadable)

@@ -1586,7 +1586,7 @@ class HarnessApp(App[None]):
             events = read_session(base, session_id, repair=False)
             usage = project_usage(events)
             from harness.fold import fold
-            fold(events)  # validate stored execution configuration before teardown
+            fold(events).execution_counts.check_root()  # validate before teardown
             if usage.root_session_id is not None:
                 return f"shared usage accounting belongs to session {usage.root_session_id}; resume that root session"
             if selection is not None:

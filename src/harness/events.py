@@ -74,6 +74,27 @@ class ExecutionConfigured(_Event):
         return value  # Preserve newer fields through serialization; fold only supported limits.
 
 
+class ExecutionCountsRecorded(_Event):
+    """Root-owned admission totals, persisted before work; never refunded."""
+
+    type: Literal["execution_counts_recorded"] = "execution_counts_recorded"
+    is_intent: ClassVar[bool] = True
+    kind: Literal["attach", "model", "tool", "child", "coordinator", "retain"]
+    source_session_id: SessionId
+    call_id: CallId | None = None
+    model_calls: int = Field(ge=0, strict=True)
+    tool_calls: int = Field(ge=0, strict=True)
+    children: int = Field(ge=0, strict=True)
+    legacy: bool = Field(default=False, strict=True)
+    incomplete: bool = Field(default=False, strict=True)
+
+
+class ExecutionCountsLinked(_Event):
+    type: Literal["execution_counts_linked"] = "execution_counts_linked"
+    is_intent: ClassVar[bool] = True
+    root_session_id: SessionId
+
+
 class TaskBudgetExtended(_Event):
     """Durable operator grant for one live run; never restored as authority."""
 
@@ -588,6 +609,8 @@ class UnknownEvent(_Event):
 Event = Annotated[
     Union[
         ExecutionConfigured,
+        ExecutionCountsRecorded,
+        ExecutionCountsLinked,
         TaskBudgetExtended,
         UsageBudgetConfigured,
         UsageBudgetLinked,

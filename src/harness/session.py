@@ -64,6 +64,9 @@ class Session:
         # Optional derived task view, seeded from replay on first access. Keep
         # ordinary status/preparation off the log-reading path after that point.
         self._task_state = None
+        # One live owner prevents independent dispatchers from resetting admission.
+        self._execution_ledger = None
+        self._execution_budget = None
 
     def start(self) -> Envelope:
         if self._seq != 0:

@@ -12,6 +12,7 @@ from pathlib import Path
 from zipfile import ZIP_STORED, ZipFile, ZipInfo
 
 from harness.blobs import BlobStore
+from harness.execution_counts import counts_snapshot
 from harness.coordination import load_report
 from harness.events import (
     TaskBudgetExtended,
@@ -242,6 +243,7 @@ def task_package(base: Path, session_id: str, *, task_id: str | None = None):
     from harness.budget_cli import budget_snapshot
     package = {"format": "harness-continuation", "version": 1,
         "usage_budget": budget_snapshot(base, session_id, events=events),
+        "execution_counts": counts_snapshot(base, session_id, events=events),
         "source": {"session_id": session_id, "through_seq": events[-1].seq, "recorded_at": events[-1].ts,
             "canonical_events_sha256": hashlib.sha256(b"".join(
                 (e.model_dump_json() + "\n").encode() for e in events)).hexdigest()},

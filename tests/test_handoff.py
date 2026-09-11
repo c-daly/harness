@@ -121,7 +121,7 @@ async def test_handoff_keeps_identity_and_evidence_blocks_duplicate_calls_and_ex
         result = await kernel.handoffs.run(record.id)
         assert result.status == "completed" and result.task_id == task_id
         assert provider.native_calls == 1 and len(provider.requests) == 4
-        assert kernel.loop.dispatcher.scope.budget.model_calls >= counts + 4
+        assert kernel.loop.dispatcher.scope.budget.model_calls == counts + 4
         for request in provider.requests:
             assert "ORIGINAL ASSIGNMENT SENTINEL" not in str(request.messages)
         assert (provider.root / "A.txt").read_text() == "stage A\n"

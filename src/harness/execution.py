@@ -6,6 +6,7 @@ import math
 from typing import TYPE_CHECKING
 from harness.resources import LocalResources
 from harness.usage_budget import UsageBudget
+from harness.execution_counts import ExecutionLedger
 from harness.activity import ActivityTracker
 from harness.run_budgets import RunBudgets
 
@@ -61,13 +62,12 @@ class ExecutionBudget:
     exhaustion rejects a spawn rather than deadlocking ancestors waiting on
     descendants. Pure coordinators have separate active capacity but consume
     the same cumulative descendant and depth limits. Usage stop limits use a
-    durable ledger shared by this tree.
+    durable ledger shared by this tree. Admission totals are also root-owned
+    and durable; active capacity is never restored as live work.
     """
 
     limits: ExecutionLimits = field(default_factory=ExecutionLimits)
-    model_calls: int = 0
-    tool_calls: int = 0
-    children: int = 0
+    ledger: ExecutionLedger = field(default_factory=ExecutionLedger)
     active_children: int = 0
     active_coordinators: int = 0
     usage: UsageBudget = field(default_factory=UsageBudget)
@@ -75,25 +75,47 @@ class ExecutionBudget:
     runs: RunBudgets = field(default_factory=RunBudgets)
 
     @property
+    def model_calls(self):
+        return self.ledger.state.model_calls
+
+    @property
+    def tool_calls(self):
+        return self.ledger.state.tool_calls
+
+    @property
+    def children(self):
+        return self.ledger.state.children
+
+    def attach(self, session):
+        if session._execution_budget is not None and session._execution_budget is not self:
+            raise ValueError("session already has an execution budget; share its execution scope")
+        self.ledger.attach(session)
+        session._execution_budget = self
+
+    @property
     def busy(self) -> bool:
         return bool(self.active_children or self.active_coordinators)
 
-    def reserve_call(self, kind: str) -> None:
+    def reserve_call(self, kind: str, *, session=None, call_id=None) -> None:
         if kind not in ("model", "tool"):
             raise ValueError("unknown execution kind")
+        if session is not None:
+            self.attach(session)
         counter = f"{kind}_calls"
         limit = getattr(self.limits, f"max_{counter}")
         if getattr(self, counter) >= limit:
             raise BudgetExceeded(f"root execution budget: {counter} limit ({limit}) reached")
-        setattr(self, counter, getattr(self, counter) + 1)
+        self.ledger.reserve(kind, session, call_id=call_id)
 
-    def reserve_child(self, depth: int) -> None:
-        self._reserve_descendant(depth, coordinator=False)
+    def reserve_child(self, depth: int, *, session=None, call_id=None) -> None:
+        self._reserve_descendant(depth, coordinator=False, session=session, call_id=call_id)
 
-    def reserve_coordinator(self, depth: int) -> None:
-        self._reserve_descendant(depth, coordinator=True)
+    def reserve_coordinator(self, depth: int, *, session=None, call_id=None) -> None:
+        self._reserve_descendant(depth, coordinator=True, session=session, call_id=call_id)
 
-    def _reserve_descendant(self, depth: int, *, coordinator: bool) -> None:
+    def _reserve_descendant(self, depth: int, *, coordinator: bool, session=None, call_id=None) -> None:
+        if session is not None:
+            self.attach(session)
         if depth > self.limits.max_depth:
             raise BudgetExceeded(f"root execution budget: depth limit ({self.limits.max_depth}) reached")
         if self.children >= self.limits.max_children:
@@ -102,7 +124,7 @@ class ExecutionBudget:
         if getattr(self, counter) >= getattr(self.limits, f"max_{counter}"):
             label = "coordinator" if coordinator else "child"
             raise BudgetExceeded(f"root execution budget: active {label} capacity exhausted")
-        self.children += 1
+        self.ledger.reserve("coordinator" if coordinator else "child", session, call_id=call_id)
         setattr(self, counter, getattr(self, counter) + 1)
 
     def release_child(self) -> None:
