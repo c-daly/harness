@@ -96,8 +96,11 @@ recursive database copy.
 
 ## September 11 measurement
 
-The [final report](handoffs/2026-09-11-mixed-runtime/report.json) uses the shipped
-source, identified by per-file hashes. The [profile](handoffs/2026-09-11-mixed-runtime/profile.json)
+The [final report](handoffs/2026-09-11-mixed-runtime/report.json) measures the
+source committed as `48f4453`, identified by per-file hashes. It predates PR55's
+export-ownership review correction; that correction has automated regression
+coverage, without a repeat live-model measurement.
+The [profile](handoffs/2026-09-11-mixed-runtime/profile.json)
 records the installed Qwen3-8B Q4_K_M weights, llama.cpp 9603, RTX 5070,
 `openai/gpt-5` route and Codex CLI 0.154.0.
 
@@ -126,7 +129,7 @@ fixture tuning was used to get a passing result. The first driver version also
 incorrectly applied an inference-only setting to Codex and called startup on an
 already resumed session. Later attempts exposed and fixed the missing direct
 coordination export, then tightened child-reference ownership. Only the final
-attempt uses the complete shipped change. These repeated development attempts
+attempt uses the complete initial PR55 implementation. These repeated development attempts
 are not independent held-out qualification trials.
 
 The practical implication is to keep acceptance checks outside the solver.

@@ -123,14 +123,25 @@ def task_package(base: Path, session_id: str, *, task_id: str | None = None):
     def operation_owner(event, label):
         # Direct operator/API coordination has no tool-call ID. Require an
         # explicit owning run; temporal overlap with a task grants no ownership.
-        if event.agent_run_id is not None:
-            if event.call_id in calls and calls[event.call_id]["run_id"] != event.agent_run_id:
+        # Validate references against the whole prefix, including foreign-task
+        # and later proposals, before narrowing the operation to this task.
+        proposals = tool_proposals.get(event.call_id, [])
+        relevant = event.agent_run_id in owned or any(p.event.agent_run_id in owned for p in proposals)
+        if not relevant:
+            return False
+        if event.call_id is not None:
+            if len(proposals) != 1:
+                raise ExportError(f"{label} requires one owning tool proposal")
+            proposal = proposals[0]
+            if event.agent_run_id is not None and proposal.event.agent_run_id != event.agent_run_id:
                 raise ExportError(f"{label} owner does not match its tool call")
-            if event.agent_run_id in owned:
-                row = runs.get(event.agent_run_id)
-                if row is None or "finished_seq" in row:
-                    raise ExportError(f"{label} outside its agent run")
-        return event.call_id in calls or event.agent_run_id in owned
+            if proposal.seq >= env.seq:
+                raise ExportError(f"{label} precedes its owning tool proposal")
+        if event.agent_run_id in owned:
+            row = runs.get(event.agent_run_id)
+            if row is None or "finished_seq" in row:
+                raise ExportError(f"{label} outside its agent run")
+        return True
 
     for env in events:
         event = env.event

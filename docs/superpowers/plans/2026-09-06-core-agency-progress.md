@@ -3009,8 +3009,9 @@ daily use. PR54's final hosted Python 3.12/3.13 CI and review also passed.
 
 Hosted Python 3.12 CI failed the escalation interruption test: its 0.2-second
 coordinator budget could expire during the cheap child's persisted evidence
-checks, before the premium provider set the entry event. Python 3.13 CI and
-review passed. A controlled 0.3-second evidence-check delay reproduced the
+checks, before the premium provider set the entry event. Python 3.13 CI passed;
+a separate export-ownership review finding remained open. A controlled
+0.3-second evidence-check delay reproduced the
 Python 3.12 failure on the unchanged test.
 
 The fixture now allows a bounded setup window and expires the actual registered
@@ -3024,3 +3025,30 @@ Both interruption cases pass with the same injected delay (1.66 s), and all
 3.13 (20.52 s). Ruff and whitespace checks pass. The full suite and packaging
 were not repeated locally for this test-only correction; hosted CI reruns on
 the pushed commit.
+
+### PR55 review: validate call ownership across tasks
+
+The review found that export checked an operation's explicit owner against only
+the selected task's already-collected tool calls. An operation could therefore
+claim the selected task's run while referencing a different task's valid call.
+Green CI and a completed review check did not mean this finding was resolved.
+
+The exporter now checks relevant operations against every tool proposal in the
+captured session prefix before selecting task records. A non-null call must
+identify one earlier proposal, and an explicit run must match its recorded
+owner. This applies to coordination starts, terminals and child references,
+including incomplete coordination and foreign calls recorded later in the log.
+Valid direct operations and legacy tool ownership remain supported; unrelated
+work remains excluded.
+
+All eight new cross-task regressions reproduced the defect on the original
+exporter and pass with the fix. They verify that refusal writes no archive and
+leaves the source log unchanged. Two additional cases reject operations before
+their owning proposal with either explicit or legacy ownership. The full
+affected export, scripted mixed-workflow, coordination and escalation set passes
+**156 tests on Python 3.12 (29.27 s)** and **156 on Python 3.13 (30.37 s)**. Ruff
+and whitespace checks pass; the hosted matrix runs the full suite and packaging.
+
+The live measurement is retained unchanged: all 90 recorded source hashes match
+the initial implementation at `48f4453`. It predates this review fix and still
+reports its failed local correctness gate. No live model calls were repeated.
