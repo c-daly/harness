@@ -712,7 +712,7 @@ class HarnessApp(App[None]):
         with Vertical():
             with MathTranscriptStack(id="transcript-stack"):
                 yield MathTranscript(
-                    id="transcript", wrap=True, markup=False, max_lines=10_000
+                    id="transcript", wrap=True, markup=False, min_width=1, max_lines=10_000
                 )
             yield Static(id="live")
         with Vertical(id="input-area"):
