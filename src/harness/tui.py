@@ -1718,7 +1718,16 @@ class HarnessApp(App[None]):
             from harness.execution_controls import configure_execution, parse_overrides, render_execution
             try:
                 words = command.arg.split()
-                if words and words[0] == "extend":
+                if words and words[0] == "extend-coordinator":
+                    from harness.coordination_budgets import extend_coordination
+                    if len(words) != 3:
+                        raise ValueError("Usage: /execution extend-coordinator COORDINATOR_ID ADDITIONAL_SECONDS")
+                    granted = extend_coordination(self.kernel, words[1], float(words[2]))
+                    self.say("", f"Coordinator {granted.id[:8]} budget extended to {granted.timeout_seconds:g}s total.")
+                    self.say("", "Enclosing tasks and member agents keep their own caps. Use /activity to inspect them.")
+                    self._refresh_activity()
+                    return
+                elif words and words[0] == "extend":
                     from harness.run_budgets import extend_execution
                     if len(words) != 3:
                         raise ValueError("Usage: /execution extend RUN_ID ADDITIONAL_SECONDS")

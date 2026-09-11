@@ -250,10 +250,15 @@ async def test_task_and_delegation_settle_mutation_before_terminal_facts(
     try:
         await kernel.loop.start()
         work = asyncio.create_task(kernel.loop.run_task(AgentTask(prompt="write", limits=TaskLimits(
-            timeout_seconds=.15 if cause == "deadline" else 10))))
+            timeout_seconds=10))))
         assert await asyncio.to_thread(entered.wait, 3)
         if cause == "cancel":
             work.cancel()
+        else:
+            # Expire the real root timer after the file worker has entered.
+            runs = kernel.loop.dispatcher.scope.budget.runs._runs.values()
+            root, = [run for run in runs if run.session is kernel.session]
+            root.timer.reschedule(asyncio.get_running_loop().time())
         await asyncio.wait_for(notified.wait(), 3)
         root_events = read_session(kernel.session.base, kernel.session.id)
         assert not work.done() and fold(root_events).open_agent_runs
@@ -283,6 +288,8 @@ async def test_task_and_delegation_settle_mutation_before_terminal_facts(
     finally:
         release.set()
         if work is not None:
+            if not work.done():
+                work.cancel()
             await asyncio.gather(work, return_exceptions=True)
         if entered.is_set():
             assert await asyncio.to_thread(settled.wait, 3)

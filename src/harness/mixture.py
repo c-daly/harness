@@ -253,8 +253,14 @@ async def _coordinate(strategy, runner, parent, prompt, experts, *, judge=None, 
                     session_id=parent.id if parent is not None else "unattached",
                     kind="coordinator", label=strategy, phase="coordinating",
                     timeout=report["timeout_seconds"],
-                ):
-                    result = await execute()
+                ) as observation:
+                    with scope.budget.coordinations.track(session=parent, id=report["id"], strategy=strategy,
+                            timer=deadline, observation=observation,
+                            timeout_seconds=report["timeout_seconds"]) as active_budget:
+                        try:
+                            result = await execute()
+                        finally:
+                            report["timeout_seconds"] = active_budget.timeout_seconds
         except TimeoutError:
             if not deadline.expired():
                 finish(DelegationResult(status="failed", reason="TimeoutError"))

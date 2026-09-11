@@ -5,7 +5,7 @@ from pathlib import Path
 
 from harness.blobs import BlobIntegrityError, BlobStore, MissingBlobError
 from harness.coordination import load_report
-from harness.events import CoordinationFinished, CoordinationStarted
+from harness.events import CoordinationBudgetExtended, CoordinationFinished, CoordinationStarted
 from harness.log import TornLogError, read_session
 
 
@@ -16,9 +16,13 @@ def render_coordination(base, session_id):
     finished = {env.event.id for env in events if isinstance(env.event, CoordinationFinished)}
     for env in events:
         event = env.event
+        if isinstance(event, CoordinationBudgetExtended):
+            rows.append(f"Operator grant {event.coordination_id[:8]} in session {event.target_session_id}; "
+                        f"event {env.seq}: {event.previous_timeout_seconds:g}s to {event.timeout_seconds:g}s; "
+                        "recorded intent, not a live timer")
         if isinstance(event, CoordinationStarted) and event.id not in finished:
             rows.append(f"{event.strategy} {event.id[:8]}: completion unconfirmed; event {env.seq}; "
-                        f"deadline {event.timeout_seconds:g}s")
+                        f"initial deadline {event.timeout_seconds:g}s")
         if not isinstance(event, CoordinationFinished):
             continue
         report = load_report(blobs, event, session_id).model_dump(mode="json")

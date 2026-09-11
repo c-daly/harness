@@ -61,6 +61,11 @@ slots while awaiting their own tool calls.
 
 Each admitted coordination has a default 600-second overall deadline, spanning
 all its stages, including optional judges, critics, refiners and premium fallback.
+An operator can [extend a live coordinator](execution-controls.md#extend-a-live-coordinator)
+through `/execution extend-coordinator`, independently of root and member timers.
+The root logs each grant intent; the target's settled report records the applied
+total timeout. Inspection retains grant records without treating them as live
+timers or proof of completion. An unconfirmed start shows its initial deadline.
 Expiry returns `incomplete` with reason `coordination deadline`. Cancellation,
 deadline expiry or unexpected failure cancels and awaits outstanding siblings
 before publishing the aggregate terminal fact; completed participant outputs stay

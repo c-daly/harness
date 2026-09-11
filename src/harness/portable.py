@@ -17,7 +17,7 @@ from harness.coordination import load_report
 from harness.events import (
     TaskBudgetExtended, AgentRunCancelRequested,
     AgentRunFinished, AgentRunStarted, ContextPolicyConfigured, ContextSourceObserved,
-    CoordinationFinished, CoordinationStarted,
+    CoordinationBudgetExtended, CoordinationFinished, CoordinationStarted,
     DispatchResolved, ModelCallProposed, ModelCallStarted, SubagentFinished, SubagentSpawned,
     TaskChecked, TaskHandoffRecorded, ToolCallAborted, ToolCallCancelled, ToolCallCompleted, ToolCallProposed,
     UnknownEvent, UserMessage,
@@ -116,6 +116,7 @@ def task_package(base: Path, session_id: str, *, task_id: str | None = None):
     cancellations = []
     configurations = {}
     coordination = {}
+    coordination_grants = []
     current_policy = None
     active_roots = set()
 
@@ -208,6 +209,13 @@ def task_package(base: Path, session_id: str, *, task_id: str | None = None):
                 "id": event.id, "call_id": event.call_id, "strategy": event.strategy,
                 "status": "unconfirmed", "timeout_seconds": event.timeout_seconds,
                 "report": None, "output": None}
+        elif isinstance(event, CoordinationBudgetExtended) and (
+                event.target_session_id == session_id and event.coordination_id in coordination
+                or event.target_session_id in children):
+            coordination_grants.append({"source_seq": env.seq,
+                "coordination_id": event.coordination_id, "target_session_id": event.target_session_id,
+                "previous_timeout_seconds": event.previous_timeout_seconds,
+                "timeout_seconds": event.timeout_seconds, "actor": event.actor})
         elif isinstance(event, CoordinationFinished) and event.call_id in calls:
             previous = coordination.get(event.id, {})
             if previous and ("finished_seq" in previous or previous["call_id"] != event.call_id
@@ -251,6 +259,7 @@ def task_package(base: Path, session_id: str, *, task_id: str | None = None):
         "usage_budget": budget_snapshot(base, session_id, events=events),
         "execution_counts": counts_snapshot(base, session_id, events=events),
         "cancellation_requests": cancellations,
+        "coordination_budget_extensions": coordination_grants,
         "source": {"session_id": session_id, "through_seq": events[-1].seq, "recorded_at": events[-1].ts,
             "canonical_events_sha256": hashlib.sha256(b"".join(
                 (e.model_dump_json() + "\n").encode() for e in events)).hexdigest()},

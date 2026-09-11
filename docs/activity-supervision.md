@@ -127,6 +127,11 @@ Eligible root task timers can now receive an explicit operator extension through
 observation updates its deadline without counting the grant as task activity;
 other observed enclosing caps remain visible and binding.
 
+Core coordinators can receive their own explicit grants through
+[/execution extend-coordinator](execution-controls.md#extend-a-live-coordinator).
+`/execution` lists their IDs across the session tree. These grants update only
+the selected coordinator's observed deadline; root and member-agent caps remain.
+
 Live provider qualification, meaningful-progress assessment, suspected-stall
-recovery, and extension of independent provider/child/coordinator timers remain
+recovery, and extension of independent provider/child timers remain
 subsequent work.
