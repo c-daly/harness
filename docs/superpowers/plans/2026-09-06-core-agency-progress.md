@@ -1,7 +1,8 @@
 # Core agency implementation record
 
-Current implementation branch: `feat/execution-controls` (PR47), rebased at
-`2b0cda5` onto `main` at `edebdb5` after PR46 merged.
+Current implementation branch: `fix/inline-math-wrap`, based on `main` at
+`5a3d424` after PR47 merged. Core execution controls and their additive-event
+compatibility fix are now merged.
 Previous branches: `feat/evidence-escalation`, `feat/native-file-conflicts`, `fix/file-mutation-lifetime`, `feat/coordination-admission`, `feat/typed-coordination-results`, `feat/portable-task-export`, `feat/handoff-destination-recovery`, `feat/handoff-failure-qualification`, `feat/context-profile-comparison`, `docs/context-experiment-results`, `feat/context-eligibility`, `feat/context-selection-qualification`, `fix/bounded-compaction`, `fix/model-selection-continuity`, `feat/local-model-management`, `feat/assessment-improvement`, `feat/external-handoff`, `feat/assessment-evaluation`, `feat/supervised-improvement`, `feat/local-scheduling`, `feat/task-fallback`, `feat/semantic-context-progress`, `feat/local-assistant-m3`, `feat/resident-workflow`, `feat/task-completion-evidence`, `fix/inference-client-lifecycle`, `feat/local-response-profiles`, `feat/local-tool-recovery`, `feat/local-tool-planning`, `feat/local-qualification`, `feat/semantic-evaluation`, `feat/local-context`, `feat/local-readiness`, `feat/agent-runtimes`,
 and `feat/core-agency`.
 
@@ -2579,3 +2580,49 @@ additional fields, and TUI resume preflight/rebuild. **151 affected tests pass
 on each Python version** (3.13: 27.73 s; 3.12: 30.14 s); Ruff and whitespace
 checks pass. The full suite and packaging were not repeated for this localized
 review fix; the prior full-suite math-width limitation remains recorded above.
+
+
+## Terminal width validation and narrow transcript wrapping
+
+This increment follows PR47 from merged `main` at `5a3d424`. It resolves the
+math-width issue carried in the previous validation records and adds an actual
+narrow-window interface fix.
+
+**Diagnosis:** the prior test constructed `Console(width=78)` under `TERM=dumb`.
+Rich uses an 80-column fallback in that environment unless both dimensions are
+specified, so the renderer received 80 columns while the assertion required
+78. With explicit width and height, the existing renderer stays within its
+requested bounds. The old failure was a test-geometry defect; it did not
+establish a rendering overflow.
+
+**Product fix:** extending the final-compositor checks to a 52-column terminal
+exposed a separate, real issue. The transcript inherited RichLog's 78-column
+minimum, which clipped prose beyond the visible edge. Its minimum is now one
+column, allowing the normal shrink/wrap path to use the available viewport.
+This applies to ordinary prose, restored replies and mathematical replies.
+Sixel equation widgets remain bounded by the transcript viewport.
+
+**Coverage:** the mixed math/prose renderer is exercised at widths 12, 28, 40
+and 78, under both `dumb` and `xterm-256color`, with Braille and Sixel
+placeholders. Final-compositor checks cover widths 52, 80 and 120 with both
+rendering modes, including prose visibility and equation-widget bounds. A
+separate ordinary-prose check requires the whole answer to remain visible in
+the narrow terminal. The initial focused set passed **60 tests**.
+
+**Validation:** the complete Python 3.13 suite passed **2,085 tests, seven
+skipped** (448.17 s), with six existing MCP deprecation warnings. Python 3.12
+passed all **152 affected math/TUI tests** (195.56 s). All 225 source/test files
+remained unchanged throughout validation. Ruff, whitespace checks, offline
+sdist/wheel build, isolated installed CLI startup and all 82 module imports
+passed; all 83 packaged core files match source. This supersedes the earlier
+full-suite failure record for this candidate.
+These are automated layout checks. Historical RichLog lines still retain their
+render-time layout after resizing; this change does not implement history
+reflow or establish physical-terminal Sixel/daily-use qualification.
+
+**Roadmap:** M5's remaining runtime work includes progress/activity inspection,
+active-budget extension, durable consumption, mixed-agent qualification and
+isolated source-improvement promotion/rollback. M6's broader daily-use gates
+remain pending. The next core supervision increment should expose elapsed
+work, current phase and observed activity without calling silence a hang or
+automatically abandoning the user's task.
