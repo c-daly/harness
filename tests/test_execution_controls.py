@@ -1,6 +1,7 @@
 """Operator budgets survive restart without overriding task/source authority."""
 
 import asyncio
+import json
 from dataclasses import asdict
 from types import SimpleNamespace
 
@@ -8,7 +9,7 @@ import pytest
 
 from harness.agent import AgentTask, TaskLimits
 from harness.cli import build_kernel
-from harness.events import AgentRunStarted, ExecutionConfigured, UnknownEvent
+from harness.events import AgentRunStarted, Envelope, ExecutionConfigured, UnknownEvent, parse_envelope_line
 from harness.execution import ExecutionLimits
 from harness.execution_controls import configure_execution, parse_overrides
 from harness.fold import fold
@@ -26,6 +27,74 @@ async def kernel_at(base, provider=None, **kwargs):
 def starts(kernel):
     return [e.event for e in read_session(kernel.session.base, kernel.session.id)
             if isinstance(e.event, AgentRunStarted)]
+
+
+def future_configuration(limits):
+    """Wire payload from a newer writer, independent of this reader's model."""
+    raw = Envelope(session_id="future", seq=1, ts=0,
+                   event=ExecutionConfigured(limits=asdict(ExecutionLimits()))).model_dump(mode="json")
+    raw["event"]["limits"] = {**limits, "max_resident_steps": 12, "future_policy": {"mode": "bounded"}}
+    return raw
+
+
+def test_newer_execution_fields_round_trip_and_keep_supported_caps():
+    limits = ExecutionLimits(task_timeout_seconds=45, max_model_calls=3)
+    raw = future_configuration(asdict(limits))
+    parsed = parse_envelope_line(json.dumps(raw))
+    assert isinstance(parsed.event, ExecutionConfigured)
+    assert json.loads(parsed.model_dump_json()) == raw
+    assert fold([parsed]).execution_limits == limits
+
+
+@pytest.mark.parametrize("invalid", [None, "missing", "bool", "zero", "string", "nan"])
+async def test_resume_newer_execution_record_preserves_known_caps_or_refuses_corruption(tmp_path, invalid):
+    limits = ExecutionLimits(task_timeout_seconds=45, max_model_calls=3)
+    kernel = await kernel_at(tmp_path)
+    sid = kernel.session.id
+    kernel.session.close()
+    path = tmp_path / "sessions" / f"{sid}.jsonl"
+    wire = [json.loads(line) for line in path.read_text().splitlines()]
+    for envelope in wire:
+        if envelope["event"]["type"] == "execution_configured":
+            envelope["event"] = future_configuration(asdict(limits))["event"]
+            if invalid == "missing":
+                del envelope["event"]["limits"]["task_timeout_seconds"]
+            elif invalid is not None:
+                envelope["event"]["limits"]["task_timeout_seconds"] = {
+                    "bool": True, "zero": 0, "string": "45", "nan": float("nan"),
+                }[invalid]
+    path.write_text("".join(json.dumps(e) + "\n" for e in wire))
+    before = path.read_bytes()
+    if invalid is not None:
+        with pytest.raises(ValueError, match="invalid stored execution"):
+            await kernel_at(tmp_path, resume_session_id=sid)
+        assert path.read_bytes() == before
+    else:
+        resumed = await kernel_at(tmp_path, resume_session_id=sid)
+        try:
+            assert resumed.loop.dispatcher.scope.budget.limits == limits
+            assert path.read_bytes().startswith(before)
+            assert any(isinstance(e.event, ExecutionConfigured)
+                       and e.event.limits.get("max_resident_steps") == 12
+                       for e in read_session(tmp_path, sid))
+        finally:
+            resumed.session.close()
+
+
+async def test_tui_resume_accepts_newer_execution_fields_before_teardown(tmp_path):
+    from tests.test_tui import make_app
+    source = await kernel_at(tmp_path)
+    sid = source.session.id
+    values = future_configuration(asdict(ExecutionLimits(task_timeout_seconds=45)))["event"]["limits"]
+    source.session.append(ExecutionConfigured(limits=values))
+    source.session.close()
+    app = make_app(tmp_path)
+    async with app.run_test(size=(150, 45)) as pilot:
+        assert app._preflight_resume(sid) is None
+        await app._rebuild_kernel(sid)
+        await pilot.pause(.1)
+        assert app.kernel.session.id == sid
+        assert app.kernel.loop.dispatcher.scope.budget.limits.task_timeout_seconds == 45
 
 
 @pytest.mark.parametrize("name", ["task_timeout_seconds", "inference_timeout_seconds", "coordination_timeout_seconds"])

@@ -71,6 +71,13 @@ resetting limits. `/clear` inherits the current settings, while `/resume`
 restores the destination session's settings. TUI resume validates those records
 before tearing down the current session.
 
+Execution events allow additive fields from newer binaries: readers preserve
+those fields in the event payload and restore the limits they understand.
+Unknown limits are not enforced by an older binary. Missing or invalid known
+limits still refuse resume; an extra field cannot hide corrupted known values.
+Breaking schema changes require a new event type so older readers can preserve
+and skip it under the normal unknown-event contract.
+
 Changing settings does not refund already reserved work. Handoff narrows the
 session to the source's captured limits and records that narrowing. The source
 task's recorded timeout remains binding as well. Handoff's existing source

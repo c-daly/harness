@@ -100,6 +100,8 @@ def fold(envelopes: list[Envelope]) -> FoldedState:
         state.usage_budget.apply(env.event)
         ev = env.event
         if isinstance(ev, UnknownEvent) and ev.raw.get("type") == "execution_configured":
+            # Additive fields parse as ExecutionConfigured. Only malformed
+            # supported limits reach here; never silently reset those caps.
             raise ValueError("invalid stored execution configuration; refusing to reset limits")
         state.last_seq = max(state.last_seq, env.seq)
         if isinstance(ev, UserMessage):
@@ -113,7 +115,7 @@ def fold(envelopes: list[Envelope]) -> FoldedState:
         elif isinstance(ev, ContextPolicyConfigured):
             state.context_policy = ev.policy
         elif isinstance(ev, ExecutionConfigured):
-            state.execution_limits = ExecutionLimits(**ev.limits)
+            state.execution_limits = ExecutionLimits.from_record(ev.limits)
         elif isinstance(ev, ModelSelected):
             state.model_selection = ev
         elif isinstance(ev, FallbackConfigured):

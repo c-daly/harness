@@ -1,7 +1,7 @@
 """Core execution scope: cumulative authority and limits for one live session tree."""
 
 from contextvars import ContextVar
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 import math
 from typing import TYPE_CHECKING
 from harness.resources import LocalResources
@@ -28,6 +28,18 @@ class ExecutionLimits:
     coordination_timeout_seconds: float = 600.0
     task_timeout_seconds: float = 600.0
     inference_timeout_seconds: float = 120.0
+
+    @classmethod
+    def from_record(cls, values: dict) -> "ExecutionLimits":
+        """Project supported limits from an additive, forward-compatible record.
+
+        Missing or invalid known fields are corruption, not permission to use
+        defaults. New fields belong to newer readers and remain in the event.
+        """
+        names = {f.name for f in fields(cls)}
+        if not names <= values.keys():
+            raise ValueError("execution configuration must record every supported limit")
+        return cls(**{name: values[name] for name in names})
 
     def __post_init__(self):
         for name, value in vars(self).items():

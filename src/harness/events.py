@@ -69,11 +69,9 @@ class ExecutionConfigured(_Event):
     @field_validator("limits")
     @classmethod
     def validate_limits(cls, value):
-        from dataclasses import asdict
         from harness.execution import ExecutionLimits
-        if set(value) != set(asdict(ExecutionLimits())):
-            raise ValueError("execution configuration must record every limit")
-        return asdict(ExecutionLimits(**value))
+        ExecutionLimits.from_record(value)
+        return value  # Preserve newer fields through serialization; fold only supported limits.
 
 
 class UsageBudgetConfigured(_Event):

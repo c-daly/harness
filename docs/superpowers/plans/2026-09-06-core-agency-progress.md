@@ -1,8 +1,7 @@
 # Core agency implementation record
 
-Current implementation branch: `feat/execution-controls`, based on `b0e540b`
-from the still-open PR46 (`feat/shared-inference-budget`). This increment is
-stacked above PR46; it does not imply that shared usage accounting has merged.
+Current implementation branch: `feat/execution-controls` (PR47), rebased at
+`2b0cda5` onto `main` at `edebdb5` after PR46 merged.
 Previous branches: `feat/evidence-escalation`, `feat/native-file-conflicts`, `fix/file-mutation-lifetime`, `feat/coordination-admission`, `feat/typed-coordination-results`, `feat/portable-task-export`, `feat/handoff-destination-recovery`, `feat/handoff-failure-qualification`, `feat/context-profile-comparison`, `docs/context-experiment-results`, `feat/context-eligibility`, `feat/context-selection-qualification`, `fix/bounded-compaction`, `fix/model-selection-continuity`, `feat/local-model-management`, `feat/assessment-improvement`, `feat/external-handoff`, `feat/assessment-evaluation`, `feat/supervised-improvement`, `feat/local-scheduling`, `feat/task-fallback`, `feat/semantic-context-progress`, `feat/local-assistant-m3`, `feat/resident-workflow`, `feat/task-completion-evidence`, `fix/inference-client-lifecycle`, `feat/local-response-profiles`, `feat/local-tool-recovery`, `feat/local-tool-planning`, `feat/local-qualification`, `feat/semantic-evaluation`, `feat/local-context`, `feat/local-readiness`, `feat/agent-runtimes`,
 and `feat/core-agency`.
 
@@ -2563,3 +2562,20 @@ The broad suite also exposed `test_complex_inline_math_wraps_with_prose_in_docum
 exceeding its 78-cell width bound. The same assertion fails on an untouched
 archive of the `b0e540b` base in this environment. This is a separate existing
 rendering issue and remains open; it must not be described as a green full suite.
+
+### PR47 review: additive execution-event compatibility
+
+The review identified that exact-key validation classified execution events
+with newly added fields as corrupt and blocked rollback/resume. Readers now
+validate and restore every supported limit while preserving extra fields in
+the event payload. Missing or invalid known fields still refuse resume before
+any append; unknown limits cannot be enforced by an older binary. Breaking
+schema changes require a new event type under the existing preserve-and-skip
+contract.
+
+Eight regressions cover wire serialization, known-limit projection, successful
+restart with an unchanged source-log prefix, corrupt known fields despite
+additional fields, and TUI resume preflight/rebuild. **151 affected tests pass
+on each Python version** (3.13: 27.73 s; 3.12: 30.14 s); Ruff and whitespace
+checks pass. The full suite and packaging were not repeated for this localized
+review fix; the prior full-suite math-width limitation remains recorded above.
