@@ -33,6 +33,9 @@ class _RunBudget:
     blocked: str | None
 
     def refusal(self):
+        budget = self.session._execution_budget
+        if budget is not None and budget.controls.stopping(self.run_id):
+            return "run is finishing or cancelling"
         if self.owner.done() or self.owner.cancelling() or self.timer.expired():
             return "run is finishing or cancelling"
         if self.timer.when() <= self.owner.get_loop().time():

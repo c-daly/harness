@@ -95,6 +95,17 @@ class ExecutionCountsLinked(_Event):
     root_session_id: SessionId
 
 
+class AgentRunCancelRequested(_Event):
+    """Root operator intent; the execution outcome is recorded separately."""
+
+    type: Literal["agent_run_cancel_requested"] = "agent_run_cancel_requested"
+    is_intent: ClassVar[bool] = True
+    run_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    task_id: str = Field(min_length=1, max_length=128)
+    target_session_id: SessionId
+    actor: Literal["operator"] = "operator"
+
+
 class TaskBudgetExtended(_Event):
     """Durable operator grant for one live run; never restored as authority."""
 
@@ -612,6 +623,7 @@ Event = Annotated[
         ExecutionCountsRecorded,
         ExecutionCountsLinked,
         TaskBudgetExtended,
+        AgentRunCancelRequested,
         UsageBudgetConfigured,
         UsageBudgetLinked,
         UsageAttemptStarted,

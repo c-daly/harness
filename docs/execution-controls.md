@@ -207,6 +207,12 @@ Live task, call, descendant and wait observations are now available through
 [/activity](activity-supervision.md) and the TUI's persistent activity summary.
 Inspection does not change budgets or classify silence as a hang.
 
+`/activity cancel RUN_ID` requests an audited stop of one live agent run and
+its descendants while independent siblings can continue. It waits for cleanup,
+retains consumed counts and refuses time extensions for stopping runs. See
+[run cancellation](activity-supervision.md#cancel-one-live-run) for ownership,
+outcome and restart semantics.
+
 Still pending: progress-sensitive supervision, suspected-stall
 inspection and recovery, extending independent provider/child/coordinator timers, exact pre-call token/cost reservations,
 and live mixed-provider qualification. A heartbeat, emitted token, or silence

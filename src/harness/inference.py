@@ -145,13 +145,20 @@ async def collect_bounded(
                 on_chunk(chunk)
             yield chunk
 
+    from harness.task_cleanup import await_owned
     async with asyncio.timeout(request.timeout_seconds):
         try:
-            message, usage, stop = await collect(bounded())
+            # Keep the iterator's own finally blocks out of the caller's timer:
+            # overlapping task/request deadlines must not cancel cleanup twice.
+            message, usage, stop = await await_owned(asyncio.create_task(collect(bounded())))
         finally:
             close = getattr(source, "aclose", None)
             if close is not None:
-                await close()
+                async def close_source():
+                    await close()
+                await await_owned(
+                    asyncio.create_task(close_source()), cancel_on_interrupt=False,
+                )
     if stop == "unknown":
         raise MalformedStreamError("response stream ended without a terminal marker")
     return message, usage, stop

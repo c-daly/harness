@@ -62,7 +62,11 @@ async def test_coordinator_can_fill_all_worker_slots(parent, configured):
     try:
         await asyncio.wait_for(entered.wait(), 3)
         assert budget.active_children == 2 and budget.active_coordinators == 1 and budget.children == 3
-        assert seen == [(2, 1, 1), (2, 2, 1)]
+        # Independent run bodies may start after both child slots are reserved.
+        assert len(seen) == 2
+        assert all(depth == 2 and 1 <= active <= 2 and coordinators == 1
+                   for depth, active, coordinators in seen)
+        assert seen[-1][1] == 2
     finally:
         release.set()
         result = await asyncio.wait_for(task, 3)

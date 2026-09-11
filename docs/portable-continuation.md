@@ -41,6 +41,14 @@ and incomplete counts. These are historical admissions, including interrupted
 attempts, and do not establish destination limits or live child capacity. See
 [execution controls](execution-controls.md).
 
+The additive `cancellation_requests` entry retains explicit operator stop
+intents from the exported source prefix. It includes requests for the selected
+task's owned same-session runs and its recorded child sessions, with run/task/
+target-session IDs, actor and source sequence. A root log owns the request; a
+child log owns that child's terminal result. Exporting a child alone does not
+retrieve stop intents from its root. These records never cancel destination
+work and do not prove that cleanup or provider-native effects have settled.
+
 The package contains the selected task's recorded requests, all of its recorded
 attempts, requirements, evidence, review and acceptance notes, tool calls, and
 configured context snapshots. This can include private project or memory text
@@ -71,6 +79,7 @@ The JSON object declares `format: "harness-continuation"`, `version: 1`:
 | `child_sessions` | Delegated session references and recorded terminal status when available. Their private logs, internal effects and artifacts are not recursively exported. |
 | `coordination` | Additive version-1 field: coordination attached to this task's tool calls, with ID, call ID, source sequence, strategy/status and recorded deadline when available. Settled entries include a finish sequence, verified report and copied aggregate answer artifacts. A saved start adds its original start sequence; without a terminal, status is `unconfirmed` and report/output are absent. Reports retain disagreements and participant session/run/output references. Participant references remain in the source child stores and are not recursively exported; execution and advisory review never grant acceptance. Older packages may omit this field or its newer metadata. |
 | `execution_counts` | Additive version-1 field: shared admission totals, root ID and source sequence, whether the prefix ends in tracked accounting, and legacy/incomplete flags. No destination authority or live capacity. |
+| `cancellation_requests` | Additive version-1 field: operator stop intents with source sequence, run/task/target-session IDs and actor. Separate from terminal outcomes; never replayed as cancellation commands. Older packages may omit it. |
 | `reconciliations` | Explicit operator inspection notes and effect states from verified handoff records, with original sequence/run/basis and source record hashes. Source scope, allowed calls and execution bindings are excluded. These historical notes can guide inspection but do not grant destination authority or prove current file state. |
 | `artifacts` | Unique package-relative paths, byte sizes and SHA-256 digests for copied content. References elsewhere use the same shape. All referenced blobs are verified before publication. |
 | `limitations` | Human-readable continuation boundaries, also rendered in the Markdown entrypoint. |

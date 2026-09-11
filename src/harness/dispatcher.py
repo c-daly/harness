@@ -211,6 +211,7 @@ class Dispatcher:
                 ToolCallCompleted(call_id=call.call_id, result_text=denial, is_error=True)
             )
             return ToolOutcome(text=denial, blob=None, is_error=True)
+        self.scope.budget.controls.check_active()
         from harness.handoff import current_handoff
         guard = current_handoff.get()
         if guard is not None:
@@ -537,6 +538,7 @@ class Dispatcher:
                 current_scope.reset(scope_token)
                 current_model_call_id.reset(model_token)
                 current_agent_timeout.reset(timeout_token)
+            self.scope.budget.controls.check_active()
         except asyncio.CancelledError:
             self.session.append(ModelCallCancelled(call_id=call.call_id, duration_ms=elapsed()))
             raise
