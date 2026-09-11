@@ -120,6 +120,18 @@ def task_package(base: Path, session_id: str, *, task_id: str | None = None):
     current_policy = None
     active_roots = set()
 
+    def operation_owner(event, label):
+        # Direct operator/API coordination has no tool-call ID. Require an
+        # explicit owning run; temporal overlap with a task grants no ownership.
+        if event.agent_run_id is not None:
+            if event.call_id in calls and calls[event.call_id]["run_id"] != event.agent_run_id:
+                raise ExportError(f"{label} owner does not match its tool call")
+            if event.agent_run_id in owned:
+                row = runs.get(event.agent_run_id)
+                if row is None or "finished_seq" in row:
+                    raise ExportError(f"{label} outside its agent run")
+        return event.call_id in calls or event.agent_run_id in owned
+
     for env in events:
         event = env.event
         if isinstance(event, ContextPolicyConfigured):
@@ -196,17 +208,19 @@ def task_package(base: Path, session_id: str, *, task_id: str | None = None):
                 external.append({"source_seq": env.seq, "call_id": event.call_id,
                     "run_id": proposals[0].event.agent_run_id, "model": event.model,
                     "effects": "uninspected", "native_state": "not_exported"})
-        elif isinstance(event, SubagentSpawned) and (event.call_id in calls or active_roots):
+        elif isinstance(event, SubagentSpawned) and operation_owner(event, "child spawn"):
             children[event.child_session_id] = {"source_seq": env.seq,
                 "session_id": event.child_session_id, "call_id": event.call_id,
+                "run_id": event.agent_run_id,
                 "status": "unconfirmed", "contents": "not_exported"}
         elif isinstance(event, SubagentFinished) and event.child_session_id in children:
             children[event.child_session_id].update(status=event.status, finished_seq=env.seq)
-        elif isinstance(event, CoordinationStarted) and event.call_id in calls:
+        elif isinstance(event, CoordinationStarted) and operation_owner(event, "coordination"):
             if event.id in coordination:
                 raise ExportError("ambiguous reused coordination ID")
             coordination[event.id] = {"source_seq": env.seq, "started_seq": env.seq,
                 "id": event.id, "call_id": event.call_id, "strategy": event.strategy,
+                "run_id": event.agent_run_id,
                 "status": "unconfirmed", "timeout_seconds": event.timeout_seconds,
                 "report": None, "output": None}
         elif isinstance(event, CoordinationBudgetExtended) and (
@@ -216,15 +230,17 @@ def task_package(base: Path, session_id: str, *, task_id: str | None = None):
                 "coordination_id": event.coordination_id, "target_session_id": event.target_session_id,
                 "previous_timeout_seconds": event.previous_timeout_seconds,
                 "timeout_seconds": event.timeout_seconds, "actor": event.actor})
-        elif isinstance(event, CoordinationFinished) and event.call_id in calls:
+        elif isinstance(event, CoordinationFinished) and (operation_owner(event, "coordination") or event.id in coordination):
             previous = coordination.get(event.id, {})
             if previous and ("finished_seq" in previous or previous["call_id"] != event.call_id
-                             or previous["strategy"] != event.strategy):
+                             or previous["strategy"] != event.strategy
+                             or previous["run_id"] != event.agent_run_id):
                 raise ExportError("ambiguous coordination terminal")
             ref = artifacts.add(ref=event.report)
             report = load_report(artifacts.blobs, event, session_id)
             coordination[event.id] = {**previous, "source_seq": env.seq, "finished_seq": env.seq,
                 "id": event.id, "call_id": event.call_id, "strategy": event.strategy,
+                "run_id": event.agent_run_id,
                 "timeout_seconds": report.timeout_seconds,
                 "status": event.status, "report": ref, "output": artifacts.add(
                     ref=report.output) if report.output else None}
