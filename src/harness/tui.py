@@ -1045,6 +1045,7 @@ class HarnessApp(App[None]):
             inherit_model_selection=True,
             catalog_path=Path(self.catalog_path) if self.catalog_path is not None else None,
             execution_limits=old_kernel.loop.dispatcher.scope.budget.limits,
+            usage_limits=old_kernel.loop.dispatcher.scope.budget.usage.limits if resume_session_id is None else None,
             resources=old_kernel.resources,
             context_policy=old_kernel.context_policy if resume_session_id is None else None,
             fallback_policy=old_kernel.loop.fallback_policy,
@@ -1327,7 +1328,7 @@ class HarnessApp(App[None]):
             return
         command = parse_slash_command(text)
         if command is not None:
-            if command.name in self._plugin_commands and command.name not in {"task", "status", "semantics", "improvements", "handoff", "models", "export", "coordination"}:
+            if command.name in self._plugin_commands and command.name not in {"task", "status", "semantics", "improvements", "handoff", "models", "export", "coordination", "budget"}:
                 expanded = self._plugin_commands[command.name].body.replace("$ARGUMENTS", command.arg)
                 if not self._enqueue_prompt(expanded, expand_mentions=False):
                     return
@@ -1557,15 +1558,19 @@ class HarnessApp(App[None]):
         tail -- exactly what resume_session's own reopen would do a moment
         later -- but a LIVE lock is never touched. Returns None when it's
         safe to proceed, else a human-readable reason."""
-        from harness.log import SessionLockedError, TornLogError
+        from harness.log import SessionLockedError, TornLogError, read_session
         from harness.model_selection import read_model_selection, load_selected_catalog, ModelSelectionError
+        from harness.usage_budget import project_usage
 
         base = self.kernel.session.base
         try:
             selection = read_model_selection(base, session_id)
+            usage = project_usage(read_session(base, session_id, repair=False))
+            if usage.root_session_id is not None:
+                return f"shared usage accounting belongs to session {usage.root_session_id}; resume that root session"
             if selection is not None:
                 load_selected_catalog(selection, Path(self.catalog_path) if self.catalog_path else None)
-        except (SessionLockedError, TornLogError, OSError, ModelSelectionError) as exc:
+        except (SessionLockedError, TornLogError, OSError, ModelSelectionError, ValueError) as exc:
             return str(exc)
         return None
 
@@ -1635,7 +1640,7 @@ class HarnessApp(App[None]):
                 "",
                 "/help  /model [alias]  /thoughts [collapse|full|off]  /markdown [on|off]  "
                 "/clear  /compact [alias]  /resume  /panel  /tools [name]  /task  /status  /context  /resources  /models  /semantics  /improvements  "
-                "/handoff inspect|record|show|run  /export FILE.zip  /coordination  /quit  — @path mentions a file "
+                "/handoff inspect|record|show|run  /export FILE.zip  /coordination  /budget  /quit  — @path mentions a file "
                 "(Tab completes), read for the model only; F2 also toggles the activity panel",
             )
             self.say("", "/queue: inspect, edit, remove, pause, resume, clear; queued prompts are memory only")
@@ -1666,6 +1671,16 @@ class HarnessApp(App[None]):
             self._queue_command(command.arg)
         elif command.name == "task":
             self._task_command(command.arg)
+        elif command.name == "budget":
+            from harness.budget_cli import render_budget
+            if command.arg.strip():
+                self.say("! ", "Usage: /budget")
+                return
+            try:
+                for line in render_budget(self.kernel.session.base, self.kernel.session.id).splitlines():
+                    self.say("", line)
+            except Exception as exc:
+                self.say("! ", f"Budget inspection failed ({type(exc).__name__}).")
         elif command.name == "coordination":
             from harness.coordination_cli import render_coordination
             if command.arg.strip():

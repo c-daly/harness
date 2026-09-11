@@ -439,6 +439,12 @@ class CatalogProvider:
         except UnknownAliasError:
             return "inference"
 
+    def usage_accounting(self, model: ModelId) -> str:
+        try:
+            return self.catalog.resolve(str(model)).usage_accounting
+        except UnknownAliasError:
+            return "unknown"
+
     async def infer(self, request: "InferenceRequest") -> AsyncIterator[Chunk]:
         try:
             resolved = self.catalog.resolve(str(request.model))

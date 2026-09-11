@@ -13,6 +13,7 @@ from harness.hooks import HookBus
 from harness.controller import InteractionController
 from harness.context import ContextPolicy
 from harness.execution import ExecutionBudget, ExecutionLimits, ExecutionScope
+from harness.usage_budget import UsageBudget, UsageBudgetConfigError, UsageLimits
 from harness.fallback import FallbackPolicy
 from harness.interaction import HeadlessResolver, Resolver
 from harness.loop import AgentLoop
@@ -149,6 +150,7 @@ def build_kernel(
     explicit_model_selection: bool = False,
     catalog_path: Path | None = None,
     execution_limits: ExecutionLimits | None = None,
+    usage_limits: UsageLimits | None = None,
     resources=None,
     context_policy: ContextPolicy | None = None,
     inherit_context_policy: bool = True,
@@ -168,6 +170,10 @@ def build_kernel(
     if resume_session_id is not None:
         def configure(state):
             nonlocal provider, model, model_pinned, pricing, pricing_for, context_policy
+            if state.usage_budget.root_session_id is not None:
+                raise UsageBudgetConfigError(f"shared usage accounting belongs to session {state.usage_budget.root_session_id}; "
+                                 "resume that root session")
+            state.usage_budget.limits.narrow(usage_limits or UsageLimits())
             if inherit_model_selection and not explicit_model_selection and state.model_selection is not None:
                 from harness.model_selection import load_selected_catalog
                 catalog, resolved = load_selected_catalog(state.model_selection, catalog_path)
@@ -185,6 +191,11 @@ def build_kernel(
     else:
         session = Session(base_dir, new_session_id(), default_model=model)
         transcript = None
+    try:
+        usage_budget = UsageBudget.restore(session, usage_limits)
+    except BaseException:
+        session.close()
+        raise
     if native_tools:
         from harness.fold import fold
         from harness.log import TornLogError, read_session
@@ -285,7 +296,7 @@ def build_kernel(
         loop.record_model_selection()
     from harness.resources import LocalResources
     scope = ExecutionScope(session, effective_registry,
-                           ExecutionBudget(execution_limits or ExecutionLimits()),
+                           ExecutionBudget(execution_limits or ExecutionLimits(), usage=usage_budget),
                            resources=resources if resources is not None else LocalResources(),
                            context_policy=context_policy)
     loop.dispatcher.scope = scope
@@ -550,12 +561,24 @@ def _run_main() -> None:
         "--no-plugins", action="store_true", help="Disable plugin discovery entirely."
     )
     parser.add_argument("--workspace", type=Path, default=None)
+    parser.add_argument("--budget-input-tokens", type=int, default=None,
+                        help="Shared input-token stop limit; resumed sessions retain stricter stored limits.")
+    parser.add_argument("--budget-output-tokens", type=int, default=None,
+                        help="Shared output-token stop limit; already running calls may cross it.")
+    parser.add_argument("--budget-cost-usd", type=float, default=None,
+                        help="Shared estimated token-cost stop limit in USD; not a provider billing cap.")
     context_flags = parser.add_mutually_exclusive_group()
     context_flags.add_argument("--context-profile", type=Path,
                                help="TOML profile limiting history, input bytes, and exact tool names.")
     context_flags.add_argument("--no-context-profile", action="store_true",
                                help="Explicitly clear an inherited context profile when resuming.")
     args = parser.parse_args()
+    try:
+        usage_limits = UsageLimits(max_input_tokens=args.budget_input_tokens,
+                                  max_output_tokens=args.budget_output_tokens,
+                                  max_cost_usd=args.budget_cost_usd)
+    except ValueError as exc:
+        parser.error(str(exc))
     context_policy = None
     if args.context_profile is not None:
         try:
@@ -707,6 +730,7 @@ def _run_main() -> None:
             plugins=loaded_plugins,
             workspace_root=args.workspace,
             native_tools=True,
+            usage_limits=usage_limits,
             pricing_for=pricing_for,
             routing_rules=routing_rules,
             model_pinned=model_pinned,
@@ -741,6 +765,7 @@ def _run_main() -> None:
         context_policy=context_policy,
         inherit_context_policy=not args.no_context_profile,
         resume_session_id=resume_session_id,
+        usage_limits=usage_limits,
         permissions=engine,
         tags=args.tag,
         mcp=mcp_specs or None,
@@ -1005,6 +1030,10 @@ def _resources_subcommand(argv: list[str]) -> None:
 
 def main() -> None:
     argv = sys.argv[1:]
+    if argv and argv[0] == "budget":
+        from harness.budget_cli import main as budget_main
+        budget_main(argv[1:])
+        return
     if argv and argv[0] == "coordination":
         from harness.coordination_cli import main as coordination_main
         coordination_main(argv[1:])
@@ -1050,7 +1079,10 @@ def main() -> None:
         _import_subcommand(argv[1:])
         return
     from harness.model_selection import ModelSelectionError
+    from harness.execution import BudgetExceeded
     try:
         _run_main()
     except ModelSelectionError as exc:
         raise SystemExit(str(exc)) from None
+    except (BudgetExceeded, UsageBudgetConfigError) as exc:
+        raise SystemExit(f"stopped: {exc}") from None

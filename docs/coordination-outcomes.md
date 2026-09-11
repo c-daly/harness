@@ -1,5 +1,8 @@
 # Inspect delegated work
 
+Coordinated agents share the root session's [usage stop limits](usage-budgets.md).
+Use `/budget` to inspect their cumulative accounting, including failed attempts.
+
 Use `/coordination` in the terminal or inspect a saved session without starting
 a model or loading plugins:
 
