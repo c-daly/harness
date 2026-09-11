@@ -1,8 +1,8 @@
 # Core agency implementation record
 
-Current implementation branch: `fix/inline-math-wrap`, based on `main` at
-`5a3d424` after PR47 merged. Core execution controls and their additive-event
-compatibility fix are now merged.
+Current implementation branch: `feat/activity-supervision` (PR50), now
+merged with `main` at `71bf7aa` after PR49 merged. Core execution controls,
+additive-event compatibility, and the transcript-width fixes are included.
 Previous branches: `feat/evidence-escalation`, `feat/native-file-conflicts`, `fix/file-mutation-lifetime`, `feat/coordination-admission`, `feat/typed-coordination-results`, `feat/portable-task-export`, `feat/handoff-destination-recovery`, `feat/handoff-failure-qualification`, `feat/context-profile-comparison`, `docs/context-experiment-results`, `feat/context-eligibility`, `feat/context-selection-qualification`, `fix/bounded-compaction`, `fix/model-selection-continuity`, `feat/local-model-management`, `feat/assessment-improvement`, `feat/external-handoff`, `feat/assessment-evaluation`, `feat/supervised-improvement`, `feat/local-scheduling`, `feat/task-fallback`, `feat/semantic-context-progress`, `feat/local-assistant-m3`, `feat/resident-workflow`, `feat/task-completion-evidence`, `fix/inference-client-lifecycle`, `feat/local-response-profiles`, `feat/local-tool-recovery`, `feat/local-tool-planning`, `feat/local-qualification`, `feat/semantic-evaluation`, `feat/local-context`, `feat/local-readiness`, `feat/agent-runtimes`,
 and `feat/core-agency`.
 
@@ -2581,7 +2581,6 @@ on each Python version** (3.13: 27.73 s; 3.12: 30.14 s); Ruff and whitespace
 checks pass. The full suite and packaging were not repeated for this localized
 review fix; the prior full-suite math-width limitation remains recorded above.
 
-
 ## Terminal width validation and narrow transcript wrapping
 
 This increment follows PR47 from merged `main` at `5a3d424`. It resolves the
@@ -2626,3 +2625,71 @@ isolated source-improvement promotion/rollback. M6's broader daily-use gates
 remain pending. The next core supervision increment should expose elapsed
 work, current phase and observed activity without calling silence a hang or
 automatically abandoning the user's task.
+
+## Core live activity and explicit waits
+
+The live session tree now shares an observation tracker alongside its execution
+budget. Native and typed external task runs, model/tool calls, and coordinators
+expose elapsed time, observed phase, last activity, delivered stream-event
+counts, identifiers and parent ownership, and remaining observed enclosing
+budgets. Permission, local capacity, local readiness, and retry waits occupy
+separate entries, so a concurrent child's activity cannot erase another wait.
+Normal memory remains a context tool; memory and swarm remain plugins.
+
+The TUI refreshes a compact activity summary once per second during silent
+provider waits. Core `/activity` provides detailed read-only inspection while
+work runs, preserves the draft and queue, and cannot be shadowed by a plugin.
+Embedding frontends can read frozen core snapshots on the owning event loop.
+Only active metadata is retained; inspection does not write the log or invoke
+inference. Cancellation/failure/success remove entries after wrapped cleanup,
+late callbacks cannot revive them, and restart begins with no live entries.
+
+This is observation for operator supervision. Stream events and child activity
+are not evidence of useful progress, and silence is not a hang verdict. Existing
+hard budgets continue to apply. Provider-internal work may be unobserved, and
+stricter adapter/context timers can stop work before the displayed enclosing
+budget. See [activity inspection](../../activity-supervision.md).
+
+Thirteen new regressions
+cover native and typed external ownership, concurrent waits, inherited budgets,
+cleanup on four outcomes, retry cancellation, local admission/readiness,
+coordinator descendants, restart, and final TUI composition at 60/120 columns.
+Full Python 3.13 validation reports **2,076 passed, 7 skipped, 1 failed, 6
+existing MCP deprecation warnings in 449.00 s**. The sole failure is the
+unchanged `test_complex_inline_math_wraps_with_prose_in_document_order` width
+assertion, also reproduced on an untouched archive of `main` at `5a3d424`.
+This was the pre-merge result. PR49 fixes that fixture and narrow transcript
+wrapping and is now included through the merge recorded below. **387 affected
+tests pass on Python 3.12 in
+246.09 s**. Ruff, whitespace checks, offline wheel/sdist build, isolated
+installed CLI and all module imports pass. All 84 packaged core files match
+source; all 227 source/test hashes remained unchanged during validation.
+
+A local metadata-only diagnostic delivered 200,000 observations in
+20 batches at a median batch mean of 0.181 microseconds/event, retained two
+active entries, and removed both on completion. This measures tracker overhead
+on this host, not frontend latency or live provider performance.
+
+**Remaining:** progress assessment and suspected-stall recovery; operator
+extension of active budgets; durable call/descendant counters and exact pre-call
+usage reservations; live mixed-agent accounting and plugin reconciliation;
+edit/worktree ownership; isolated source-improvement validation/promotion/
+rollback; and broader daily-use qualification. M5 and M6 remain in progress.
+
+### PR50 merge: retain transcript-width and activity records
+
+Merged `main` at `71bf7aa` after PR49 merged. The conflicts were confined to
+this document's current-branch description and appended implementation records;
+both records are retained in order. The TUI's narrow-transcript fix merged
+without manual application-code edits.
+
+The initial combined run exposed a timing assumption in the existing MCP
+stderr test: it submitted work and exited before startup had completed after
+a fixed half-second delay. Its log lacked `session_started`; an isolated run
+passed. The test now waits for that recorded startup event, with a bounded
+failure timeout, and runs cleanup even if the readiness wait fails.
+
+Final math/TUI/activity checks pass **165 tests on Python 3.13 (200.83 s)** and
+**165 on Python 3.12 (201.39 s)**, including the previously failing math-width
+assertion and the corrected MCP startup test. Ruff and whitespace checks pass.
+The full suite and packaging were not repeated for this merge resolution.

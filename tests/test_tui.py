@@ -1127,14 +1127,19 @@ async def test_tui_pipes_mcp_child_stderr_to_file(tmp_path):
         mcp=[fixture_stdio_spec()],
     )
     app = HarnessApp(kernel)
-    async with app.run_test() as pilot:
-        await pilot.pause(0.5)  # checklist mounts
-        await pilot.press("enter")  # accept defaults -- default_enabled=True
-        await pilot.pause(0.5)  # mcp start + session driver
-        await pilot.click("#prompt")
-        await pilot.press(*"hi", "enter")
-        await pilot.pause(0.3)
     try:
+        async with app.run_test() as pilot:
+            await pilot.pause(0.5)  # checklist mounts
+            await pilot.press("enter")  # accept defaults -- default_enabled=True
+            # Startup includes a real subprocess and tool discovery; its duration
+            # depends on host load. Do not end the app before that work finishes.
+            async with asyncio.timeout(5):
+                while not any(e.event.type == "session_started"
+                              for e in read_session(tmp_path, kernel.session.id)):
+                    await pilot.pause(0.05)
+            await pilot.click("#prompt")
+            await pilot.press(*"hi", "enter")
+            await pilot.pause(0.3)
         errlog_path = tmp_path / "sessions" / str(kernel.session.id) / "mcp-stderr.log"
         assert errlog_path.exists()
         assert "ListToolsRequest" in errlog_path.read_text()

@@ -10,6 +10,7 @@ from typing import Callable
 
 from harness.blobs import INLINE_THRESHOLD, BlobRef, BlobStore
 from harness.agent import current_agent_run
+from harness.activity import current_activity, waiting
 from harness.errors import ProviderError
 from harness.events import (
     DispatchResolved,
@@ -125,11 +126,12 @@ class Dispatcher:
                 PermissionRequested(call_id=action.call_id, reason=outcome.ask.reason)
             )
             try:
-                allowed = await self.resolver.resolve(
-                    PermissionRequest(
-                        call_id=action.call_id, action=outcome.effective, reason=outcome.ask.reason
+                with waiting("permission"):
+                    allowed = await self.resolver.resolve(
+                        PermissionRequest(
+                            call_id=action.call_id, action=outcome.effective, reason=outcome.ask.reason
+                        )
                     )
-                )
             except asyncio.CancelledError:
                 self.session.append(
                     PermissionResolved(
@@ -154,6 +156,14 @@ class Dispatcher:
         return outcome.effective, None
 
     async def dispatch_tool(self, call: ProposedToolCall, *, purpose=None) -> ToolOutcome:
+        with self.scope.budget.activity.track(
+            session_id=self.session.id, kind="tool", label=str(call.tool),
+            call_id=str(call.call_id),
+            phase="reading context" if purpose == "context" else "tool execution",
+        ):
+            return await self._dispatch_tool(call, purpose=purpose)
+
+    async def _dispatch_tool(self, call: ProposedToolCall, *, purpose=None) -> ToolOutcome:
         active_run = current_agent_run.get()
         lineage = {"task_id": active_run.task.id, "agent_run_id": active_run.run_id,
                    "purpose": "conversation" if active_run.runtime == "harness" else "agent-task"} if active_run else {}
@@ -215,6 +225,7 @@ class Dispatcher:
             call_id=call.call_id, kind="tool", tool=effective.tool, args=deepcopy(dict(effective.args))
         )
         self.session.append(resolved)
+        current_activity.get().update(label=str(effective.tool))
         started = time.monotonic()
         try:
             token = set_current_call_id(call.call_id)
@@ -323,6 +334,20 @@ class Dispatcher:
         self, *, provider, request: InferenceRequest, allow_agent: bool,
         pricing, pricing_for, pinned, on_chunk, required_runtime=None, exact_model=False,
     ) -> InferenceResult:
+        with self.scope.budget.activity.track(
+            session_id=self.session.id, kind="model", label=str(request.model), phase="dispatch",
+        ):
+            return await self._generate(
+                provider=provider, request=request, allow_agent=allow_agent, pricing=pricing,
+                pricing_for=pricing_for, pinned=pinned, on_chunk=on_chunk,
+                required_runtime=required_runtime, exact_model=exact_model,
+            )
+
+    async def _generate(
+        self, *, provider, request: InferenceRequest, allow_agent: bool,
+        pricing, pricing_for, pinned, on_chunk, required_runtime=None, exact_model=False,
+    ) -> InferenceResult:
+        observation = current_activity.get()
         request = InferenceRequest.model_validate(request.model_dump())
         policy = self.scope.context_policy
         if policy is not None and policy.response is not None and request.purpose in ("conversation", "agent-task"):
@@ -348,6 +373,7 @@ class Dispatcher:
             return "inference" if hasattr(provider, "infer") else "legacy"
 
         def observed(chunk):
+            observation.touch("stream event", stream=True)
             if on_chunk is not None:
                 try:
                     on_chunk(chunk)
@@ -355,6 +381,7 @@ class Dispatcher:
                     pass  # frontend failure must not break dispatch
 
         call = ProposedModelCall(call_id=new_call_id(), model=model, pinned=pinned)
+        observation.call_id = str(call.call_id)
         active_run = current_agent_run.get()
         lineage = {"task_id": active_run.task.id, "agent_run_id": active_run.run_id} if active_run else {}
         self.session.append(
@@ -420,6 +447,8 @@ class Dispatcher:
             })
             check_input(request)
             deadline = time.monotonic() + request.timeout_seconds
+            observation.update(label=str(effective_model), deadline=deadline,
+                               phase="agent execution" if execution_kind == "agent" else "inference")
             attempt = 0
             budget = self.scope.budget
             stamped_pricing = dict(pricing_for(effective_model) if pricing_for is not None else (pricing or {}))
@@ -499,7 +528,8 @@ class Dispatcher:
                         remaining = deadline - time.monotonic()
                         if delay >= remaining:
                             raise TimeoutError("inference deadline exceeded during retry") from exc
-                        await asyncio.sleep(delay)
+                        with waiting("retry delay"):
+                            await asyncio.sleep(delay)
             finally:
                 current_dispatch_tool.reset(token)
                 current_scope.reset(scope_token)

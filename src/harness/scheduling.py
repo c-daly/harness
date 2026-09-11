@@ -133,7 +133,9 @@ class LocalScheduler:
             else:
                 lane.waiting.append(ticket)
                 record("queued", "waiting")
-            await ticket.future
+            from harness.activity import waiting
+            with waiting("local capacity"):
+                await ticket.future
             ticket.wait_ms = (time.monotonic() - ticket.started) * 1000
             record("acquired", "capacity")
             token = _held_groups.set(_held_groups.get() | {key})

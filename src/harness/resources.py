@@ -392,12 +392,14 @@ class LocalResources:
 
     @asynccontextmanager
     async def _use_ready(self, resolved, *, emit, background=False):
-        async with self._locks.setdefault(resolved.alias, asyncio.Lock()):
-            observation = await self._ready(resolved, emit, background=background)
-            if observation.status != "ready":
-                raise LocalUnavailable(f"local model {resolved.alias}: {observation.status} ({observation.reason})")
-            self._record(resolved, "busy", "active_requests", emit, evidence="local_activity", cache=False)
-            self._active[resolved.alias] = self._active.get(resolved.alias, 0) + 1
+        from harness.activity import waiting
+        with waiting("local readiness"):
+            async with self._locks.setdefault(resolved.alias, asyncio.Lock()):
+                observation = await self._ready(resolved, emit, background=background)
+                if observation.status != "ready":
+                    raise LocalUnavailable(f"local model {resolved.alias}: {observation.status} ({observation.reason})")
+                self._record(resolved, "busy", "active_requests", emit, evidence="local_activity", cache=False)
+                self._active[resolved.alias] = self._active.get(resolved.alias, 0) + 1
         try:
             yield observation
         except BaseException:

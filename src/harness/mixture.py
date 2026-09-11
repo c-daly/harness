@@ -249,7 +249,12 @@ async def _coordinate(strategy, runner, parent, prompt, experts, *, judge=None, 
         deadline = asyncio.timeout(report["timeout_seconds"])
         try:
             async with deadline:
-                result = await execute()
+                with scope.budget.activity.track(
+                    session_id=parent.id if parent is not None else "unattached",
+                    kind="coordinator", label=strategy, phase="coordinating",
+                    timeout=report["timeout_seconds"],
+                ):
+                    result = await execute()
         except TimeoutError:
             if not deadline.expired():
                 finish(DelegationResult(status="failed", reason="TimeoutError"))
