@@ -3118,3 +3118,27 @@ driver hashes remained frozen through the final full runs. Ruff, whitespace
 checks, source/wheel builds, the clean installed CLI and all 88 module imports
 pass. All 89 packaged core Python files match source. These results qualify
 the controlled contracts, not live model quality or daily use.
+
+### PR56 review: preserve passing experts when synthesis fails
+
+Review found that a judge execution failure could still produce a failed
+coordination with empty aggregate output after experts had passed their checks.
+The checked-ensemble path now returns incomplete synthesis with the passing
+candidate texts and any delivered judge output under separate labels. It
+preserves each member's original status/evidence and does not declare an expert
+fallback successful. Ordinary judge exceptions expose only their recorded error
+class; coordinator cancellation and deadline expiry keep their own terminal
+reason and cleanup behavior.
+
+Five new regressions reproduced the loss for exceptions and failed, blocked,
+cancelled or partial deliveries. A real native-provider failure also checks
+child settlement. Two interruption cases confirm the recovery path cannot
+swallow coordinator cancellation or timeout. All 27 checked-ensemble tests pass
+(6.90 s) before the full supported-version reruns.
+
+The complete correction passes **2,288 tests on Python 3.13 (587.32 s)** and
+**2,288 on Python 3.12 (600.17 s)**, each with seven skips and six existing MCP
+warnings. All 240 source/test/driver hashes stayed fixed through those reruns.
+Ruff, whitespace, source/wheel builds and the clean installed CLI/88-module
+smoke pass; all 89 packaged core files match the corrected source. The PR now
+adds 41 regression cases overall. Live model measurements remain unchanged.

@@ -179,9 +179,21 @@ async def _coordinate(strategy, runner, parent, prompt, experts, *, judge=None, 
                 report["gate"] = "synthesis" if judge else "text_vote"
             if judge:
                 answers = "\n\n".join(f"[{i + 1}] {r.text}" for i, r in enumerate(usable))
-                answer = await run(judge, "judge", _SYNTH_PROMPT.format(task=prompt, answers=answers))
-                if requirements is not None and not passed_checks(members[-1]) and answer.status == "completed":
-                    answer = answer.model_copy(update={"status": "incomplete", "reason": "judge checks failed or unverified"})
+
+                def incomplete_synthesis(answer=None):
+                    retained = f"Passing expert candidates (synthesis incomplete):\n\n{answers}"
+                    if answer is not None and answer.text:
+                        retained += f"\n\nUnverified judge output:\n{answer.text}"
+                    return DelegationResult(status="incomplete", reason="judge synthesis failed or unverified", text=retained)
+
+                try:
+                    answer = await run(judge, "judge", _SYNTH_PROMPT.format(task=prompt, answers=answers))
+                except Exception:
+                    if requirements is None:
+                        raise
+                    return incomplete_synthesis()
+                if requirements is not None and (not _usable(answer) or not passed_checks(members[-1])):
+                    return incomplete_synthesis(answer)
                 return answer
             return DelegationResult(status="completed", text=majority_vote([r.text for r in usable]))
         if strategy == "panel":

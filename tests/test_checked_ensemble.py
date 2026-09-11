@@ -1,5 +1,6 @@
 """Ensemble votes and synthesis cannot override frozen task requirements."""
 
+import asyncio
 import hashlib
 import json
 import threading
@@ -79,6 +80,23 @@ async def test_failed_majority_cannot_outvote_passing_evidence(tmp_path):
         assert report.check_source.task_id == kernel.tasks.selected().definition.id
         assert all(any("Task acceptance criteria" in m.text() for m in kernel.provider.messages[name])
                    for name in ("a", "b", "c"))
+
+
+async def test_native_judge_provider_failure_settles_child_and_retains_passing_work(tmp_path):
+    from harness.fold import fold
+
+    def configure(kernel):
+        kernel.provider.scripts["judge"] = []  # Fail inside the actual native provider lifecycle.
+
+    async with case(tmp_path, {"a": "correct"}, judge="unused", configure=configure) as kernel:
+        report = report_for(kernel)
+        assert report.result.status == "incomplete"
+        judge = report.members[-1]
+        assert judge.result.status == "failed" and judge.result.child_session_id
+        assert not fold(read_session(tmp_path, judge.result.child_session_id)).open_agent_runs
+        assert report.members[0].evidence[0].status == "passed"
+        assert b"Passing expert candidates" in kernel.session.blobs.get(report.output)
+        assert not kernel.loop.dispatcher.scope.budget.busy
 
 
 @pytest.mark.parametrize("judge", [None, "correct"])
@@ -240,3 +258,86 @@ async def test_partial_participant_remains_incomplete_even_with_a_passing_siblin
         assert report.members[0].result.status == "incomplete"
         assert [m.evidence[0].status for m in report.members] == ["unverified", "passed"]
         assert kernel.session.blobs.get(report.output) == b"correct"
+
+
+@pytest.mark.parametrize("failure", ["exception", "failed", "blocked", "cancelled", "partial"])
+async def test_judge_execution_failure_retains_passing_candidates_as_incomplete(tmp_path, monkeypatch, failure):
+    from harness.agent import DelegationResult
+
+    def configure(kernel):
+        original = kernel.runner.run_result
+
+        async def fail_judge(**kwargs):
+            if str(kwargs["model"]) != "judge":
+                return await original(**kwargs)
+            if failure == "exception":
+                raise RuntimeError("private provider error")
+            return DelegationResult(status="incomplete" if failure == "partial" else failure,
+                reason="fixture judge failure", text="partial synthesis" if failure == "partial" else "")
+
+        monkeypatch.setattr(kernel.runner, "run_result", fail_judge)
+
+    async with case(tmp_path, {"a": "correct"}, judge="unused", configure=configure) as kernel:
+        report = report_for(kernel)
+        assert report.result.status == "incomplete" and report.acceptance == "unverified"
+        expert, judge = report.members
+        assert expert.evidence[0].status == "passed"
+        assert judge.result.status == ("failed" if failure == "exception" else "incomplete" if failure == "partial" else failure)
+        retained = kernel.session.blobs.get(report.output).decode()
+        assert "Passing expert candidates" in retained and "correct" in retained
+        assert "private provider error" not in retained
+        if failure == "partial":
+            assert "partial synthesis" in retained
+        assert not kernel.tasks.selected().accepted
+
+
+@pytest.mark.parametrize("cause", ["cancel", "deadline"])
+async def test_judge_failure_recovery_does_not_swallow_coordinator_interruption(tmp_path, cause):
+    entered, settled = asyncio.Event(), asyncio.Event()
+
+    class WaitingJudge(RoutedProvider):
+        async def complete(self, *, model, **kwargs):
+            if str(model) == "judge":
+                entered.set()
+                try:
+                    await asyncio.Event().wait()
+                finally:
+                    settled.set()
+            else:
+                async for chunk in super().complete(model=model, **kwargs):
+                    yield chunk
+
+    provider = WaitingJudge({
+        "root": [tool_call_turn("", "ensemble", {"prompt": "Solve", "models": ["a"], "judge": "judge"}),
+                 text_turn("root summary")],
+        "a": [text_turn("correct")],
+    })
+    kernel = build_kernel(base_dir=tmp_path, provider=provider, model="root",
+                          execution_overrides={"coordination_timeout_seconds": 10})
+    work = None
+    try:
+        await kernel.loop.start()
+        kernel.tasks.create("Interrupt synthesis")
+        kernel.tasks.add_requirement(requirement())
+        work = asyncio.create_task(kernel.loop.run_task(kernel.tasks.prepare("Solve")))
+        await asyncio.wait_for(entered.wait(), 3)
+        budget = kernel.loop.dispatcher.scope.budget
+        if cause == "cancel":
+            work.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await work
+        else:
+            coordinator, = budget.coordinations._coordinations.values()
+            coordinator.timer.reschedule(asyncio.get_running_loop().time())
+            await asyncio.wait_for(work, 3)
+        report = report_for(kernel)
+        assert report.result.status == ("cancelled" if cause == "cancel" else "incomplete")
+        assert report.result.reason == ("cancelled" if cause == "cancel" else "coordination deadline")
+        assert report.members[0].evidence[0].status == "passed"
+        assert report.members[-1].result.status == "cancelled" and settled.is_set()
+        assert not budget.busy
+    finally:
+        if work is not None and not work.done():
+            work.cancel()
+            await asyncio.gather(work, return_exceptions=True)
+        kernel.session.close()

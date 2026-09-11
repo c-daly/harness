@@ -180,8 +180,12 @@ its grades and artifact references; disagreement includes rejected alternatives.
 Failed or missing evidence is visible through the existing `/coordination` view.
 
 An optional judge receives only passing candidates and must independently pass
-the same requirements. A failed judge returns incomplete with its output retained;
-it cannot certify an unchecked synthesis. If no expert passes, no judge runs.
+the same requirements. A failed judge returns incomplete with passing expert
+candidates and any delivered judge output retained under separate labels. This includes
+provider errors, blocked execution and partial delivery; it is not a successful
+fallback to an expert. Coordinator cancellation and deadlines retain their own
+terminal status and settle the judge. It cannot certify an unchecked synthesis.
+If no expert passes, no judge runs.
 The result is incomplete, with complete candidate texts retained and labeled
 unverified. If every execution failed or was partial, the existing failed-result
 behavior remains. An interrupted or partial sibling keeps the aggregate incomplete
