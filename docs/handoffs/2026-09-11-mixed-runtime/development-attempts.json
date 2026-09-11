@@ -1,0 +1,68 @@
+{
+  "scope": "Sequential development attempts; only attempt 4 uses the shipped source. Earlier local diagnostic trees are retained, not published. No prompt or fixture changes between attempts.",
+  "attempts": [
+    {
+      "attempt": 1,
+      "observed_at": "2026-09-11T17:13:24.501246+00:00",
+      "stage": "restart",
+      "passed": false,
+      "driver_sha256": "228af1473065247ea4d8fa91f37572aba70d4cffbb35bf109285d49cde953869",
+      "cancel_seconds": null,
+      "error_type": "RuntimeError",
+      "local_artifact_exact": false,
+      "remote_artifact_exact": true,
+      "external_retry_exact": null,
+      "failed_checks": [
+        "controlled_wait_observed",
+        "two_phases",
+        "all_obligations_observed"
+      ]
+    },
+    {
+      "attempt": 2,
+      "observed_at": "2026-09-11T17:15:19.302694+00:00",
+      "stage": "finished",
+      "passed": false,
+      "driver_sha256": "a81922159795c03c2ae19866194d9a1bc74d023db36290d65c769a6893777067",
+      "cancel_seconds": 0.304,
+      "error_type": null,
+      "local_artifact_exact": false,
+      "remote_artifact_exact": true,
+      "external_retry_exact": true,
+      "failed_checks": [
+        "export_retains_both_coordinations",
+        "native_partial_work"
+      ]
+    },
+    {
+      "attempt": 3,
+      "observed_at": "2026-09-11T17:23:05.568635+00:00",
+      "stage": "finished",
+      "passed": false,
+      "driver_sha256": "de7cfae4aff7dd9b58a97db21861ace95839d3e167f1de7df4a29a9b5fd71bc5",
+      "cancel_seconds": 0.217,
+      "error_type": null,
+      "local_artifact_exact": false,
+      "remote_artifact_exact": true,
+      "external_retry_exact": true,
+      "failed_checks": [
+        "native_partial_work"
+      ]
+    },
+    {
+      "attempt": 4,
+      "observed_at": "2026-09-11T17:27:36.011900+00:00",
+      "stage": "finished",
+      "passed": false,
+      "driver_sha256": "674d5659d08f088088f3b5318682eae3ea3d3b15be9dc73446034fe3ceafae99",
+      "cancel_seconds": 0.178,
+      "error_type": null,
+      "local_artifact_exact": false,
+      "remote_artifact_exact": true,
+      "external_retry_exact": true,
+      "failed_checks": [
+        "native_partial_work"
+      ]
+    }
+  ]
+}

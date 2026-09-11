@@ -408,6 +408,7 @@ class SubagentSpawned(_Event):
     # the dispatch_agent / ensemble / consult_panel / escalate call that caused
     # this spawn. Additive-optional: absent in logs written before this field.
     call_id: CallId | None = None
+    agent_run_id: str | None = None
     agent: AgentId | None = None
     model: ModelId | None = None
 
@@ -426,6 +427,7 @@ class CoordinationStarted(_Event):
     type: Literal["coordination_started"] = "coordination_started"
     id: str
     call_id: CallId | None = None
+    agent_run_id: str | None = None
     strategy: str
     depth: int = Field(ge=1)
     timeout_seconds: float = Field(gt=0, allow_inf_nan=False)
@@ -453,6 +455,7 @@ class CoordinationFinished(_Event):
     type: Literal["coordination_finished"] = "coordination_finished"
     id: str
     call_id: CallId | None = None
+    agent_run_id: str | None = None
     strategy: str
     status: Literal["completed", "incomplete", "failed", "blocked", "cancelled"]
     report: BlobRef

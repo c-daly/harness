@@ -65,6 +65,7 @@ optional normal memory, checked file work, cancellation and task continuation.
 | **[docs/coordination-outcomes.md](docs/coordination-outcomes.md)** | Inspect delegated outcomes, disagreement and provenance with `/coordination` or `harness coordination` |
 | **[docs/usage-budgets.md](docs/usage-budgets.md)** | Shared usage stop limits, durable accounting, and `/budget` inspection |
 | **[docs/execution-controls.md](docs/execution-controls.md)** | Core time/concurrency limits, `/execution`, and resume/delegation behavior |
+| **[docs/mixed-runtime-qualification.md](docs/mixed-runtime-qualification.md)** | Opt-in live local/remote/external workflow, interruption, restart and artifact checks |
 | **[docs/local-scheduling.md](docs/local-scheduling.md)** | Local device groups, visible priority queues and owned runtime replacement |
 | **[docs/supervised-improvement.md](docs/supervised-improvement.md)** | Core prompt proposals, fixed experiments, explicit adoption and exact rollback |
 | **[docs/assessment-evaluation.md](docs/assessment-evaluation.md)** | Paired context/progress prompt comparison, frozen oracles and retained failed trials |

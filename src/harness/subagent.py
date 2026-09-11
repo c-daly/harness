@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from harness.callctx import current_call_id
-from harness.agent import AgentTask, DelegationResult
+from harness.agent import AgentTask, DelegationResult, current_agent_run
 from harness.events import ErrorRaised, SubagentFinished, SubagentSpawned
 from harness.execution import BudgetExceeded, ExecutionScope, current_scope
 from harness.frontmatter import AgentDef
@@ -137,10 +137,12 @@ class SubagentRunner:
     async def _run_child(self, *, prompt, parent, agent, chosen, pinned, registry,
                          system_prompt, limit, scope, on_result=None, requirements=None, requirement_title=None):
         child_id = new_session_id()
+        active = current_agent_run.get()
         spawn_env = parent.append(
             SubagentSpawned(
                 child_session_id=child_id,
                 call_id=current_call_id(),
+                agent_run_id=active.run_id if active else None,
                 agent=AgentId(agent) if agent is not None else None,
                 model=chosen,
             )

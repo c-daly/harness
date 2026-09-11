@@ -94,6 +94,9 @@ async def _fanout(calls):
 async def _coordinate(strategy, runner, parent, prompt, experts, *, judge=None, require_checks=False):
     """Preserve participant facts even when a coordinator is interrupted."""
     from harness.events import CoordinationFinished, CoordinationStarted
+    from harness.agent import current_agent_run
+    active = current_agent_run.get()
+    agent_run_id = active.run_id if active else None
     scope = runner.scope_for(parent)
     parent = scope.session
     members = []
@@ -232,6 +235,7 @@ async def _coordinate(strategy, runner, parent, prompt, experts, *, judge=None, 
                 raise ValueError("coordination report exceeds 1 MiB")
             ref = parent.blobs.put(data)
             parent.append(CoordinationFinished(id=report["id"], call_id=current_call_id(),
+                agent_run_id=agent_run_id,
                 strategy=strategy, status=result.status, report=ref))
             result = result.model_copy(update={"report": ref, "report_session_id": parent.id})
         return result
@@ -245,6 +249,7 @@ async def _coordinate(strategy, runner, parent, prompt, experts, *, judge=None, 
     try:
         if parent is not None:
             parent.append(CoordinationStarted(id=report["id"], call_id=current_call_id(), strategy=strategy,
+                agent_run_id=agent_run_id,
                 depth=scope.depth + 1, timeout_seconds=report["timeout_seconds"]))
         deadline = asyncio.timeout(report["timeout_seconds"])
         try:
