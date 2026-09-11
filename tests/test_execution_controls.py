@@ -259,7 +259,8 @@ async def test_idle_configuration_is_atomic_and_never_refunds_counts(tmp_path, m
     kernel = await kernel_at(tmp_path)
     budget = kernel.loop.dispatcher.scope.budget
     try:
-        budget.model_calls = 7
+        for _ in range(7):
+            budget.reserve_call("model", session=kernel.session)
         configure_execution(kernel, {"task_timeout_seconds": 1800})
         assert budget.model_calls == 7
         before = budget.limits

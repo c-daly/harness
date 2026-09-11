@@ -378,9 +378,9 @@ class HandoffGuard:
             key = PATH_ARG.get(call.tool)
             if key in call.args and call.args[key] != str(resolve_in_workspace(tool._root, call.args[key])):
                 raise ValueError("handoff calls must use canonical absolute paths")
-        # Retain original limits and conservatively restore reservations after a
-        # restart. Cross-session child accounting needs a separate M5 contract.
-        from harness.events import CoordinationStarted, ModelCallStarted, RetryAttempted, SubagentSpawned, ToolCallProposed
+        # Retain original limits and reservations. Durable descendant counts do
+        # not reconcile child effects or qualify their handoff continuation.
+        from harness.events import CoordinationStarted, SubagentSpawned
         from harness.execution import ExecutionLimits
         from harness.log import read_session
         # Normalize added coordinator and time-limit fields, without changing the
@@ -402,11 +402,9 @@ class HandoffGuard:
             from harness.events import ExecutionConfigured
             kernel.session.append(ExecutionConfigured(limits=asdict(retained)))
             budget.limits = retained
-        budget.model_calls = max(budget.model_calls, counts["model_calls"] + sum(
-            isinstance(e.event, (ModelCallStarted, RetryAttempted)) for e in later))
-        budget.tool_calls = max(budget.tool_calls, counts["tool_calls"] + sum(
-            isinstance(e.event, ToolCallProposed) for e in later))
-        budget.children = max(budget.children, counts["children"])
+        # Tracked reservations already include every later admission. Descriptive
+        # events also include refusals and must not be charged a second time.
+        budget.ledger.retain(**{name: counts[name] for name in ("model_calls", "tool_calls", "children")})
 
     def check_scope(self):
         now, source = capture_scope(self.kernel.loop.dispatcher), self.checkpoint.scope

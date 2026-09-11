@@ -237,7 +237,7 @@ async def _coordinate(strategy, runner, parent, prompt, experts, *, judge=None, 
         return result
 
     try:
-        scope.budget.reserve_coordinator(scope.depth + 1)
+        scope.budget.reserve_coordinator(scope.depth + 1, session=parent, call_id=current_call_id())
     except BudgetExceeded as exc:
         return finish(DelegationResult(status="blocked", reason=str(exc)))
     report["admitted"] = True

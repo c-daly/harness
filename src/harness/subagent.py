@@ -47,7 +47,12 @@ class SubagentRunner:
         """Resolve the actual caller and retain one budget for standalone calls."""
         scope = current_scope.get()
         if scope is None:
-            scope = self._root_scopes.setdefault(str(parent.id), ExecutionScope(parent, self.registry))
+            if str(parent.id) not in self._root_scopes:
+                budget = parent._execution_budget
+                scope = (ExecutionScope(parent, self.registry) if budget is None
+                         else ExecutionScope(parent, self.registry, budget))
+                self._root_scopes[str(parent.id)] = scope
+            scope = self._root_scopes[str(parent.id)]
         return scope
 
     async def run(
@@ -74,6 +79,7 @@ class SubagentRunner:
         agent: str | None, scope: ExecutionScope, on_result=None, requirements=None, requirement_title=None,
     ) -> DelegationResult:
         system_prompt = "You are a focused subagent. Complete the task and report."
+        scope.budget.attach(parent)
         scope.budget.usage.attach(parent)
         registry: ToolRegistry | FilteredRegistry = scope.registry
         limit: int | None = None
@@ -117,7 +123,7 @@ class SubagentRunner:
             chosen = model
             pinned = True
         try:
-            scope.budget.reserve_child(scope.depth + 1)
+            scope.budget.reserve_child(scope.depth + 1, session=parent, call_id=current_call_id())
         except BudgetExceeded as exc:
             return DelegationResult(status="blocked", reason=str(exc))
         try:
