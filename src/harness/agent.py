@@ -6,6 +6,7 @@ tools, permissions, or budget beyond that existing binding.
 """
 
 import asyncio
+from contextlib import nullcontext
 from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Awaitable, Callable, Literal, Protocol
@@ -146,6 +147,8 @@ async def execute_task(
     purpose: Literal["task", "conversation"] = "task",
     capabilities: dict | None = None,
     activity=None,
+    run_budgets=None,
+    extension_blocked="task does not support live extensions",
 ) -> AgentResult:
     """Record one run. Failures/cancellation propagate after recording their outcome.
 
@@ -180,7 +183,10 @@ async def execute_task(
     async def _finish_task():
         try:
             async with deadline:
-                output = await execute()
+                with (run_budgets.track(session=session, task=task, run_id=run_id,
+                      timer=deadline, observation=live_activity, blocked=extension_blocked)
+                      if run_budgets is not None else nullcontext()) as active_budget:
+                    output = await execute()
             payload = output.text.encode("utf-8")
             if len(payload) > task.limits.max_response_bytes:
                 raise BudgetExceeded("agent result exceeds its output limit")
@@ -195,7 +201,8 @@ async def execute_task(
         except TimeoutError:
             session.append(AgentRunFinished(result=terminal("incomplete", "deadline" if deadline.expired() else "timeout")))
             if deadline.expired():
-                raise TimeoutError(f"task time budget exhausted ({task.limits.timeout_seconds:g}s)") from None
+                seconds = active_budget.timeout_seconds if active_budget else task.limits.timeout_seconds
+                raise TimeoutError(f"task time budget exhausted ({seconds:g}s)") from None
             raise TimeoutError("operation timed out before the task time budget expired") from None
         except BudgetExceeded:
             session.append(AgentRunFinished(result=terminal("incomplete", "budget")))
@@ -206,7 +213,7 @@ async def execute_task(
         session.append(AgentRunFinished(result=result, purpose=purpose))
         return result
     try:
-        with observation:
+        with observation as live_activity:
             return await _finish_task()
     finally:
         current_agent_run.reset(token)

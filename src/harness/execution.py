@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 from harness.resources import LocalResources
 from harness.usage_budget import UsageBudget
 from harness.activity import ActivityTracker
+from harness.run_budgets import RunBudgets
 
 if TYPE_CHECKING:
     from harness.context import ContextPolicy
@@ -71,6 +72,7 @@ class ExecutionBudget:
     active_coordinators: int = 0
     usage: UsageBudget = field(default_factory=UsageBudget)
     activity: ActivityTracker = field(default_factory=ActivityTracker)
+    runs: RunBudgets = field(default_factory=RunBudgets)
 
     @property
     def busy(self) -> bool:

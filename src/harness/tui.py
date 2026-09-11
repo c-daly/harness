@@ -1702,10 +1702,20 @@ class HarnessApp(App[None]):
         elif command.name == "execution":
             from harness.execution_controls import configure_execution, parse_overrides, render_execution
             try:
-                if command.arg.strip():
+                words = command.arg.split()
+                if words and words[0] == "extend":
+                    from harness.run_budgets import extend_execution
+                    if len(words) != 3:
+                        raise ValueError("Usage: /execution extend RUN_ID ADDITIONAL_SECONDS")
+                    granted = extend_execution(self.kernel, words[1], float(words[2]))
+                    self.say("", f"Task {granted.run_id[:8]} budget extended to {granted.timeout_seconds:g}s total.")
+                    self.say("", "Other operation budgets keep their own caps. Use /activity to inspect them.")
+                    self._refresh_activity()
+                    return
+                elif words:
                     if self._refuse_if_busy():
                         return
-                    configure_execution(self.kernel, parse_overrides(command.arg.split()))
+                    configure_execution(self.kernel, parse_overrides(words))
                 for line in render_execution(self.kernel.loop.dispatcher.scope).splitlines():
                     self.say("", line)
             except (ValueError, OSError) as exc:

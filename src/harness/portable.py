@@ -14,6 +14,7 @@ from zipfile import ZIP_STORED, ZipFile, ZipInfo
 from harness.blobs import BlobStore
 from harness.coordination import load_report
 from harness.events import (
+    TaskBudgetExtended,
     AgentRunFinished, AgentRunStarted, ContextPolicyConfigured, ContextSourceObserved,
     CoordinationFinished, CoordinationStarted,
     DispatchResolved, ModelCallProposed, ModelCallStarted, SubagentFinished, SubagentSpawned,
@@ -131,6 +132,13 @@ def task_package(base: Path, session_id: str, *, task_id: str | None = None):
                 "status": "unconfirmed", "messages": [], "output": None}
             if event.parent_run_id is None:
                 active_roots.add(event.run_id)
+        elif isinstance(event, TaskBudgetExtended) and event.run_id in owned:
+            row = runs.get(event.run_id)
+            if row is None or "finished_seq" in row:
+                raise ExportError("task budget extension outside its run")
+            row.setdefault("budget_extensions", []).append({"source_seq": env.seq,
+                "previous_timeout_seconds": event.previous_timeout_seconds,
+                "timeout_seconds": event.timeout_seconds, "actor": event.actor})
         elif isinstance(event, AgentRunFinished) and event.result.run_id in owned:
             row = runs.get(event.result.run_id)
             if row is None or "finished_seq" in row:
