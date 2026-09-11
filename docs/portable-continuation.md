@@ -49,6 +49,14 @@ child log owns that child's terminal result. Exporting a child alone does not
 retrieve stop intents from its root. These records never cancel destination
 work and do not prove that cleanup or provider-native effects have settled.
 
+The additive `coordination_budget_extensions` entry carries operator grants
+from the source prefix for this task's owned coordinators and recorded child
+sessions. It preserves coordinator/target-session IDs, previous/new total
+timeout, actor and source sequence. Grants are root-owned intents; settled
+reports in the target session record the applied total. An unconfirmed start
+retains its initial deadline. Child-only export does not read root grant records,
+and these historical grants never extend a destination timer.
+
 The package contains the selected task's recorded requests, all of its recorded
 attempts, requirements, evidence, review and acceptance notes, tool calls, and
 configured context snapshots. This can include private project or memory text
@@ -80,6 +88,7 @@ The JSON object declares `format: "harness-continuation"`, `version: 1`:
 | `coordination` | Additive version-1 field: coordination attached to this task's tool calls, with ID, call ID, source sequence, strategy/status and recorded deadline when available. Settled entries include a finish sequence, verified report and copied aggregate answer artifacts. A saved start adds its original start sequence; without a terminal, status is `unconfirmed` and report/output are absent. Reports retain disagreements and participant session/run/output references. Participant references remain in the source child stores and are not recursively exported; execution and advisory review never grant acceptance. Older packages may omit this field or its newer metadata. |
 | `execution_counts` | Additive version-1 field: shared admission totals, root ID and source sequence, whether the prefix ends in tracked accounting, and legacy/incomplete flags. No destination authority or live capacity. |
 | `cancellation_requests` | Additive version-1 field: operator stop intents with source sequence, run/task/target-session IDs and actor. Separate from terminal outcomes; never replayed as cancellation commands. Older packages may omit it. |
+| `coordination_budget_extensions` | Additive version-1 field: root operator grants with source sequence, coordinator/target-session IDs, previous/new timeout and actor. Historical intent, separate from applied time in a settled report. Older packages may omit it. |
 | `reconciliations` | Explicit operator inspection notes and effect states from verified handoff records, with original sequence/run/basis and source record hashes. Source scope, allowed calls and execution bindings are excluded. These historical notes can guide inspection but do not grant destination authority or prove current file state. |
 | `artifacts` | Unique package-relative paths, byte sizes and SHA-256 digests for copied content. References elsewhere use the same shape. All referenced blobs are verified before publication. |
 | `limitations` | Human-readable continuation boundaries, also rendered in the Markdown entrypoint. |

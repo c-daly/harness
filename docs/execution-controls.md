@@ -115,6 +115,57 @@ live timers, change the next task's default, or widen a handoff's captured task
 limits. Portable task packages include the grants with their source sequence
 numbers as evidence; importing a package does not apply them as authority.
 
+## Extend a live coordinator
+
+`/execution` also lists live coordinator timers across the session tree, with
+full coordinator IDs and copyable commands:
+
+```text
+/execution extend-coordinator COORDINATOR_ID ADDITIONAL_SECONDS
+```
+
+This applies to core ensemble, panel, draft/refine and escalation coordinators,
+including configured coordination agents and coordinators in child sessions.
+Use the coordinator's ID, or an unambiguous prefix of at least eight characters.
+Agent run IDs and activity IDs identify different operations. Each grant adds
+positive, finite time to this coordinator's existing deadline; repeated grants
+are cumulative. Session defaults and other live coordinators retain their caps.
+
+The root operator owns these grants. A child kernel or model/tool execution
+context cannot issue one. Coordinators executing under a handoff retain their
+captured authority and refuse extension. Expired, completed and cancelling
+coordinators also refuse, including during cleanup. A recorded stop of an
+enclosing agent blocks the grant immediately, before cancellation reaches the
+coordinator's worker. Grants do not admit extra children or refund consumed work.
+
+**The enclosing task and member-agent deadlines remain binding.** Extending a
+coordinator does not move root, child, request, provider-process or other
+coordinator timers. Conversely, extending a root task does not move this timer.
+Use `/activity` to inspect the observed enclosing budgets. This gives the
+operator explicit control over time; it does not assess progress or classify
+silence as a hang.
+
+Core writes `coordination_budget_extended` to the root log before rescheduling.
+The record contains the coordinator ID, target session, previous/new total
+timeout and operator attribution. Failed or rewritten writes leave the timer
+unchanged. A record written before a later append failure remains an intent;
+it does not prove the timer changed. Persistence consumes elapsed time normally.
+The activity view updates the deadline without counting the grant as activity.
+
+The target's settled coordination report records the applied total timeout.
+`/coordination` displays saved grants as intents and distinguishes an unconfirmed
+start's initial deadline from a settled report. Grants are never restored as
+timers, session defaults or handoff authority. Portable exports carry relevant
+source-prefix grants as evidence, separately from outcomes; exporting a child
+alone does not retrieve its grants from the root log.
+
+Other frontends can use the same root operator API on the owning event loop:
+
+```python
+from harness.coordination_budgets import extend_coordination
+grant = extend_coordination(kernel, coordinator_id, 300)
+```
+
 ## Continuity and stop causes
 
 Settings are written to `execution_configured` events before a live change.
@@ -214,6 +265,6 @@ retains consumed counts and refuses time extensions for stopping runs. See
 outcome and restart semantics.
 
 Still pending: progress-sensitive supervision, suspected-stall
-inspection and recovery, extending independent provider/child/coordinator timers, exact pre-call token/cost reservations,
+inspection and recovery, extending independent provider/child timers, exact pre-call token/cost reservations,
 and live mixed-provider qualification. A heartbeat, emitted token, or silence
 alone does not establish useful progress or a hang.

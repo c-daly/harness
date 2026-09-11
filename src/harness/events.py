@@ -431,6 +431,24 @@ class CoordinationStarted(_Event):
     timeout_seconds: float = Field(gt=0, allow_inf_nan=False)
 
 
+class CoordinationBudgetExtended(_Event):
+    """Root operator intent for one coordinator; never restored as timer authority."""
+
+    type: Literal["coordination_budget_extended"] = "coordination_budget_extended"
+    is_intent: ClassVar[bool] = True
+    coordination_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    target_session_id: SessionId
+    previous_timeout_seconds: float = Field(gt=0, strict=True, allow_inf_nan=False)
+    timeout_seconds: float = Field(gt=0, strict=True, allow_inf_nan=False)
+    actor: Literal["operator"] = "operator"
+
+    @model_validator(mode="after")
+    def increasing(self):
+        if self.timeout_seconds <= self.previous_timeout_seconds:
+            raise ValueError("coordinator extensions must increase the budget")
+        return self
+
+
 class CoordinationFinished(_Event):
     type: Literal["coordination_finished"] = "coordination_finished"
     id: str
@@ -653,6 +671,7 @@ Event = Annotated[
         SubagentSpawned,
         SubagentFinished,
         CoordinationStarted,
+        CoordinationBudgetExtended,
         CoordinationFinished,
         AgentRunStarted,
         AgentRunFinished,

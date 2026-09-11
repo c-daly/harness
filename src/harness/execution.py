@@ -10,6 +10,7 @@ from harness.execution_counts import ExecutionLedger
 from harness.activity import ActivityTracker
 from harness.run_budgets import RunBudgets
 from harness.run_controls import RunControls
+from harness.coordination_budgets import CoordinationBudgets
 
 if TYPE_CHECKING:
     from harness.context import ContextPolicy
@@ -75,6 +76,7 @@ class ExecutionBudget:
     activity: ActivityTracker = field(default_factory=ActivityTracker)
     runs: RunBudgets = field(default_factory=RunBudgets)
     controls: RunControls = field(default_factory=RunControls)
+    coordinations: CoordinationBudgets = field(default_factory=CoordinationBudgets)
 
     @property
     def model_calls(self):
@@ -94,6 +96,7 @@ class ExecutionBudget:
         self.ledger.attach(session)
         session._execution_budget = self
         self.controls.attach(self.ledger.session)
+        self.coordinations.attach(self.ledger.session)
 
     @property
     def busy(self) -> bool:

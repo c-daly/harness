@@ -66,7 +66,11 @@ class RunControls:
 
     def stopping(self, run_id):
         run = self._runs.get(run_id)
-        return run is not None and run.refusal() is not None
+        while run is not None:
+            if run.refusal() is not None:
+                return True
+            run = self._runs.get(run.parent_run_id)
+        return False
 
     def check_active(self):
         """A swallowed cancellation cannot admit fresh work in a stopped subtree."""

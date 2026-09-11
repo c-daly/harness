@@ -39,6 +39,7 @@ def configure_execution(kernel, overrides: dict) -> None:
 
 def render_execution(scope) -> str:
     from harness.run_budgets import render_run_budgets
+    from harness.coordination_budgets import render_coordination_budgets
     limits = scope.budget.limits
     lines = ["Execution limits (seconds are elapsed time budgets, not hang detection):"]
     for name, value in asdict(limits).items():
@@ -59,4 +60,4 @@ def render_execution(scope) -> str:
         lines.append("Admission held: legacy descendant counts are incomplete. Export the task and start a new session.")
     if not scope.budget.ledger.healthy:
         lines.append("Admission held: an accounting write failed. Restart to reconcile the ledger.")
-    return "\n".join([*lines, render_run_budgets(scope)])
+    return "\n".join([*lines, render_run_budgets(scope), render_coordination_budgets(scope.budget)])
