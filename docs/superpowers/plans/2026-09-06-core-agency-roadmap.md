@@ -409,6 +409,13 @@ contracts. Escalation must use acceptance evidence, not merely absence of an
 error string or an unvalidated judge prefix.
 
 Bound concurrency, nesting, deadlines, output, and shared cost/token budgets.
+Expose time and admission settings through core operator controls, retaining
+them across resume and delegation. Keep explicit elapsed-time budgets separate
+from expected duration and activity/progress observations: expiry is not hang
+detection, and silence alone does not justify terminating useful work. The
+finite configuration increment is documented in
+[execution controls](../../execution-controls.md); progress-sensitive
+supervision and active-budget extension remain separate qualification work.
 Do not deadlock coordinators by having waiting parents occupy every worker
 slot. Set ownership for edits and artifacts; use isolated worktrees or explicit
 write serialization when concurrent agents could change the same files.

@@ -14,7 +14,7 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field
 
 from harness.blobs import BlobRef, BlobStore
-from harness.execution import BudgetExceeded
+from harness.execution import BudgetExceeded, ExecutionLimits
 from harness.messages import Message
 from harness.provider import Chunk, Usage
 from harness.types import AgentId, ModelId, SessionId
@@ -42,6 +42,18 @@ class AgentTask(BaseModel):
     agent: AgentId | None = None
     handoff_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{32}$")
     limits: TaskLimits = Field(default_factory=TaskLimits)
+
+
+def bound_task(task: AgentTask, limits: ExecutionLimits) -> AgentTask:
+    """Apply session defaults to fresh tasks, retaining explicit/replayed caps.
+
+    Serialized tasks carry their timeout explicitly, so a handoff cannot gain a
+    longer deadline just because the destination allows longer fresh tasks.
+    """
+    explicit = "timeout_seconds" in task.limits.model_fields_set
+    task = AgentTask.model_validate(task.model_dump())
+    timeout = min(task.limits.timeout_seconds, limits.task_timeout_seconds) if explicit else limits.task_timeout_seconds
+    return task.model_copy(update={"limits": task.limits.model_copy(update={"timeout_seconds": timeout})})
 
 
 class AgentResult(BaseModel):
@@ -153,6 +165,7 @@ async def execute_task(
                                    acceptance_criteria=task.acceptance_criteria,
                                    limits=task.limits.model_dump(), capabilities=capabilities or {}))
     token = current_agent_run.set(ActiveAgentRun(task, run_id, runtime))
+    deadline = asyncio.timeout(task.limits.timeout_seconds)
 
     def terminal(status, reason="", **kwargs):
         return AgentResult(task_id=task.id, run_id=run_id, status=status, reason=reason,
@@ -160,7 +173,7 @@ async def execute_task(
 
     try:
         try:
-            async with asyncio.timeout(task.limits.timeout_seconds):
+            async with deadline:
                 output = await execute()
             payload = output.text.encode("utf-8")
             if len(payload) > task.limits.max_response_bytes:
@@ -173,9 +186,13 @@ async def execute_task(
         except asyncio.CancelledError:
             session.append(AgentRunFinished(result=terminal("cancelled", "cancelled")))
             raise
-        except (TimeoutError, BudgetExceeded) as exc:
-            reason = "deadline" if isinstance(exc, TimeoutError) else "budget"
-            session.append(AgentRunFinished(result=terminal("incomplete", reason)))
+        except TimeoutError:
+            session.append(AgentRunFinished(result=terminal("incomplete", "deadline" if deadline.expired() else "timeout")))
+            if deadline.expired():
+                raise TimeoutError(f"task time budget exhausted ({task.limits.timeout_seconds:g}s)") from None
+            raise TimeoutError("operation timed out before the task time budget expired") from None
+        except BudgetExceeded:
+            session.append(AgentRunFinished(result=terminal("incomplete", "budget")))
             raise
         except Exception as exc:
             session.append(AgentRunFinished(result=terminal("failed", type(exc).__name__)))

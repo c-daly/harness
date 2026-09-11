@@ -97,7 +97,7 @@ def _kill_process_group(proc: "asyncio.subprocess.Process") -> None:
 class ClaudeCodeProvider:
     execution_kind = "agent"
 
-    def __init__(self, *, binary: str = "claude", timeout_s: float = 600.0) -> None:
+    def __init__(self, *, binary: str = "claude", timeout_s: float | None = None) -> None:
         self.binary = binary
         self.timeout_s = timeout_s
         self._dispatch = None  # bound post-kernel-build: dispatcher.dispatch_tool
@@ -192,7 +192,8 @@ class ClaudeCodeProvider:
         timed_out = False
         try:
             try:
-                async with asyncio.timeout(self.timeout_s):
+                from harness.execution import agent_timeout
+                async with asyncio.timeout(agent_timeout(self.timeout_s)):
                     assert proc.stdout is not None
                     async for raw in proc.stdout:
                         line = raw.decode("utf-8", errors="replace").strip()
@@ -243,7 +244,7 @@ class ClaudeCodeProvider:
                 await stderr_task
 
         if timed_out:
-            raise ProviderError(f"claude-code turn timed out after {self.timeout_s}s")
+            raise ProviderError(f"claude-code turn timed out after {agent_timeout(self.timeout_s):g}s")
         if proc.returncode not in (0, None) and not saw_result:
             stderr = b""
             if stderr_task.done() and not stderr_task.cancelled():

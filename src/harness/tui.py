@@ -1044,7 +1044,7 @@ class HarnessApp(App[None]):
             model_pinned=old_kernel.loop.model_pinned,
             inherit_model_selection=True,
             catalog_path=Path(self.catalog_path) if self.catalog_path is not None else None,
-            execution_limits=old_kernel.loop.dispatcher.scope.budget.limits,
+            execution_limits=old_kernel.loop.dispatcher.scope.budget.limits if resume_session_id is None else None,
             usage_limits=old_kernel.loop.dispatcher.scope.budget.usage.limits if resume_session_id is None else None,
             resources=old_kernel.resources,
             context_policy=old_kernel.context_policy if resume_session_id is None else None,
@@ -1328,7 +1328,7 @@ class HarnessApp(App[None]):
             return
         command = parse_slash_command(text)
         if command is not None:
-            if command.name in self._plugin_commands and command.name not in {"task", "status", "semantics", "improvements", "handoff", "models", "export", "coordination", "budget"}:
+            if command.name in self._plugin_commands and command.name not in {"task", "status", "semantics", "improvements", "handoff", "models", "export", "coordination", "budget", "execution"}:
                 expanded = self._plugin_commands[command.name].body.replace("$ARGUMENTS", command.arg)
                 if not self._enqueue_prompt(expanded, expand_mentions=False):
                     return
@@ -1565,7 +1565,10 @@ class HarnessApp(App[None]):
         base = self.kernel.session.base
         try:
             selection = read_model_selection(base, session_id)
-            usage = project_usage(read_session(base, session_id, repair=False))
+            events = read_session(base, session_id, repair=False)
+            usage = project_usage(events)
+            from harness.fold import fold
+            fold(events)  # validate stored execution configuration before teardown
             if usage.root_session_id is not None:
                 return f"shared usage accounting belongs to session {usage.root_session_id}; resume that root session"
             if selection is not None:
@@ -1640,7 +1643,7 @@ class HarnessApp(App[None]):
                 "",
                 "/help  /model [alias]  /thoughts [collapse|full|off]  /markdown [on|off]  "
                 "/clear  /compact [alias]  /resume  /panel  /tools [name]  /task  /status  /context  /resources  /models  /semantics  /improvements  "
-                "/handoff inspect|record|show|run  /export FILE.zip  /coordination  /budget  /quit  — @path mentions a file "
+                "/handoff inspect|record|show|run  /export FILE.zip  /coordination  /budget  /execution  /quit  — @path mentions a file "
                 "(Tab completes), read for the model only; F2 also toggles the activity panel",
             )
             self.say("", "/queue: inspect, edit, remove, pause, resume, clear; queued prompts are memory only")
@@ -1671,6 +1674,17 @@ class HarnessApp(App[None]):
             self._queue_command(command.arg)
         elif command.name == "task":
             self._task_command(command.arg)
+        elif command.name == "execution":
+            from harness.execution_controls import configure_execution, parse_overrides, render_execution
+            try:
+                if command.arg.strip():
+                    if self._refuse_if_busy():
+                        return
+                    configure_execution(self.kernel, parse_overrides(command.arg.split()))
+                for line in render_execution(self.kernel.loop.dispatcher.scope).splitlines():
+                    self.say("", line)
+            except (ValueError, OSError) as exc:
+                self.say("! ", f"Execution settings: {exc}")
         elif command.name == "budget":
             from harness.budget_cli import render_budget
             if command.arg.strip():

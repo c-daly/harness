@@ -383,11 +383,13 @@ class HandoffGuard:
         from harness.events import CoordinationStarted, ModelCallStarted, RetryAttempted, SubagentSpawned, ToolCallProposed
         from harness.execution import ExecutionLimits
         from harness.log import read_session
-        # Normalize only the added coordinator fields, without changing the
+        # Normalize added coordinator and time-limit fields, without changing the
         # authenticated checkpoint or bypassing the policy-version check above.
         defaults = ExecutionLimits()
         counts = {"active_coordinators": 0, **scope["counts"]}
         limits = {"max_active_coordinators": defaults.max_active_coordinators,
+                  "task_timeout_seconds": defaults.task_timeout_seconds,
+                  "inference_timeout_seconds": defaults.inference_timeout_seconds,
                   "coordination_timeout_seconds": defaults.coordination_timeout_seconds, **scope["limits"]}
         later = [e for e in read_session(kernel.session.base, kernel.session.id, repair=False)
                  if e.seq > checkpoint.started_seq]
@@ -395,7 +397,11 @@ class HandoffGuard:
                 or any(isinstance(e.event, (SubagentSpawned, CoordinationStarted)) for e in later)):
             raise ValueError("child-session reconciliation/accounting is not qualified; handoff held")
         budget = kernel.loop.dispatcher.scope.budget
-        budget.limits = ExecutionLimits(**{k: min(v, limits[k]) for k, v in asdict(budget.limits).items()})
+        retained = ExecutionLimits(**{k: min(v, limits[k]) for k, v in asdict(budget.limits).items()})
+        if retained != budget.limits:
+            from harness.events import ExecutionConfigured
+            kernel.session.append(ExecutionConfigured(limits=asdict(retained)))
+            budget.limits = retained
         budget.model_calls = max(budget.model_calls, counts["model_calls"] + sum(
             isinstance(e.event, (ModelCallStarted, RetryAttempted)) for e in later))
         budget.tool_calls = max(budget.tool_calls, counts["tool_calls"] + sum(
