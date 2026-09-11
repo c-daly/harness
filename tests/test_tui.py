@@ -2046,24 +2046,35 @@ async def test_compact_worker_queues_new_prompts_until_completion(tmp_path):
     )
     app = make_app(tmp_path, provider=provider, model=ModelId("gated"))
     async with app.run_test() as pilot:
-        await pilot.pause(0.1)
-        await pilot.click("#prompt")
-        await pilot.press(*"one", "enter")
-        await pilot.pause(0.2)
+        try:
+            await pilot.click("#prompt")
+            await pilot.press(*"one", "enter")
+            async with asyncio.timeout(5):
+                while app.controller.last_result is None or app.controller.active is not None:
+                    await pilot.pause(0.01)
 
-        await pilot.press(*"/compact", "enter")
-        await pilot.pause(0.1)  # parked at the gate
+            await pilot.press(*"/compact", "enter")
+            async with asyncio.timeout(5):
+                while provider._n < 2:
+                    await pilot.pause(0.01)
+            assert app._compact_worker is not None and app._compact_worker.is_running
 
-        await pilot.press(*"sneaky", "enter")
-        await pilot.pause(0.1)
-        lines = "\n".join(str(line) for line in app.query_one(RichLog).lines)
-        assert "queued #2: sneaky" in lines
-        assert app.controller.pending[0].text == "sneaky"
+            await pilot.press(*"sneaky", "enter")
+            await pilot.pause()
+            lines = "\n".join(str(line) for line in app.query_one(RichLog).lines)
+            assert "queued #2: sneaky" in lines
+            assert app.controller.pending[0].text == "sneaky"
 
-        provider.release.set()
-        await pilot.pause(0.3)
-        assert not app.controller.pending
-        assert app.kernel.loop.history[-1].text() == "follow-up"
+            provider.release.set()
+            # An empty queue means the follow-up was taken, not that it finished.
+            async with asyncio.timeout(5):
+                while (app._compact_worker is not None or app.controller.pending
+                       or app.controller.active is not None):
+                    await pilot.pause(0.01)
+            assert app.controller.last_result.status == "completed"
+            assert app.kernel.loop.history[-1].text() == "follow-up"
+        finally:
+            provider.release.set()
 
 
 # --- /resume ---

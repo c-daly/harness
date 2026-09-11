@@ -2856,3 +2856,17 @@ extension; useful-progress assessment and suspected-stall recovery; live mixed-
 agent supervision/accounting and plugin reconciliation; edit/worktree ownership;
 isolated source-improvement validation/promotion/rollback; and daily-use
 qualification. M5 remains in progress and M6 remains pending.
+
+### PR53 CI: wait for the queued turn to finish
+
+Hosted CI passed lint on both interpreters and the complete Python 3.13 job.
+Python 3.12 failed one compaction queue test: its fixed 0.3-second wait ended
+after the queued user message was recorded but before the reply finished. The
+test now waits for first-turn completion, entry into the compaction gate, and
+both an empty queue and no active turn after release. It still checks the
+visible queue notice, queued prompt and final reply, and releases the gate on
+assertion failure. No application source changed.
+
+All five compaction UI tests pass on Python 3.12 (13.23 s) and Python 3.13
+(13.50 s). The CI lint command, `ruff check .`, and whitespace checks pass.
+The full suite and packaging were not repeated locally for this test-only fix.
