@@ -3004,3 +3004,23 @@ wheel/sdist build, isolated installed CLI and all 88 module imports pass; all
 89 packaged core Python files match source. These automated results qualify
 the implementation behavior, not the failed local-model correctness gate or
 daily use. PR54's final hosted Python 3.12/3.13 CI and review also passed.
+
+### PR55 CI: expire escalation after premium-agent entry
+
+Hosted Python 3.12 CI failed the escalation interruption test: its 0.2-second
+coordinator budget could expire during the cheap child's persisted evidence
+checks, before the premium provider set the entry event. Python 3.13 CI and
+review passed. A controlled 0.3-second evidence-check delay reproduced the
+Python 3.12 failure on the unchanged test.
+
+The fixture now allows a bounded setup window and expires the actual registered
+coordinator timer after confirmed premium entry. It explicitly checks that this
+timer expired and that the report names the coordination deadline. Existing
+cheap-evidence, cancelled-premium, cleanup-order and settled-run assertions stay
+in place. No application source or live-model measurement changed.
+
+Both interruption cases pass with the same injected delay (1.66 s), and all
+95 escalation/coordination regressions pass on Python 3.12 (20.62 s) and Python
+3.13 (20.52 s). Ruff and whitespace checks pass. The full suite and packaging
+were not repeated locally for this test-only correction; hosted CI reruns on
+the pushed commit.

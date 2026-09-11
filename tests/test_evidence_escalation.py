@@ -337,7 +337,9 @@ async def test_interrupted_premium_keeps_cheap_evidence_and_settles_children(tmp
         text_turn("wrong"), text_turn("root summary"),
     ]), model=ModelId("root"))
     budget = kernel.loop.dispatcher.scope.budget
-    budget.limits = replace(budget.limits, coordination_timeout_seconds=.2 if cause == "deadline" else 10)
+    # Setup includes the cheap child's persisted evidence checks. Expire the
+    # actual coordinator only after premium entry, independently of CI speed.
+    budget.limits = replace(budget.limits, coordination_timeout_seconds=10)
     work = None
     try:
         await kernel.loop.start()
@@ -350,9 +352,14 @@ async def test_interrupted_premium_keeps_cheap_evidence_and_settles_children(tmp
             with pytest.raises(asyncio.CancelledError):
                 await work
         else:
+            coordinator, = budget.coordinations._coordinations.values()
+            assert coordinator.strategy == "escalate" and coordinator.session is kernel.session
+            coordinator.timer.reschedule(asyncio.get_running_loop().time())
             await asyncio.wait_for(work, 3)
         report = report_for(kernel)
         assert report.result.status == ("cancelled" if cause == "cancel" else "incomplete")
+        if cause == "deadline":
+            assert coordinator.timer.expired() and report.result.reason == "coordination deadline"
         assert report.members[0].evidence[0].status == "failed"
         assert report.members[1].result.status == "cancelled" and report.members[1].evidence is None
         events = read_session(tmp_path, kernel.session.id)
