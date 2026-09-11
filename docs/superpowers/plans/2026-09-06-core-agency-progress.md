@@ -1,8 +1,9 @@
 # Core agency implementation record
 
-Current implementation branch: `feat/mixed-runtime-qualification`, based on
-`main` at `ad0bd89` after PR54 merged. Core activity inspection, root/coordinator
-timer grants, durable admission counts and targeted operator cancellation are on main.
+Current implementation branch: `feat/checked-ensemble`, based on `main` at
+`f997a21` after PR55 merged. Its mixed-runtime journey and cross-task export
+ownership correction are on main, alongside activity inspection, timer grants,
+durable admission counts and targeted operator cancellation.
 Previous branches: `feat/evidence-escalation`, `feat/native-file-conflicts`, `fix/file-mutation-lifetime`, `feat/coordination-admission`, `feat/typed-coordination-results`, `feat/portable-task-export`, `feat/handoff-destination-recovery`, `feat/handoff-failure-qualification`, `feat/context-profile-comparison`, `docs/context-experiment-results`, `feat/context-eligibility`, `feat/context-selection-qualification`, `fix/bounded-compaction`, `fix/model-selection-continuity`, `feat/local-model-management`, `feat/assessment-improvement`, `feat/external-handoff`, `feat/assessment-evaluation`, `feat/supervised-improvement`, `feat/local-scheduling`, `feat/task-fallback`, `feat/semantic-context-progress`, `feat/local-assistant-m3`, `feat/resident-workflow`, `feat/task-completion-evidence`, `fix/inference-client-lifecycle`, `feat/local-response-profiles`, `feat/local-tool-recovery`, `feat/local-tool-planning`, `feat/local-qualification`, `feat/semantic-evaluation`, `feat/local-context`, `feat/local-readiness`, `feat/agent-runtimes`,
 and `feat/core-agency`.
 
@@ -58,7 +59,7 @@ qualification. Milestone completion requires its roadmap gates, not just code.
 | M2 inference / agent contracts | In progress | Bounded inference, native tasks, Codex task binding, explicit execution kinds, nullable usage, core improvement records and recorded task-evidence checks implemented. Remaining adapters, richer artifact predicates and live capability qualification remain. |
 | M3 local core assistant | Complete for the measured CUDA profile | Qwen3-8B passes six full offline project journeys: twelve exact native file writes, changed-record answers after restart, real cancellation, normal memory, and visible task/context status. Four missing-assets/startup-exit recovery cases pass. Shipped profiles and a launcher reproduce the workflow. Actual use exposed missing startup configuration in the normal catalog; the provisioned host's local aliases are now connected. Core `/models` now inspects public GGUF metadata and registers installed weights with startup profiles, with ordinary CLI/TUI CPU smoke evidence. Runtime installation, weight downloads and broader CPU/daily-use qualification remain outside this gate. |
 | M4 bounded semantic agency | In progress | All three shadow functions now exist with explicit CLI/TUI access and evidence validation. The public 8B comparison failed context/progress gates; deterministic behavior remains. Bounded task-preserving fallback and session-tree local scheduling are implemented. Message-prompt pairing and earlier context/correction experiments use core improvement records. Supervised message-prompt proposal/evaluation/adoption/rollback is implemented. Paired context/progress candidate evaluation is implemented with explicit operator controls. Explicit external-to-native reconciliation and bounded handoff are implemented. Supervised assessment proposal/adoption/rollback is implemented per function/model. Core now filters context eligibility before inference and resolves empty eligible sets without a model call. Required normal-memory loss, busy preflight, destination loss after a write and Esc during continuation now have bounded offline terminal evidence. Truncated OpenAI-compatible streams cannot fabricate completion. Held-out quality and broader handoff qualification remain. |
-| M5 heterogeneous work / plugins | In progress | Core CLI/TUI exports a documented Markdown/JSON continuation package with task evidence, context snapshots/references, artifacts and original provenance. A controlled independent frontend continues after source-database removal. Coordination now consumes typed child outcomes, preserves partial work/disagreement/provenance, settles cancelled siblings and exports its reports; `/coordination` inspects them. Pure coordinators have separate active admission and an overall deadline while retaining shared descendant/depth limits; interrupted starts remain unconfirmed. Native file mutations retain per-path ownership through cancellation and settle before descendant terminal facts. Per-session content observations now reject stale writes/edits and support reread recovery. Escalation applies frozen active-task requirements to both cheap and premium participants, with read-only evidence checks, inspection and export. Shared usage stop limits and durable root accounting now cover descendants and restart, with explicit unknown usage and CLI/TUI inspection. Core operator controls now expose task, native-request, coordination and admission limits, retain settings across resume, and propagate process deadlines without hidden adapter defaults. Live activity/wait inspection and audited operator extensions of eligible root timers are implemented. Model/tool/descendant admission counts now survive restart in a shared root ledger, with explicit holds for legacy untracked child work. Audited operator cancellation now targets individual live agent runs, preserves independent siblings and waits for cleanup. Explicit grants now extend individual live coordinator timers without changing root or member-agent caps. Direct coordinations and child references now carry explicit task ownership for export. A live local/remote/Codex journey confirms controlled interruption, restart accounting and export behavior, but fails its local artifact correctness gate. Exact pre-call token/cost reservations, live accounting qualification, broader edit ownership, live mixed-agent supervision, installed-plugin reconciliation, broader portable continuation, isolated improvement patches and rollback remain. |
+| M5 heterogeneous work / plugins | In progress | Core CLI/TUI exports a documented Markdown/JSON continuation package with task evidence, context snapshots/references, artifacts and original provenance. A controlled independent frontend continues after source-database removal. Coordination now consumes typed child outcomes, preserves partial work/disagreement/provenance, settles cancelled siblings and exports its reports; `/coordination` inspects them. Pure coordinators have separate active admission and an overall deadline while retaining shared descendant/depth limits; interrupted starts remain unconfirmed. Native file mutations retain per-path ownership through cancellation and settle before descendant terminal facts. Per-session content observations now reject stale writes/edits and support reread recovery. Escalation and ensemble selection apply frozen active-task requirements to participants and ensemble judges, with read-only evidence checks, inspection and export. Failed ensemble candidates cannot outvote passing evidence; unsuccessful synthesis and review-only work remain incomplete. Shared usage stop limits and durable root accounting now cover descendants and restart, with explicit unknown usage and CLI/TUI inspection. Core operator controls now expose task, native-request, coordination and admission limits, retain settings across resume, and propagate process deadlines without hidden adapter defaults. Live activity/wait inspection and audited operator extensions of eligible root timers are implemented. Model/tool/descendant admission counts now survive restart in a shared root ledger, with explicit holds for legacy untracked child work. Audited operator cancellation now targets individual live agent runs, preserves independent siblings and waits for cleanup. Explicit grants now extend individual live coordinator timers without changing root or member-agent caps. Direct coordinations and child references now carry explicit task ownership for export. A live local/remote/Codex journey confirms controlled interruption, restart accounting and export behavior, but fails its local artifact correctness gate. Exact pre-call token/cost reservations, live accounting qualification, broader edit ownership, live mixed-agent supervision, installed-plugin reconciliation, broader portable continuation, isolated improvement patches and rollback remain. |
 | M6 daily-use qualification | Pending | Measured UI, live adapter boundaries, offline and human dogfood gates. |
 
 `4a98d3f` added durable task requirements and recorded evidence in
@@ -3052,3 +3053,68 @@ and whitespace checks pass; the hosted matrix runs the full suite and packaging.
 The live measurement is retained unchanged: all 90 recorded source hashes match
 the initial implementation at `48f4453`. It predates this review fix and still
 reports its failed local correctness gate. No live model calls were repeated.
+
+## Checked ensemble selection
+
+PR55 merged at `f997a21`. The next increment follows the
+[checked ensemble plan](2026-09-11-checked-ensemble.md): reuse the existing
+escalation evidence checker for concurrent experts and optional synthesis.
+The calling task's objective, requirements and source are frozen before fan-out.
+Each expert and judge executes those requirements in its own recorded child
+task; core rechecks its immutable output/tool evidence and lineage.
+
+With declared requirements, only complete, untruncated, all-passing candidates
+enter the vote or judge prompt. A wrong majority cannot defeat passing evidence.
+A judge must independently pass the same checks. If none pass, no judge runs;
+complete candidate texts remain available with unverified labels. Failed
+synthesis retains its output as incomplete. Partial/interrupted siblings keep
+the existing incomplete aggregate status even alongside a passing candidate.
+Every participant, grade and disagreement stays in the report.
+
+The tool, Python API and configured ensemble agents expose the strict
+`require_checks` boolean. Existing criteria cannot be disabled by a model's
+arguments; the flag additionally refuses missing criteria before starting
+children. Unchecked legacy voting/synthesis remains available when there is no
+calling-task requirement. Parent task checks and explicit acceptance remain
+separate from child selection. Memory and agent-swarm remain plugins.
+
+The mixed-runtime driver's declared human-review requirement now keeps its
+fresh external retry's aggregate/root incomplete despite complete participant
+execution. Its oracle requires the recorded review hold and continues to
+independently require exact files, successful calls, lineage, restart accounting,
+retained work and cancellation. Four new oracle mutations reject a fabricated
+review pass, missing review evidence, unchecked selection or false aggregate
+completion. The earlier live report is unchanged and remains tied to `48f4453`.
+
+Initial regressions reproduced unchecked majority and judge behavior. Additional
+coverage exercises wrong/corrupt evidence, out-of-order checks, strict frontmatter,
+tool-result provenance, the actual calling task, partial work, mixed native and
+external contracts, final terminal rendering, read-only export and replay.
+Interrupted read-only verification stays unconfirmed; its delayed completion
+cannot append a late result. The deadline test expires the registered coordinator
+only after verification starts, independently of machine speed.
+
+The first full runs exposed eight obsolete frontmatter assertions that still
+restricted checks to escalation; both runs were stopped after that diagnosis.
+The corrected matrix accepts explicit true/false for ensemble and escalation
+and still refuses unsupported strategies. No application source changed after
+the initial broad runs. Full reruns use fresh Python 3.12/3.13 environments from
+the lockfile. Missing offline wheels/registry metadata required dependency
+downloads; no model, GPU or paid provider calls were made for this increment.
+
+M5 remains in progress. These exact recorded checks do not establish general
+semantic correctness, qualify the failed local classifier, or replace the
+workflow's independent artifact oracle. Richer artifact predicates, useful live
+workflows with accepted task evidence, installed-plugin reconciliation, broader
+continuation/edit ownership and isolated source-improvement evaluation,
+promotion and rollback remain. M6 daily-use qualification remains pending.
+
+**Validation:** the complete locked-environment suites pass **2,280 tests on
+Python 3.13 (603.35 s)** and **2,280 on Python 3.12 (610.47 s)**, each with seven
+skips and six existing MCP deprecation warnings. This adds 33 cases overall.
+All 35 frontmatter cases passed after correcting their obsolete assertions;
+the earlier affected set passed 174 tests (28.93 s). All 240 core, test and
+driver hashes remained frozen through the final full runs. Ruff, whitespace
+checks, source/wheel builds, the clean installed CLI and all 88 module imports
+pass. All 89 packaged core Python files match source. These results qualify
+the controlled contracts, not live model quality or daily use.

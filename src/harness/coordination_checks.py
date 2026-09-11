@@ -1,4 +1,4 @@
-"""Read-only escalation checks over frozen task requirements and child evidence."""
+"""Read-only coordination checks over frozen task requirements and child evidence."""
 
 from harness.agent import current_agent_run
 from harness.blobs import BlobIntegrityError, BlobStore, MissingBlobError

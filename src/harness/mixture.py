@@ -111,7 +111,7 @@ async def _coordinate(strategy, runner, parent, prompt, experts, *, judge=None, 
                   "result": {"status": "cancelled", "reason": "no delivered outcome"}}
         members.append(member)
         before = parent._seq if parent is not None else 0
-        checked = requirements is not None and role in ("cheap", "premium")
+        checked = requirements is not None and role in ("cheap", "premium", "expert", "judge")
 
         def observe(result):
             member["result"] = result.model_dump(mode="json", exclude={"text"})
@@ -135,10 +135,14 @@ async def _coordinate(strategy, runner, parent, prompt, experts, *, judge=None, 
             member["evidence"] = [e.model_dump(mode="json") for e in evidence]
         return result
 
+    def passed_checks(member):
+        evidence = member.get("evidence")
+        return evidence is not None and all(e["status"] == "passed" for e in evidence)
+
     async def execute():
         nonlocal requirements
-        if type(require_checks) is not bool or require_checks and strategy != "escalate":
-            return DelegationResult(status="blocked", reason="require_checks must be a boolean for escalation")
+        if type(require_checks) is not bool or require_checks and strategy not in ("escalate", "ensemble"):
+            return DelegationResult(status="blocked", reason="require_checks must be a boolean for escalation or ensemble")
         if not experts or len(experts) > 16:
             return DelegationResult(status="blocked", reason="coordination requires 1 to 16 experts")
         if (strategy == "draft_refine" and len(experts) > 2 or
@@ -148,7 +152,7 @@ async def _coordinate(strategy, runner, parent, prompt, experts, *, judge=None, 
                e.agent is not None and (not isinstance(e.agent, str) or not 1 <= len(e.agent) <= 128)
                for e in [*experts, *([judge] if judge else [])]):
             return DelegationResult(status="blocked", reason="expert aliases and agent names require 1 to 128 characters")
-        if strategy == "escalate":
+        if strategy in ("escalate", "ensemble"):
             from harness.coordination_checks import capture_requirements
             requirements, source = capture_requirements(parent)
             if requirements is not None:
@@ -156,17 +160,29 @@ async def _coordinate(strategy, runner, parent, prompt, experts, *, judge=None, 
                 report["check_source"] = source
                 report["gate"] = "recorded_checks"
             elif require_checks:
-                return DelegationResult(status="blocked", reason="escalation requires an active task with declared requirements")
+                return DelegationResult(status="blocked", reason=f"{strategy} requires an active task with declared requirements")
         if strategy == "ensemble":
             results = await _fanout([run(e, "expert") for e in experts])
             usable = [r for r in results if _usable(r)]
             if not usable:
                 return DelegationResult(status="failed", reason="all experts failed or returned partial output")
             report["disagreement"] = len({r.text.strip() for r in usable}) > 1
-            report["gate"] = "synthesis" if judge else "text_vote"
+            if requirements is not None:
+                # run() records each member before its first await; gather keeps
+                # input order even when evidence checks finish in another order.
+                candidates = [(r, m) for r, m in zip(results, members, strict=True) if _usable(r)]
+                usable = [r for r, m in candidates if passed_checks(m)]
+                if not usable:
+                    retained = "\n\n".join(f"Unverified candidate [{m['model']}]:\n{r.text}" for r, m in candidates)
+                    return DelegationResult(status="incomplete", reason="no expert passed all recorded checks", text=retained)
+            else:
+                report["gate"] = "synthesis" if judge else "text_vote"
             if judge:
                 answers = "\n\n".join(f"[{i + 1}] {r.text}" for i, r in enumerate(usable))
-                return await run(judge, "judge", _SYNTH_PROMPT.format(task=prompt, answers=answers))
+                answer = await run(judge, "judge", _SYNTH_PROMPT.format(task=prompt, answers=answers))
+                if requirements is not None and not passed_checks(members[-1]) and answer.status == "completed":
+                    answer = answer.model_copy(update={"status": "incomplete", "reason": "judge checks failed or unverified"})
+                return answer
             return DelegationResult(status="completed", text=majority_vote([r.text for r in usable]))
         if strategy == "panel":
             proposal = await run(experts[0], "proposer")
@@ -213,6 +229,8 @@ async def _coordinate(strategy, runner, parent, prompt, experts, *, judge=None, 
         return DelegationResult(status="blocked", reason=f"unknown strategy {strategy!r}")
 
     def finish(result):
+        if strategy == "ensemble" and requirements is not None and any(not passed_checks(m) for m in members):
+            report["unresolved"].append("one or more participants did not pass all recorded checks")
         if any(m["result"]["status"] != "completed" or m["result"].get("truncated") for m in members):
             report["unresolved"].append("one or more participants did not deliver a complete result")
             if result.status == "completed" and strategy != "escalate":
@@ -290,10 +308,13 @@ async def ensemble(
     experts: list[Expert],
     *,
     judge: Expert | None = None,
+    require_checks: bool = False,
 ) -> str:
     """Run every expert on the same prompt concurrently; combine by judge
-    synthesis when a judge is given, otherwise by majority vote."""
-    return (await _coordinate("ensemble", runner, parent, prompt, experts, judge=judge)).render()
+    synthesis when a judge is given, otherwise by majority vote. Declared task
+    checks gate each candidate and the judge; require_checks refuses their absence."""
+    return (await _coordinate("ensemble", runner, parent, prompt, experts,
+                              judge=judge, require_checks=require_checks)).render()
 
 
 async def panel(
@@ -378,6 +399,8 @@ class EnsembleTool:
                 "Run several models on the same prompt and combine their answers. "
                 "Args: prompt (required), models (required list of catalog aliases), "
                 "judge (optional alias to synthesize; default = majority vote). "
+                "Declared requirements of the active task gate every expert and judge. "
+                "require_checks optionally refuses work without declared requirements. "
                 "Execution results and disagreement are recorded; this does not accept the task."
             ),
             parameters={
@@ -386,6 +409,8 @@ class EnsembleTool:
                     "prompt": {"type": "string"},
                     "models": {"type": "array", "minItems": 1, "maxItems": 16, "items": {"type": "string"}},
                     "judge": {"type": "string"},
+                    "require_checks": {"type": "boolean", "default": False,
+                        "description": "Refuse if the calling task has no declared requirements."},
                 },
                 "required": ["prompt", "models"],
             },
@@ -394,7 +419,8 @@ class EnsembleTool:
     async def __call__(self, args: dict[str, Any]) -> str:
         judge = Expert(model=args["judge"]) if args.get("judge") else None
         return await ensemble(
-            self.runner, self.parent, args["prompt"], _experts(args.get("models")), judge=judge
+            self.runner, self.parent, args["prompt"], _experts(args.get("models")), judge=judge,
+            require_checks=args.get("require_checks", False),
         )
 
 
