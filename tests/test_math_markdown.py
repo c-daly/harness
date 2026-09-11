@@ -329,15 +329,24 @@ def test_simple_display_math_uses_centered_unicode_without_rasterizing(monkeypat
     assert not any(0x2800 < ord(glyph) <= 0x28FF for glyph in rendered)
 
 
-def test_complex_inline_math_wraps_with_prose_in_document_order():
+@pytest.mark.parametrize("terminal", ["dumb", "xterm-256color"])
+@pytest.mark.parametrize("width", [12, 28, 40, 78])
+@pytest.mark.parametrize("backend", ["braille", "sixel"])
+def test_complex_inline_math_wraps_with_prose_in_document_order(monkeypatch, terminal, width, backend):
     source = (
         r"For the quadratic equation \(ax^2+bx+c=0\), the solutions are "
         r"\(x=\frac{-b\pm\sqrt{b^2-4ac}}{2a}\). In calculus, the Gaussian "
         r"integral satisfies \(\int_{-\infty}^{\infty}e^{-x^2}\,dx=\sqrt{\pi}\)."
     )
-    console = Console(width=78, force_terminal=True, no_color=False)
+    # Rich's TERM=dumb fallback ignores a width-only override. Supplying both
+    # dimensions ensures this test actually exercises the requested geometry.
+    console = Console(width=width, height=25, force_terminal=True, no_color=False,
+                      _environ={"TERM": terminal})
+    assert console.options.max_width == width
+    monkeypatch.setattr(math_markdown, "_sixel_available", lambda: backend == "sixel")
+    renderable = MathMarkdown(source, color="#ffffff", sixel_widgets=backend == "sixel")
 
-    lines = console.render_lines(MathMarkdown(source, color="#ffffff"), console.options)
+    lines = console.render_lines(renderable, console.options)
     rendered = "\n".join("".join(segment.text for segment in line) for line in lines)
     prose = re.sub(r"[\u2800-\u28ff]", "", rendered)
     prose = " ".join(prose.split())
@@ -350,7 +359,12 @@ def test_complex_inline_math_wraps_with_prose_in_document_order():
     )
     positions = [prose.index(phrase) for phrase in phrases]
     assert positions == sorted(positions)
-    assert all(sum(segment.cell_length for segment in line) <= 78 for line in lines)
+    assert all(sum(segment.cell_length for segment in line) <= width for line in lines)
+    if backend == "sixel":
+        assert len(renderable.sixel_placements) == 2
+        assert all(placement.width <= width for placement in renderable.sixel_placements.values())
+    else:
+        assert any(0x2800 < ord(char) <= 0x28FF for char in rendered)
 
 
 def test_invalid_latex_falls_back_to_source_instead_of_crashing():

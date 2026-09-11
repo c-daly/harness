@@ -579,8 +579,10 @@ async def test_sixel_widget_tracks_transcript_scrolling(tmp_path, monkeypatch):
         assert image.region.y >= transcript.region.y
 
 
-async def test_complex_inline_math_uses_sixel_without_hiding_prose(tmp_path, monkeypatch):
-    monkeypatch.setattr(math_markdown, "_SIXEL_AVAILABLE", True)
+@pytest.mark.parametrize("size", [(52, 40), (80, 40), (120, 40)])
+@pytest.mark.parametrize("sixel", [False, True])
+async def test_complex_inline_math_stays_visible_at_transcript_width(tmp_path, monkeypatch, size, sixel):
+    monkeypatch.setattr(math_markdown, "_sixel_available", lambda: sixel)
     source = (
         r"For the quadratic equation \(ax^2+bx+c=0\), the solutions are "
         r"\(x=\frac{-b\pm\sqrt{b^2-4ac}}{2a}\). In calculus, the Gaussian "
@@ -596,7 +598,7 @@ async def test_complex_inline_math_uses_sixel_without_hiding_prose(tmp_path, mon
         if not isinstance(line_filter, (Monochrome, NoColor))
     ]
 
-    async with app.run_test() as pilot:
+    async with app.run_test(size=size) as pilot:
         await pilot.pause(0.1)
         await pilot.click("#prompt")
         await pilot.press(*"show inline math", "enter")
@@ -609,10 +611,11 @@ async def test_complex_inline_math_uses_sixel_without_hiding_prose(tmp_path, mon
             "".join(segment.text for segment in strip if not segment.control)
             for strip in app.screen._compositor.render_strips()
         )
+        screen_prose = " ".join(screen_text.split())
 
-        assert len(images) == 2
+        assert len(images) == (2 if sixel else 0)
         assert all(image.region.width > 0 and image.region.height >= 2 for image in images)
-        assert "ax² + bx + c = 0" in screen_text
+        assert "ax² + bx + c = 0" in screen_prose
         assert not any(segment.control for line in transcript.lines for segment in line)
         assert prose.index("For the quadratic equation") < prose.index(
             "the solutions are"
@@ -622,9 +625,25 @@ async def test_complex_inline_math_uses_sixel_without_hiding_prose(tmp_path, mon
         # Assert against Textual's final layered screen, not just RichLog's
         # backing lines.  A full-size transparent overlay can retain the prose
         # in RichLog while erasing it from the actual terminal compositor.
-        assert "For the quadratic equation" in screen_text
-        assert "the solutions are" in screen_text
-        assert "the Gaussian integral satisfies" in screen_text
+        assert "For the quadratic equation" in screen_prose
+        assert "the solutions are" in screen_prose
+        assert "the Gaussian integral satisfies" in screen_prose
+        viewport = transcript.scrollable_content_region
+        assert all(image.region.x >= viewport.x and image.region.right <= viewport.right
+                   for image in images)
+
+
+async def test_plain_reply_wraps_to_narrow_transcript(tmp_path):
+    source = " ".join(f"word{index:02}" for index in range(24))
+    app = make_app(tmp_path, provider=FakeProvider([text_turn(source)]))
+    async with app.run_test(size=(52, 40)) as pilot:
+        await pilot.click("#prompt")
+        await pilot.press(*"wrap reply", "enter")
+        if app._turn_worker is not None:
+            await app._turn_worker.wait()
+        await pilot.pause(.1)
+        screen_text = " ".join(" ".join(strip.text for strip in app.screen._compositor.render_strips()).split())
+        assert source in screen_text
 
 
 async def test_completed_reply_with_code_block_and_table_uses_markdown_seam(tmp_path):
@@ -1108,14 +1127,19 @@ async def test_tui_pipes_mcp_child_stderr_to_file(tmp_path):
         mcp=[fixture_stdio_spec()],
     )
     app = HarnessApp(kernel)
-    async with app.run_test() as pilot:
-        await pilot.pause(0.5)  # checklist mounts
-        await pilot.press("enter")  # accept defaults -- default_enabled=True
-        await pilot.pause(0.5)  # mcp start + session driver
-        await pilot.click("#prompt")
-        await pilot.press(*"hi", "enter")
-        await pilot.pause(0.3)
     try:
+        async with app.run_test() as pilot:
+            await pilot.pause(0.5)  # checklist mounts
+            await pilot.press("enter")  # accept defaults -- default_enabled=True
+            # Startup includes a real subprocess and tool discovery; its duration
+            # depends on host load. Do not end the app before that work finishes.
+            async with asyncio.timeout(5):
+                while not any(e.event.type == "session_started"
+                              for e in read_session(tmp_path, kernel.session.id)):
+                    await pilot.pause(0.05)
+            await pilot.click("#prompt")
+            await pilot.press(*"hi", "enter")
+            await pilot.pause(0.3)
         errlog_path = tmp_path / "sessions" / str(kernel.session.id) / "mcp-stderr.log"
         assert errlog_path.exists()
         assert "ListToolsRequest" in errlog_path.read_text()

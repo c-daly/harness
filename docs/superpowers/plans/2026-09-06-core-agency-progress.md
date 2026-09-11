@@ -1,8 +1,8 @@
 # Core agency implementation record
 
-Current implementation branch: `feat/activity-supervision`, based on `main`
-at `5a3d424` after PR47 merged. The separate transcript-width PR49 remains
-outside this branch.
+Current implementation branch: `feat/activity-supervision` (PR50), now
+merged with `main` at `71bf7aa` after PR49 merged. Core execution controls,
+additive-event compatibility, and the transcript-width fixes are included.
 Previous branches: `feat/evidence-escalation`, `feat/native-file-conflicts`, `fix/file-mutation-lifetime`, `feat/coordination-admission`, `feat/typed-coordination-results`, `feat/portable-task-export`, `feat/handoff-destination-recovery`, `feat/handoff-failure-qualification`, `feat/context-profile-comparison`, `docs/context-experiment-results`, `feat/context-eligibility`, `feat/context-selection-qualification`, `fix/bounded-compaction`, `fix/model-selection-continuity`, `feat/local-model-management`, `feat/assessment-improvement`, `feat/external-handoff`, `feat/assessment-evaluation`, `feat/supervised-improvement`, `feat/local-scheduling`, `feat/task-fallback`, `feat/semantic-context-progress`, `feat/local-assistant-m3`, `feat/resident-workflow`, `feat/task-completion-evidence`, `fix/inference-client-lifecycle`, `feat/local-response-profiles`, `feat/local-tool-recovery`, `feat/local-tool-planning`, `feat/local-qualification`, `feat/semantic-evaluation`, `feat/local-context`, `feat/local-readiness`, `feat/agent-runtimes`,
 and `feat/core-agency`.
 
@@ -2581,6 +2581,51 @@ on each Python version** (3.13: 27.73 s; 3.12: 30.14 s); Ruff and whitespace
 checks pass. The full suite and packaging were not repeated for this localized
 review fix; the prior full-suite math-width limitation remains recorded above.
 
+## Terminal width validation and narrow transcript wrapping
+
+This increment follows PR47 from merged `main` at `5a3d424`. It resolves the
+math-width issue carried in the previous validation records and adds an actual
+narrow-window interface fix.
+
+**Diagnosis:** the prior test constructed `Console(width=78)` under `TERM=dumb`.
+Rich uses an 80-column fallback in that environment unless both dimensions are
+specified, so the renderer received 80 columns while the assertion required
+78. With explicit width and height, the existing renderer stays within its
+requested bounds. The old failure was a test-geometry defect; it did not
+establish a rendering overflow.
+
+**Product fix:** extending the final-compositor checks to a 52-column terminal
+exposed a separate, real issue. The transcript inherited RichLog's 78-column
+minimum, which clipped prose beyond the visible edge. Its minimum is now one
+column, allowing the normal shrink/wrap path to use the available viewport.
+This applies to ordinary prose, restored replies and mathematical replies.
+Sixel equation widgets remain bounded by the transcript viewport.
+
+**Coverage:** the mixed math/prose renderer is exercised at widths 12, 28, 40
+and 78, under both `dumb` and `xterm-256color`, with Braille and Sixel
+placeholders. Final-compositor checks cover widths 52, 80 and 120 with both
+rendering modes, including prose visibility and equation-widget bounds. A
+separate ordinary-prose check requires the whole answer to remain visible in
+the narrow terminal. The initial focused set passed **60 tests**.
+
+**Validation:** the complete Python 3.13 suite passed **2,085 tests, seven
+skipped** (448.17 s), with six existing MCP deprecation warnings. Python 3.12
+passed all **152 affected math/TUI tests** (195.56 s). All 225 source/test files
+remained unchanged throughout validation. Ruff, whitespace checks, offline
+sdist/wheel build, isolated installed CLI startup and all 82 module imports
+passed; all 83 packaged core files match source. This supersedes the earlier
+full-suite failure record for this candidate.
+These are automated layout checks. Historical RichLog lines still retain their
+render-time layout after resizing; this change does not implement history
+reflow or establish physical-terminal Sixel/daily-use qualification.
+
+**Roadmap:** M5's remaining runtime work includes progress/activity inspection,
+active-budget extension, durable consumption, mixed-agent qualification and
+isolated source-improvement promotion/rollback. M6's broader daily-use gates
+remain pending. The next core supervision increment should expose elapsed
+work, current phase and observed activity without calling silence a hang or
+automatically abandoning the user's task.
+
 ## Core live activity and explicit waits
 
 The live session tree now shares an observation tracker alongside its execution
@@ -2613,8 +2658,9 @@ Full Python 3.13 validation reports **2,076 passed, 7 skipped, 1 failed, 6
 existing MCP deprecation warnings in 449.00 s**. The sole failure is the
 unchanged `test_complex_inline_math_wraps_with_prose_in_document_order` width
 assertion, also reproduced on an untouched archive of `main` at `5a3d424`.
-The separate PR49 fixes that fixture and narrow transcript wrapping; this
-branch does not include it. **387 affected tests pass on Python 3.12 in
+This was the pre-merge result. PR49 fixes that fixture and narrow transcript
+wrapping and is now included through the merge recorded below. **387 affected
+tests pass on Python 3.12 in
 246.09 s**. Ruff, whitespace checks, offline wheel/sdist build, isolated
 installed CLI and all module imports pass. All 84 packaged core files match
 source; all 227 source/test hashes remained unchanged during validation.
@@ -2629,3 +2675,21 @@ extension of active budgets; durable call/descendant counters and exact pre-call
 usage reservations; live mixed-agent accounting and plugin reconciliation;
 edit/worktree ownership; isolated source-improvement validation/promotion/
 rollback; and broader daily-use qualification. M5 and M6 remain in progress.
+
+### PR50 merge: retain transcript-width and activity records
+
+Merged `main` at `71bf7aa` after PR49 merged. The conflicts were confined to
+this document's current-branch description and appended implementation records;
+both records are retained in order. The TUI's narrow-transcript fix merged
+without manual application-code edits.
+
+The initial combined run exposed a timing assumption in the existing MCP
+stderr test: it submitted work and exited before startup had completed after
+a fixed half-second delay. Its log lacked `session_started`; an isolated run
+passed. The test now waits for that recorded startup event, with a bounded
+failure timeout, and runs cleanup even if the readiness wait fails.
+
+Final math/TUI/activity checks pass **165 tests on Python 3.13 (200.83 s)** and
+**165 on Python 3.12 (201.39 s)**, including the previously failing math-width
+assertion and the corrected MCP startup test. Ruff and whitespace checks pass.
+The full suite and packaging were not repeated for this merge resolution.
