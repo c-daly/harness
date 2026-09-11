@@ -1376,7 +1376,10 @@ class HarnessApp(App[None]):
             widget = self.query_one("#activity-status", Static)
         except NoMatches:
             return
-        text = activity_summary(self.kernel.loop.dispatcher.scope.budget.activity)
+        budget = self.kernel.loop.dispatcher.scope.budget
+        text = activity_summary(budget.activity)
+        if any(row.cancellation_blocked for row in budget.controls.snapshot()):
+            text += "\nCancellation or completion pending; waiting for cleanup"
         widget.display = bool(text)
         widget.update(_plain(text))
 
@@ -1516,6 +1519,8 @@ class HarnessApp(App[None]):
         # the answer -- read _thought_buffer BEFORE _clear_live() wipes it.
         if self._thought_mode == "full" and self._thought_buffer:
             self.say("", self._thought_buffer, style="dim")
+        if result.status == "cancelled" and self._stream_buffer:
+            self.say("~ ", self._stream_buffer)  # Preserve delivered partial text without accepting it.
         self._clear_live()
         self.query_one("#transcript", RichLog).write(self._render_reply(reply))
         if result.status != "completed":
@@ -1661,7 +1666,7 @@ class HarnessApp(App[None]):
                 "",
                 "/help  /model [alias]  /thoughts [collapse|full|off]  /markdown [on|off]  "
                 "/clear  /compact [alias]  /resume  /panel  /tools [name]  /task  /status  /context  /resources  /models  /semantics  /improvements  "
-                "/handoff inspect|record|show|run  /export FILE.zip  /coordination  /budget  /execution  /activity  /quit  — @path mentions a file "
+                "/handoff inspect|record|show|run  /export FILE.zip  /coordination  /budget  /execution  /activity [cancel RUN_ID]  /quit  — @path mentions a file "
                 "(Tab completes), read for the model only; F2 also toggles the activity panel",
             )
             self.say("", "/queue: inspect, edit, remove, pause, resume, clear; queued prompts are memory only")
@@ -1694,10 +1699,20 @@ class HarnessApp(App[None]):
             self._task_command(command.arg)
         elif command.name == "activity":
             from harness.activity import render_activity
-            if command.arg.strip():
-                self.say("! ", "Usage: /activity")
+            from harness.run_controls import cancel_run, render_run_controls
+            words = command.arg.split()
+            if words:
+                try:
+                    if len(words) != 2 or words[0] != "cancel":
+                        raise ValueError("Usage: /activity [cancel RUN_ID]")
+                    result = cancel_run(self.kernel, words[1])
+                    self.say("", f"Cancellation requested for run {result.run_id}; waiting for cleanup.")
+                    self._refresh_activity()
+                except (ValueError, OSError) as exc:
+                    self.say("! ", f"Run cancellation: {exc}")
                 return
-            for line in render_activity(self.kernel.loop.dispatcher.scope.budget.activity).splitlines():
+            budget = self.kernel.loop.dispatcher.scope.budget
+            for line in (render_activity(budget.activity) + "\n" + render_run_controls(budget.controls)).splitlines():
                 self.say("", line)
         elif command.name == "execution":
             from harness.execution_controls import configure_execution, parse_overrides, render_execution

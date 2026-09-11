@@ -215,7 +215,7 @@ class SubagentRunner:
                 )
             original = result.read_text(child.blobs)
             text = _bound(original, limit)
-            outcome = DelegationResult(status="completed" if result.status == "completed" else "incomplete",
+            outcome = DelegationResult(status=result.status if result.status in {"completed", "cancelled"} else "incomplete",
                 reason=result.reason, text=text, child_session_id=child_id,
                 run_id=result.run_id, output=result.output, truncated=text != original)
         except asyncio.CancelledError:

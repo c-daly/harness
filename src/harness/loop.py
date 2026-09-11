@@ -165,6 +165,7 @@ class AgentLoop:
                 self.session, task, runtime="harness", model=self.model,
                 activity=self.dispatcher.scope.budget.activity,
                 run_budgets=self.dispatcher.scope.budget.runs,
+                run_controls=self.dispatcher.scope.budget.controls,
                 extension_blocked=extension_blocked,
                 capabilities={"handoff_scope": capture_scope(self.dispatcher)},
                 execute=lambda: self._run_task_body(task, on_progress),

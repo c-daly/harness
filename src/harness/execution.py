@@ -9,6 +9,7 @@ from harness.usage_budget import UsageBudget
 from harness.execution_counts import ExecutionLedger
 from harness.activity import ActivityTracker
 from harness.run_budgets import RunBudgets
+from harness.run_controls import RunControls
 
 if TYPE_CHECKING:
     from harness.context import ContextPolicy
@@ -73,6 +74,7 @@ class ExecutionBudget:
     usage: UsageBudget = field(default_factory=UsageBudget)
     activity: ActivityTracker = field(default_factory=ActivityTracker)
     runs: RunBudgets = field(default_factory=RunBudgets)
+    controls: RunControls = field(default_factory=RunControls)
 
     @property
     def model_calls(self):
@@ -91,12 +93,14 @@ class ExecutionBudget:
             raise ValueError("session already has an execution budget; share its execution scope")
         self.ledger.attach(session)
         session._execution_budget = self
+        self.controls.attach(self.ledger.session)
 
     @property
     def busy(self) -> bool:
         return bool(self.active_children or self.active_coordinators)
 
     def reserve_call(self, kind: str, *, session=None, call_id=None) -> None:
+        self.controls.check_active()
         if kind not in ("model", "tool"):
             raise ValueError("unknown execution kind")
         if session is not None:
@@ -114,6 +118,7 @@ class ExecutionBudget:
         self._reserve_descendant(depth, coordinator=True, session=session, call_id=call_id)
 
     def _reserve_descendant(self, depth: int, *, coordinator: bool, session=None, call_id=None) -> None:
+        self.controls.check_active()
         if session is not None:
             self.attach(session)
         if depth > self.limits.max_depth:

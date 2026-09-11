@@ -15,7 +15,7 @@ from harness.blobs import BlobStore
 from harness.execution_counts import counts_snapshot
 from harness.coordination import load_report
 from harness.events import (
-    TaskBudgetExtended,
+    TaskBudgetExtended, AgentRunCancelRequested,
     AgentRunFinished, AgentRunStarted, ContextPolicyConfigured, ContextSourceObserved,
     CoordinationFinished, CoordinationStarted,
     DispatchResolved, ModelCallProposed, ModelCallStarted, SubagentFinished, SubagentSpawned,
@@ -113,6 +113,7 @@ def task_package(base: Path, session_id: str, *, task_id: str | None = None):
     model_proposals = _one_by_call(events, ModelCallProposed)
     tool_proposals = _one_by_call(events, ToolCallProposed)
     runs, calls, context, children, external, reconciliations = {}, {}, [], {}, [], []
+    cancellations = []
     configurations = {}
     coordination = {}
     current_policy = None
@@ -140,6 +141,11 @@ def task_package(base: Path, session_id: str, *, task_id: str | None = None):
             row.setdefault("budget_extensions", []).append({"source_seq": env.seq,
                 "previous_timeout_seconds": event.previous_timeout_seconds,
                 "timeout_seconds": event.timeout_seconds, "actor": event.actor})
+        elif isinstance(event, AgentRunCancelRequested) and (
+                event.target_session_id == session_id and event.run_id in owned
+                or event.target_session_id in children):
+            cancellations.append({"source_seq": env.seq, "run_id": event.run_id,
+                "task_id": event.task_id, "target_session_id": event.target_session_id, "actor": event.actor})
         elif isinstance(event, AgentRunFinished) and event.result.run_id in owned:
             row = runs.get(event.result.run_id)
             if row is None or "finished_seq" in row:
@@ -244,6 +250,7 @@ def task_package(base: Path, session_id: str, *, task_id: str | None = None):
     package = {"format": "harness-continuation", "version": 1,
         "usage_budget": budget_snapshot(base, session_id, events=events),
         "execution_counts": counts_snapshot(base, session_id, events=events),
+        "cancellation_requests": cancellations,
         "source": {"session_id": session_id, "through_seq": events[-1].seq, "recorded_at": events[-1].ts,
             "canonical_events_sha256": hashlib.sha256(b"".join(
                 (e.model_dump_json() + "\n").encode() for e in events)).hexdigest()},

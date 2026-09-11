@@ -130,7 +130,7 @@ current_agent_run: ContextVar[ActiveAgentRun | None] = ContextVar("agent_run", d
 @dataclass(frozen=True)
 class AgentOutput:
     text: str
-    status: Literal["completed", "incomplete"] = "completed"
+    status: Literal["completed", "incomplete", "cancelled"] = "completed"
     reason: str = ""
     usage: Usage = Usage()
     response: Message | None = None
@@ -148,15 +148,18 @@ async def execute_task(
     capabilities: dict | None = None,
     activity=None,
     run_budgets=None,
+    run_controls=None,
     extension_blocked="task does not support live extensions",
 ) -> AgentResult:
-    """Record one run. Failures/cancellation propagate after recording their outcome.
+    """Record one run; targeted operator stops return a cancelled outcome.
 
+    Failures and parent cancellation propagate after recording their outcome.
     Runtime cleanup belongs inside execute and must settle before it returns or
     raises. Publication of the final output precedes the terminal fact; failure
     of the terminal write is not misreported as a second terminal outcome.
     """
     from harness.events import AgentRunFinished, AgentRunStarted
+    from harness.run_controls import OperatorRunCancelled
     from harness.tasks import TaskService
     task = AgentTask.model_validate(task.model_dump())
     TaskService(session).validate_run(task)
@@ -186,7 +189,9 @@ async def execute_task(
                 with (run_budgets.track(session=session, task=task, run_id=run_id,
                       timer=deadline, observation=live_activity, blocked=extension_blocked)
                       if run_budgets is not None else nullcontext()) as active_budget:
-                    output = await execute()
+                    output = (await run_controls.run(session=session, task=task, run_id=run_id,
+                        runtime=runtime, parent_run_id=parent.run_id if parent else None, execute=execute)
+                        if run_controls is not None else await execute())
             payload = output.text.encode("utf-8")
             if len(payload) > task.limits.max_response_bytes:
                 raise BudgetExceeded("agent result exceeds its output limit")
@@ -195,6 +200,10 @@ async def execute_task(
                 raise ValueError("agent response must match its assistant output")
             result = terminal(output.status, output.reason, output=session.blobs.put(payload),
                               usage=output.usage, response=response)
+        except OperatorRunCancelled:
+            result = terminal("cancelled", "operator_cancelled")
+            session.append(AgentRunFinished(result=result, purpose=purpose))
+            return result
         except asyncio.CancelledError:
             session.append(AgentRunFinished(result=terminal("cancelled", "cancelled")))
             raise

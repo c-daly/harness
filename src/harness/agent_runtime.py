@@ -82,6 +82,7 @@ class ExternalAgentRuntime:
                 self.dispatcher.session, task, runtime=self.info.runtime, model=self.model,
                 activity=self.dispatcher.scope.budget.activity,
                 run_budgets=self.dispatcher.scope.budget.runs,
+                run_controls=self.dispatcher.scope.budget.controls,
                 extension_blocked="external runtime timers cannot be extended",
                 capabilities={**self.info.model_dump(), "handoff_scope": capture_scope(self.dispatcher)},
                 purpose="conversation",
