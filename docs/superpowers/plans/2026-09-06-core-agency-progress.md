@@ -1,8 +1,8 @@
 # Core agency implementation record
 
-Current implementation branch: `feat/activity-supervision` (PR50), now
-merged with `main` at `71bf7aa` after PR49 merged. Core execution controls,
-additive-event compatibility, and the transcript-width fixes are included.
+Current implementation branch: `feat/active-task-budgets`, based on `main`
+at `51a96dd` after PR50 merged. Core activity inspection and its merge-resolution
+checks are now included in the main branch.
 Previous branches: `feat/evidence-escalation`, `feat/native-file-conflicts`, `fix/file-mutation-lifetime`, `feat/coordination-admission`, `feat/typed-coordination-results`, `feat/portable-task-export`, `feat/handoff-destination-recovery`, `feat/handoff-failure-qualification`, `feat/context-profile-comparison`, `docs/context-experiment-results`, `feat/context-eligibility`, `feat/context-selection-qualification`, `fix/bounded-compaction`, `fix/model-selection-continuity`, `feat/local-model-management`, `feat/assessment-improvement`, `feat/external-handoff`, `feat/assessment-evaluation`, `feat/supervised-improvement`, `feat/local-scheduling`, `feat/task-fallback`, `feat/semantic-context-progress`, `feat/local-assistant-m3`, `feat/resident-workflow`, `feat/task-completion-evidence`, `fix/inference-client-lifecycle`, `feat/local-response-profiles`, `feat/local-tool-recovery`, `feat/local-tool-planning`, `feat/local-qualification`, `feat/semantic-evaluation`, `feat/local-context`, `feat/local-readiness`, `feat/agent-runtimes`,
 and `feat/core-agency`.
 
@@ -2693,3 +2693,48 @@ Final math/TUI/activity checks pass **165 tests on Python 3.13 (200.83 s)** and
 **165 on Python 3.12 (201.39 s)**, including the previously failing math-width
 assertion and the corrected MCP startup test. Ruff and whitespace checks pass.
 The full suite and packaging were not repeated for this merge resolution.
+
+## Operator extension of live root task budgets
+
+Core `/execution extend RUN_ID ADDITIONAL_SECONDS` now grants finite additional
+elapsed time to an eligible live task. Eligibility is captured before task
+validation materializes default fields: the run must be a fresh Harness-owned
+root task using the session timeout. Explicit/replayed caps, delegated work,
+handoff limits, and typed external-runtime timers remain fixed. Run IDs (or
+unambiguous prefixes of at least eight characters) identify the intended attempt
+across queued turns. Expired, completed, and cancelling runs refuse extension.
+
+The live timer registry is separate from activity observation and shares the
+session tree's existing execution ownership. Operator grants are written as
+`task_budget_extended` intents before rescheduling on the owning event loop.
+An append failure retains the previous timer. The live observed deadline changes
+without manufacturing an activity signal. Grants retain actor, task, run,
+previous/new total timeout and source sequence in the log and portable task
+package; they are never restored as live timers, defaults, or handoff authority.
+
+This increment changes only the selected outer task timer. Native inference,
+context, child, coordinator and external-process timers can still stop work
+sooner. The TUI displays that boundary, remains responsive while work and
+follow-ups are pending, and offers a concise success message. Token/cost,
+iteration, tool and delegation limits do not grow. No semantic classifier,
+automatic extension, or inactivity cancellation is added.
+
+Full Python 3.13 validation passes **2,127 tests, 7 skipped, 6 existing MCP
+deprecation warnings in 481.81 s**. All **334 affected tests pass on Python 3.12
+in 245.90 s**. The 29 new regressions cover live timers, write failure, restart,
+cancellation, prefix collisions, external caps and actual TUI composition. A
+real tool wait crosses its original deadline after two grants; a separate test
+verifies the extended timer still expires. Existing handoff, delegation and
+portable checks are included in validation.
+
+All 229 source/test files remained unchanged during these runs. Ruff and
+whitespace checks pass. Offline wheel/sdist build, isolated installed CLI and
+all 84 module imports pass; all 85 packaged core files match source. These
+results establish automated behavior, not live provider or daily-use qualification.
+
+**Remaining:** independent provider/child/coordinator timer extension and broader
+live qualification; useful-progress assessment and suspected-stall recovery;
+durable call/descendant counters and exact pre-call usage reservations; live
+mixed-agent accounting and plugin reconciliation; edit/worktree ownership;
+isolated source-improvement validation/promotion/rollback; and daily-use gates.
+M5 and M6 remain in progress.

@@ -7,7 +7,7 @@ never makes newer logs unreadable.
 
 from typing import Annotated, Any, ClassVar, Literal, Union
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from harness.blobs import BlobRef
 from harness.agent import AgentResult
@@ -72,6 +72,25 @@ class ExecutionConfigured(_Event):
         from harness.execution import ExecutionLimits
         ExecutionLimits.from_record(value)
         return value  # Preserve newer fields through serialization; fold only supported limits.
+
+
+class TaskBudgetExtended(_Event):
+    """Durable operator grant for one live run; never restored as authority."""
+
+    model_config = ConfigDict(frozen=True, allow_inf_nan=False)
+    type: Literal["task_budget_extended"] = "task_budget_extended"
+    is_intent: ClassVar[bool] = True
+    run_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    task_id: str = Field(min_length=1, max_length=128)
+    previous_timeout_seconds: float = Field(gt=0, strict=True)
+    timeout_seconds: float = Field(gt=0, strict=True)
+    actor: Literal["operator"] = "operator"
+
+    @model_validator(mode="after")
+    def increasing(self):
+        if self.timeout_seconds <= self.previous_timeout_seconds:
+            raise ValueError("task extensions must increase the budget")
+        return self
 
 
 class UsageBudgetConfigured(_Event):
@@ -569,6 +588,7 @@ class UnknownEvent(_Event):
 Event = Annotated[
     Union[
         ExecutionConfigured,
+        TaskBudgetExtended,
         UsageBudgetConfigured,
         UsageBudgetLinked,
         UsageAttemptStarted,

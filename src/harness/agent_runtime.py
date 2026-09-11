@@ -81,6 +81,8 @@ class ExternalAgentRuntime:
             return await execute_task(
                 self.dispatcher.session, task, runtime=self.info.runtime, model=self.model,
                 activity=self.dispatcher.scope.budget.activity,
+                run_budgets=self.dispatcher.scope.budget.runs,
+                extension_blocked="external runtime timers cannot be extended",
                 capabilities={**self.info.model_dump(), "handoff_scope": capture_scope(self.dispatcher)},
                 purpose="conversation",
                 execute=lambda: self._execute(task, on_progress),

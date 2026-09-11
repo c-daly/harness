@@ -70,5 +70,11 @@ late callback cannot restore a finished operation. Resuming a session starts
 with an empty live tracker; saved run records alone never imply that a process
 is still working. The existing event log remains the durable authority.
 
+Eligible root task timers can now receive an explicit operator extension through
+[/execution extend](execution-controls.md#extend-a-live-root-task). The live
+observation updates its deadline without counting the grant as task activity;
+other observed enclosing caps remain visible and binding.
+
 Live provider qualification, meaningful-progress assessment, suspected-stall
-recovery, and operator extension of active budgets are subsequent work.
+recovery, and extension of independent provider/child/coordinator timers remain
+subsequent work.

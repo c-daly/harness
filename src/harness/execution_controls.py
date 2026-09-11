@@ -38,6 +38,7 @@ def configure_execution(kernel, overrides: dict) -> None:
 
 
 def render_execution(scope) -> str:
+    from harness.run_budgets import render_run_budgets
     limits = scope.budget.limits
     lines = ["Execution limits (seconds are elapsed time budgets, not hang detection):"]
     for name, value in asdict(limits).items():
@@ -52,4 +53,4 @@ def render_execution(scope) -> str:
         "Settings persist on resume. Call/child counters are per process lifetime; token/cost accounting is durable.",
         "Change idle settings with /execution task-timeout-seconds 1800 (applies to subsequent tasks).",
     ]
-    return "\n".join(lines)
+    return "\n".join([*lines, render_run_budgets(scope)])

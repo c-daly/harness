@@ -142,6 +142,8 @@ class AgentLoop:
     ) -> AgentResult:
         """Execute one bounded task; completion leaves acceptance unverified."""
         from harness.agent import bound_task
+        from harness.run_budgets import extension_block
+        extension_blocked = extension_block(task, self.dispatcher.scope)
         task = bound_task(task, self.dispatcher.scope.budget.limits)
         policy = self.dispatcher.scope.context_policy
         if policy is not None:
@@ -161,6 +163,8 @@ class AgentLoop:
             return await execute_task(
                 self.session, task, runtime="harness", model=self.model,
                 activity=self.dispatcher.scope.budget.activity,
+                run_budgets=self.dispatcher.scope.budget.runs,
+                extension_blocked=extension_blocked,
                 capabilities={"handoff_scope": capture_scope(self.dispatcher)},
                 execute=lambda: self._run_task_body(task, on_progress),
             )
