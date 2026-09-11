@@ -105,7 +105,11 @@ source handoff, timeout/cancellation cleanup, and real subprocess adapters with
 scripted CLI responses. Long budget propagation is checked by observing the
 actual process timer configuration; it is not a live multi-hour provider run.
 
-Still pending: activity/progress-sensitive supervision, suspected-stall
+Live task, call, descendant and wait observations are now available through
+[/activity](activity-supervision.md) and the TUI's persistent activity summary.
+Inspection does not change budgets or classify silence as a hang.
+
+Still pending: progress-sensitive supervision, suspected-stall
 inspection and recovery, extending active work, durable call-count accounting,
 and live mixed-provider qualification. A heartbeat, emitted token, or silence
 alone does not establish useful progress or a hang.

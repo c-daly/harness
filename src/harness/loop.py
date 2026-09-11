@@ -160,6 +160,7 @@ class AgentLoop:
             from harness.handoff import capture_scope
             return await execute_task(
                 self.session, task, runtime="harness", model=self.model,
+                activity=self.dispatcher.scope.budget.activity,
                 capabilities={"handoff_scope": capture_scope(self.dispatcher)},
                 execute=lambda: self._run_task_body(task, on_progress),
             )
@@ -180,6 +181,10 @@ class AgentLoop:
         fallback = TaskFallback(self)
 
         def progress(phase, iteration, chunk=None):
+            from harness.activity import current_activity
+            observation = current_activity.get()
+            if observation is not None and phase != "stream":
+                observation.update(phase=phase)
             if on_progress is not None:
                 try:
                     on_progress(AgentProgress(task.id, active_run.run_id, phase, iteration, chunk))

@@ -80,6 +80,7 @@ class ExternalAgentRuntime:
             from harness.handoff import capture_scope
             return await execute_task(
                 self.dispatcher.session, task, runtime=self.info.runtime, model=self.model,
+                activity=self.dispatcher.scope.budget.activity,
                 capabilities={**self.info.model_dump(), "handoff_scope": capture_scope(self.dispatcher)},
                 purpose="conversation",
                 execute=lambda: self._execute(task, on_progress),
@@ -105,6 +106,10 @@ class ExternalAgentRuntime:
         active = current_agent_run.get()
 
         def progress(phase, chunk=None):
+            from harness.activity import current_activity
+            observation = current_activity.get()
+            if observation is not None and phase != "stream":
+                observation.update(phase=phase)
             if on_progress is not None:
                 try:
                     on_progress(AgentProgress(task.id, active.run_id, phase, 1, chunk))

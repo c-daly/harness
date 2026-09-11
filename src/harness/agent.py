@@ -145,6 +145,7 @@ async def execute_task(
     execute: Callable[[], Awaitable[AgentOutput]],
     purpose: Literal["task", "conversation"] = "task",
     capabilities: dict | None = None,
+    activity=None,
 ) -> AgentResult:
     """Record one run. Failures/cancellation propagate after recording their outcome.
 
@@ -166,12 +167,17 @@ async def execute_task(
                                    limits=task.limits.model_dump(), capabilities=capabilities or {}))
     token = current_agent_run.set(ActiveAgentRun(task, run_id, runtime))
     deadline = asyncio.timeout(task.limits.timeout_seconds)
+    from harness.activity import ActivityTracker
+    observation = (activity or ActivityTracker()).track(
+        session_id=session.id, kind="task", label=runtime, phase="preparing",
+        task_id=task.id, run_id=run_id, timeout=task.limits.timeout_seconds,
+    )
 
     def terminal(status, reason="", **kwargs):
         return AgentResult(task_id=task.id, run_id=run_id, status=status, reason=reason,
                            remaining_criteria=task.acceptance_criteria, **kwargs)
 
-    try:
+    async def _finish_task():
         try:
             async with deadline:
                 output = await execute()
@@ -199,5 +205,8 @@ async def execute_task(
             raise
         session.append(AgentRunFinished(result=result, purpose=purpose))
         return result
+    try:
+        with observation:
+            return await _finish_task()
     finally:
         current_agent_run.reset(token)

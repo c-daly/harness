@@ -1,7 +1,8 @@
 # Core agency implementation record
 
-Current implementation branch: `feat/execution-controls` (PR47), rebased at
-`2b0cda5` onto `main` at `edebdb5` after PR46 merged.
+Current implementation branch: `feat/activity-supervision`, based on `main`
+at `5a3d424` after PR47 merged. The separate transcript-width PR49 remains
+outside this branch.
 Previous branches: `feat/evidence-escalation`, `feat/native-file-conflicts`, `fix/file-mutation-lifetime`, `feat/coordination-admission`, `feat/typed-coordination-results`, `feat/portable-task-export`, `feat/handoff-destination-recovery`, `feat/handoff-failure-qualification`, `feat/context-profile-comparison`, `docs/context-experiment-results`, `feat/context-eligibility`, `feat/context-selection-qualification`, `fix/bounded-compaction`, `fix/model-selection-continuity`, `feat/local-model-management`, `feat/assessment-improvement`, `feat/external-handoff`, `feat/assessment-evaluation`, `feat/supervised-improvement`, `feat/local-scheduling`, `feat/task-fallback`, `feat/semantic-context-progress`, `feat/local-assistant-m3`, `feat/resident-workflow`, `feat/task-completion-evidence`, `fix/inference-client-lifecycle`, `feat/local-response-profiles`, `feat/local-tool-recovery`, `feat/local-tool-planning`, `feat/local-qualification`, `feat/semantic-evaluation`, `feat/local-context`, `feat/local-readiness`, `feat/agent-runtimes`,
 and `feat/core-agency`.
 
@@ -2579,3 +2580,52 @@ additional fields, and TUI resume preflight/rebuild. **151 affected tests pass
 on each Python version** (3.13: 27.73 s; 3.12: 30.14 s); Ruff and whitespace
 checks pass. The full suite and packaging were not repeated for this localized
 review fix; the prior full-suite math-width limitation remains recorded above.
+
+## Core live activity and explicit waits
+
+The live session tree now shares an observation tracker alongside its execution
+budget. Native and typed external task runs, model/tool calls, and coordinators
+expose elapsed time, observed phase, last activity, delivered stream-event
+counts, identifiers and parent ownership, and remaining observed enclosing
+budgets. Permission, local capacity, local readiness, and retry waits occupy
+separate entries, so a concurrent child's activity cannot erase another wait.
+Normal memory remains a context tool; memory and swarm remain plugins.
+
+The TUI refreshes a compact activity summary once per second during silent
+provider waits. Core `/activity` provides detailed read-only inspection while
+work runs, preserves the draft and queue, and cannot be shadowed by a plugin.
+Embedding frontends can read frozen core snapshots on the owning event loop.
+Only active metadata is retained; inspection does not write the log or invoke
+inference. Cancellation/failure/success remove entries after wrapped cleanup,
+late callbacks cannot revive them, and restart begins with no live entries.
+
+This is observation for operator supervision. Stream events and child activity
+are not evidence of useful progress, and silence is not a hang verdict. Existing
+hard budgets continue to apply. Provider-internal work may be unobserved, and
+stricter adapter/context timers can stop work before the displayed enclosing
+budget. See [activity inspection](../../activity-supervision.md).
+
+Thirteen new regressions
+cover native and typed external ownership, concurrent waits, inherited budgets,
+cleanup on four outcomes, retry cancellation, local admission/readiness,
+coordinator descendants, restart, and final TUI composition at 60/120 columns.
+Full Python 3.13 validation reports **2,076 passed, 7 skipped, 1 failed, 6
+existing MCP deprecation warnings in 449.00 s**. The sole failure is the
+unchanged `test_complex_inline_math_wraps_with_prose_in_document_order` width
+assertion, also reproduced on an untouched archive of `main` at `5a3d424`.
+The separate PR49 fixes that fixture and narrow transcript wrapping; this
+branch does not include it. **387 affected tests pass on Python 3.12 in
+246.09 s**. Ruff, whitespace checks, offline wheel/sdist build, isolated
+installed CLI and all module imports pass. All 84 packaged core files match
+source; all 227 source/test hashes remained unchanged during validation.
+
+A local metadata-only diagnostic delivered 200,000 observations in
+20 batches at a median batch mean of 0.181 microseconds/event, retained two
+active entries, and removed both on completion. This measures tracker overhead
+on this host, not frontend latency or live provider performance.
+
+**Remaining:** progress assessment and suspected-stall recovery; operator
+extension of active budgets; durable call/descendant counters and exact pre-call
+usage reservations; live mixed-agent accounting and plugin reconciliation;
+edit/worktree ownership; isolated source-improvement validation/promotion/
+rollback; and broader daily-use qualification. M5 and M6 remain in progress.

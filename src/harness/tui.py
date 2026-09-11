@@ -609,6 +609,7 @@ class HarnessApp(App[None]):
     #compact-progress { height: auto; max-height: 2; display: none; }
     #model-progress { height: auto; max-height: 2; display: none; }
     #task-status { height: auto; max-height: 3; }
+    #activity-status { height: auto; max-height: 3; display: none; }
     """
     BINDINGS = [
         Binding("escape", "interrupt", "Interrupt", priority=True),
@@ -719,6 +720,7 @@ class HarnessApp(App[None]):
             yield Static(id="model-progress")
             yield Static(id="compact-progress")
             yield Static(id="queue")
+            yield Static(id="activity-status")
             yield Static(id="task-status")
             yield Static(id="stats")
             yield Static(id="statusbar")
@@ -854,6 +856,7 @@ class HarnessApp(App[None]):
             self._bus_pump(_bus_queue), group="driver", exit_on_error=False
         )
         self._stats_timer = self.set_interval(1.0, self.refresh_stats)
+        self.set_interval(1.0, self._refresh_activity)
         self._refresh_tasks()
 
     def _start_plugin_subscribers(self, kernel: Kernel) -> None:
@@ -1328,7 +1331,7 @@ class HarnessApp(App[None]):
             return
         command = parse_slash_command(text)
         if command is not None:
-            if command.name in self._plugin_commands and command.name not in {"task", "status", "semantics", "improvements", "handoff", "models", "export", "coordination", "budget", "execution"}:
+            if command.name in self._plugin_commands and command.name not in {"task", "status", "semantics", "improvements", "handoff", "models", "export", "coordination", "budget", "execution", "activity"}:
                 expanded = self._plugin_commands[command.name].body.replace("$ARGUMENTS", command.arg)
                 if not self._enqueue_prompt(expanded, expand_mentions=False):
                     return
@@ -1365,7 +1368,20 @@ class HarnessApp(App[None]):
         self._start_queue()
         return True
 
+    def _refresh_activity(self) -> None:
+        if self._ended:
+            return
+        from harness.activity import activity_summary
+        try:
+            widget = self.query_one("#activity-status", Static)
+        except NoMatches:
+            return
+        text = activity_summary(self.kernel.loop.dispatcher.scope.budget.activity)
+        widget.display = bool(text)
+        widget.update(_plain(text))
+
     def _refresh_queue(self) -> None:
+        self._refresh_activity()
         controller = self.controller
         lines = []
         if controller.active:
@@ -1473,6 +1489,8 @@ class HarnessApp(App[None]):
         ]
 
     def _on_agent_progress(self, progress) -> None:
+        if progress.phase != "stream":
+            self._refresh_activity()
         if progress.phase in {"correction", "fallback"}:
             # Runs synchronously before replacement chunks. The bus notice
             # can arrive later, so clearing there would erase valid new text.
@@ -1643,7 +1661,7 @@ class HarnessApp(App[None]):
                 "",
                 "/help  /model [alias]  /thoughts [collapse|full|off]  /markdown [on|off]  "
                 "/clear  /compact [alias]  /resume  /panel  /tools [name]  /task  /status  /context  /resources  /models  /semantics  /improvements  "
-                "/handoff inspect|record|show|run  /export FILE.zip  /coordination  /budget  /execution  /quit  — @path mentions a file "
+                "/handoff inspect|record|show|run  /export FILE.zip  /coordination  /budget  /execution  /activity  /quit  — @path mentions a file "
                 "(Tab completes), read for the model only; F2 also toggles the activity panel",
             )
             self.say("", "/queue: inspect, edit, remove, pause, resume, clear; queued prompts are memory only")
@@ -1674,6 +1692,13 @@ class HarnessApp(App[None]):
             self._queue_command(command.arg)
         elif command.name == "task":
             self._task_command(command.arg)
+        elif command.name == "activity":
+            from harness.activity import render_activity
+            if command.arg.strip():
+                self.say("! ", "Usage: /activity")
+                return
+            for line in render_activity(self.kernel.loop.dispatcher.scope.budget.activity).splitlines():
+                self.say("", line)
         elif command.name == "execution":
             from harness.execution_controls import configure_execution, parse_overrides, render_execution
             try:
