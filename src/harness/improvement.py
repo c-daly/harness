@@ -120,8 +120,37 @@ class PromptChange(_Record):
         return self
 
 
+class SourceEntrypoint(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    module: str = Field(pattern=r"^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*$", max_length=256)
+    function: str = Field(pattern=r"^[A-Za-z_]\w*$", max_length=128)
+    import_root: str = Field(default=".", min_length=1, max_length=1024)
+
+    @model_validator(mode="after")
+    def relative_root(self):
+        if self.import_root != ".":
+            from harness.source_improvement import _path
+            _path(self.import_root)
+        return self
+
+
+class SourceChange(_Record):
+    """A supervised selection for future processes, never a live source edit."""
+    kind: Literal["source_change"] = "source_change"
+    policy: Literal["supervised-source-v1"] = "supervised-source-v1"
+    slot: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$", max_length=128)
+    action: Literal["adopt", "rollback"]
+    previous_id: Identifier | None = None
+    previous: BlobRef
+    source: BlobRef
+    previous_entrypoint: SourceEntrypoint
+    entrypoint: SourceEntrypoint
+    result_id: Identifier | None = None
+    evaluator_version: Digest | None = None
+
+
 ImprovementRecord = Annotated[
-    Union[Evidence, Candidate, EvaluationPlan, ExperimentResult, PromptChange], Field(discriminator="kind"),
+    Union[Evidence, Candidate, EvaluationPlan, ExperimentResult, PromptChange, SourceChange], Field(discriminator="kind"),
 ]
 
 
@@ -199,6 +228,8 @@ class ImprovementState:
     prompt_changes: dict[str, PromptChange] = field(default_factory=dict)
     active_prompts: dict[ModelId, str] = field(default_factory=dict)
     active_assessment_prompts: dict[tuple[ModelId, str], str] = field(default_factory=dict)
+    source_changes: dict[str, SourceChange] = field(default_factory=dict)
+    active_sources: dict[str, str] = field(default_factory=dict)
 
     def selected_prompt(self, model, function="message_kind"):
         identity = (self.active_prompts.get(model) if function == "message_kind"
@@ -210,7 +241,7 @@ class ImprovementState:
         from pydantic import TypeAdapter
         record = TypeAdapter(ImprovementRecord).validate_python(record.model_dump())
         if any(record.id in values for values in (
-                self.evidence, self.candidates, self.plans, self.results, self.prompt_changes)):
+                self.evidence, self.candidates, self.plans, self.results, self.prompt_changes, self.source_changes)):
             raise ValueError("improvement record IDs are immutable and unique")
         if isinstance(record, Evidence):
             self.evidence[record.id] = record
@@ -230,6 +261,32 @@ class ImprovementState:
                 raise ValueError("experiment requires a previously recorded evaluation plan")
             verdict(plan, record)
             self.results[record.id] = record
+        elif isinstance(record, SourceChange):
+            previous = self.source_changes.get(self.active_sources.get(record.slot))
+            if (record.previous_id != (previous.id if previous else None)
+                    or previous is not None and (record.previous != previous.source
+                        or record.previous_entrypoint != previous.entrypoint)):
+                raise ValueError("source change does not follow the current selected version")
+            if record.action == "adopt":
+                result = self.results.get(record.result_id)
+                if result is None or result.run_id is None:
+                    raise ValueError("source adoption requires a recorded evaluation run")
+                plan = self.plans[result.plan_id]
+                candidate = self.candidates[plan.candidate_id]
+                latest = [r for r in self.results.values() if self.plans[r.plan_id].candidate_id == candidate.id][-1]
+                if (candidate.target != "code" or plan.min_improved_cases < 1
+                        or plan.min_held_out_correct < 1 or result != latest
+                        or verdict(plan, result) != "passed"
+                        or record.evaluator_version != result.evaluator_version
+                        or record.previous.sha256 != result.incumbent_version
+                        or record.source == record.previous):
+                    raise ValueError("source adoption requires the latest passing result for the exact incumbent")
+            elif (previous is None or record.result_id is not None or record.evaluator_version is not None
+                    or record.source != previous.previous
+                    or record.entrypoint != previous.previous_entrypoint):
+                raise ValueError("rollback must restore the exact preceding source and entrypoint")
+            self.source_changes[record.id] = record
+            self.active_sources[record.slot] = record.id
         elif isinstance(record, PromptChange):
             previous = self.selected_prompt(record.model, record.function)
             if (record.previous_id != (previous.id if previous else None)

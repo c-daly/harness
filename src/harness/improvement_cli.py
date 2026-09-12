@@ -24,7 +24,7 @@ def refusal_message(exc):
 
 async def perform(kernel, words):
     """Shared CLI/TUI actions. These are not registered as model tools."""
-    if words and words[0] in {"source-prepare", "source-evaluate"}:
+    if words and words[0] in {"source-prepare", "source-evaluate", "source-adopt", "source-rollback"}:
         from harness.source_improvement_cli import perform as source_perform
         return await source_perform(kernel.improvements, [words[0].removeprefix("source-"), *words[1:]])
     service, model = kernel.improvement_service, kernel.loop.model
@@ -69,7 +69,8 @@ async def perform(kernel, words):
         return f"Restored {label} prompt {change.prompt.sha256[:12]}; change {change.id}. Shadow mode."
     raise ValueError("use propose [message|context|progress], evaluate CANDIDATE EXPERIMENT.json, "
                      "compare ASSESSMENT.json, adopt RESULT [message|context|progress], rollback [message|context|progress], "
-                     "source-prepare SPEC.json, or source-evaluate PLAN_ID")
+                     "source-prepare SPEC.json, source-evaluate PLAN_ID, "
+                     "source-adopt RESULT SLOT MODULE:FUNCTION IMPORT_ROOT, or source-rollback SLOT")
 
 
 def main(argv):

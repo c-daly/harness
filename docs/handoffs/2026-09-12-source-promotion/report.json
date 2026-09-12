@@ -1,0 +1,206 @@
+{
+  "activation_qualified": false,
+  "candidate_artifact": {
+    "sha256": "c0a2899d8b12c2aa79d860976ba9c8e1b169297fe6c7bf5207b810467467e735",
+    "size": 359551
+  },
+  "candidate_revision": "6f5fa416245cb62853473aed86c5ba9f0676c45b",
+  "candidate_tree_sha256": "3becb5533eeda39d45c6bb582ddba0bfdd0e2943c8c20b6f40e487e6dec55b3a",
+  "check_scripts": {
+    "checked-selection": "import sys, tempfile\nfrom pathlib import Path\nsys.path.insert(0, str(Path.cwd() / 'src'))\n\"\"\"Ensemble votes and synthesis cannot override frozen task requirements.\"\"\"\n\nimport asyncio\nimport hashlib\nimport json\nimport threading\nfrom contextlib import asynccontextmanager\n\nimport pytest\n\nfrom harness.cli import build_kernel\nfrom harness.coordination import load_report\nfrom harness.events import CoordinationFinished, SubagentSpawned\nfrom harness.frontmatter import AgentDef\nfrom harness.log import read_session\nfrom harness.provider import FakeProvider, text_turn, tool_call_turn\n\n\ndef requirement():\n    return {\"id\": \"answer\", \"description\": \"Return the expected output\", \"check\": {\n        \"kind\": \"output\", \"sha256\": hashlib.sha256(b\"correct\").hexdigest()}}\n\n\nclass RoutedProvider(FakeProvider):\n    def __init__(self, scripts):\n        super().__init__([])\n        self.scripts = scripts\n        self.models = []\n        self.messages = {}\n\n    async def complete(self, *, model, messages, tools=()):\n        self.models.append(str(model))\n        self.calls.append(tuple(messages))\n        self.messages[str(model)] = tuple(messages)\n        for chunk in self.scripts[str(model)].pop(0):\n            yield chunk\n\n\n@asynccontextmanager\nasync def case(tmp_path, answers, *, declared=None, judge=None, configure=None, configured=False, **args):\n    scripts = {name: [text_turn(value)] if isinstance(value, str) else value for name, value in answers.items()}\n    if judge is not None:\n        scripts[\"judge\"] = [text_turn(judge)]\n    tool = \"dispatch_agent\" if configured else \"ensemble\"\n    params = ({\"agent\": \"team\"} if configured else {\"models\": list(answers), **({\"judge\": \"judge\"} if judge is not None else {})})\n    scripts[\"root\"] = [tool_call_turn(\"\", tool, {\"prompt\": \"Solve\", **params, **args}), text_turn(\"root summary\")]\n    provider = RoutedProvider(scripts)\n    kernel = build_kernel(base_dir=tmp_path, provider=provider, model=\"root\")\n    try:\n        await kernel.loop.start()\n        kernel.tasks.create(\"Solve the user's task\")\n        for item in [requirement()] if declared is None else declared:\n            kernel.tasks.add_requirement(item)\n        if configured:\n            kernel.runner.agents[\"team\"] = AgentDef(name=\"team\", description=\"Checked ensemble\",\n                strategy=\"ensemble\", experts=tuple(answers), require_checks=True)\n        if configure is not None:\n            configure(kernel)\n        await kernel.loop.run_task(kernel.tasks.prepare(\"Solve\"))\n        yield kernel\n    finally:\n        kernel.session.close()\n\n\ndef report_for(kernel):\n    terminal = next(e.event for e in reversed(read_session(kernel.session.base, kernel.session.id))\n                    if isinstance(e.event, CoordinationFinished))\n    return load_report(kernel.session.blobs, terminal, kernel.session.id)\n\n\n\nasync def check():\n    with tempfile.TemporaryDirectory() as tmp:\n        async with case(Path(tmp), {\"a\": \"wrong\", \"b\": \"correct\"}) as kernel:\n            report = report_for(kernel)\n            assert report.result.status == \"completed\"\n            assert kernel.session.blobs.get(report.output) == b\"correct\"\n            assert [m.evidence[0].status for m in report.members] == [\"failed\", \"passed\"]\n            assert not kernel.tasks.selected().accepted\nasyncio.run(check())\n",
+    "judge-failure": "import sys, tempfile\nfrom pathlib import Path\nsys.path.insert(0, str(Path.cwd() / 'src'))\n\"\"\"Ensemble votes and synthesis cannot override frozen task requirements.\"\"\"\n\nimport asyncio\nimport hashlib\nimport json\nimport threading\nfrom contextlib import asynccontextmanager\n\nimport pytest\n\nfrom harness.cli import build_kernel\nfrom harness.coordination import load_report\nfrom harness.events import CoordinationFinished, SubagentSpawned\nfrom harness.frontmatter import AgentDef\nfrom harness.log import read_session\nfrom harness.provider import FakeProvider, text_turn, tool_call_turn\n\n\ndef requirement():\n    return {\"id\": \"answer\", \"description\": \"Return the expected output\", \"check\": {\n        \"kind\": \"output\", \"sha256\": hashlib.sha256(b\"correct\").hexdigest()}}\n\n\nclass RoutedProvider(FakeProvider):\n    def __init__(self, scripts):\n        super().__init__([])\n        self.scripts = scripts\n        self.models = []\n        self.messages = {}\n\n    async def complete(self, *, model, messages, tools=()):\n        self.models.append(str(model))\n        self.calls.append(tuple(messages))\n        self.messages[str(model)] = tuple(messages)\n        for chunk in self.scripts[str(model)].pop(0):\n            yield chunk\n\n\n@asynccontextmanager\nasync def case(tmp_path, answers, *, declared=None, judge=None, configure=None, configured=False, **args):\n    scripts = {name: [text_turn(value)] if isinstance(value, str) else value for name, value in answers.items()}\n    if judge is not None:\n        scripts[\"judge\"] = [text_turn(judge)]\n    tool = \"dispatch_agent\" if configured else \"ensemble\"\n    params = ({\"agent\": \"team\"} if configured else {\"models\": list(answers), **({\"judge\": \"judge\"} if judge is not None else {})})\n    scripts[\"root\"] = [tool_call_turn(\"\", tool, {\"prompt\": \"Solve\", **params, **args}), text_turn(\"root summary\")]\n    provider = RoutedProvider(scripts)\n    kernel = build_kernel(base_dir=tmp_path, provider=provider, model=\"root\")\n    try:\n        await kernel.loop.start()\n        kernel.tasks.create(\"Solve the user's task\")\n        for item in [requirement()] if declared is None else declared:\n            kernel.tasks.add_requirement(item)\n        if configured:\n            kernel.runner.agents[\"team\"] = AgentDef(name=\"team\", description=\"Checked ensemble\",\n                strategy=\"ensemble\", experts=tuple(answers), require_checks=True)\n        if configure is not None:\n            configure(kernel)\n        await kernel.loop.run_task(kernel.tasks.prepare(\"Solve\"))\n        yield kernel\n    finally:\n        kernel.session.close()\n\n\ndef report_for(kernel):\n    terminal = next(e.event for e in reversed(read_session(kernel.session.base, kernel.session.id))\n                    if isinstance(e.event, CoordinationFinished))\n    return load_report(kernel.session.blobs, terminal, kernel.session.id)\n\n\n\nfrom harness.fold import fold\nasync def check():\n    def fail_judge(kernel):\n        kernel.provider.scripts[\"judge\"] = []\n    with tempfile.TemporaryDirectory() as tmp:\n        async with case(Path(tmp), {\"a\": \"correct\"}, judge=\"unused\", configure=fail_judge) as kernel:\n            report = report_for(kernel)\n            assert report.result.status == \"incomplete\"\n            assert report.members[0].evidence[0].status == \"passed\"\n            judge = report.members[-1]\n            assert judge.result.status == \"failed\" and judge.result.child_session_id\n            assert not fold(read_session(Path(tmp), judge.result.child_session_id)).open_agent_runs\n            assert b\"Passing expert candidates\" in kernel.session.blobs.get(report.output)\n            assert not kernel.tasks.selected().accepted\nasyncio.run(check())\n"
+  },
+  "completion": "completed",
+  "evaluator_version": "d18c77303c1ef7c5f1e7a9da229797c2c31b06b1ab4a7dcd623313601a745784",
+  "incumbent_revision": "957b8fb0e363ea81921c845a73cecb0826239e7a",
+  "interpretation": "Known historical regression; operator-declared validation partition, not a secret or independently held-out model trial. Fake providers; no model calls.",
+  "kind": "retrospective_source_runner_demonstration",
+  "observations": [
+    {
+      "candidate_latency_ms": 1963.774450996425,
+      "candidate_passed": true,
+      "case_id": "checked-selection",
+      "incumbent_latency_ms": 1940.4122350388207,
+      "incumbent_passed": true
+    },
+    {
+      "candidate_latency_ms": 1354.1816180222668,
+      "candidate_passed": true,
+      "case_id": "judge-failure",
+      "incumbent_latency_ms": 1274.6574259945191,
+      "incumbent_passed": false
+    }
+  ],
+  "promotion": {
+    "adopted": {
+      "action": "adopt",
+      "entrypoint": {
+        "function": "main",
+        "import_root": "src",
+        "module": "harness.cli"
+      },
+      "evaluator_version": "d18c77303c1ef7c5f1e7a9da229797c2c31b06b1ab4a7dcd623313601a745784",
+      "id": "fef9ad07-bb5c-4705-8d90-a09d121f472d",
+      "kind": "source_change",
+      "policy": "supervised-source-v1",
+      "previous": {
+        "sha256": "9cd152037adc18bc687a70bd1c29f9c9ef7ae891f2c14b3eeddc454075297e9c",
+        "size": 10530445
+      },
+      "previous_entrypoint": {
+        "function": "main",
+        "import_root": "src",
+        "module": "harness.cli"
+      },
+      "previous_id": null,
+      "result_id": "aa56d10d-c6fd-45bd-89dd-09a39eb3612b",
+      "slot": "trial",
+      "source": {
+        "sha256": "3becb5533eeda39d45c6bb582ddba0bfdd0e2943c8c20b6f40e487e6dec55b3a",
+        "size": 10539881
+      }
+    },
+    "restored": {
+      "action": "rollback",
+      "entrypoint": {
+        "function": "main",
+        "import_root": "src",
+        "module": "harness.cli"
+      },
+      "evaluator_version": null,
+      "id": "8d06acf7-99ca-413e-983f-6a1badba7def",
+      "kind": "source_change",
+      "policy": "supervised-source-v1",
+      "previous": {
+        "sha256": "3becb5533eeda39d45c6bb582ddba0bfdd0e2943c8c20b6f40e487e6dec55b3a",
+        "size": 10539881
+      },
+      "previous_entrypoint": {
+        "function": "main",
+        "import_root": "src",
+        "module": "harness.cli"
+      },
+      "previous_id": "fef9ad07-bb5c-4705-8d90-a09d121f472d",
+      "result_id": null,
+      "slot": "trial",
+      "source": {
+        "sha256": "9cd152037adc18bc687a70bd1c29f9c9ef7ae891f2c14b3eeddc454075297e9c",
+        "size": 10530445
+      }
+    },
+    "restored_launch": {
+      "bootstrap_source_ownership_check": "passed",
+      "exit_status": 0,
+      "help_rendered": true
+    },
+    "scope": "Explicit historical snapshot adoption and next-process CLI startup, then rollback. No installation or live session changed; no model or plugin journey qualification.",
+    "selected_launch": {
+      "bootstrap_source_ownership_check": "passed",
+      "exit_status": 0,
+      "help_rendered": true
+    }
+  },
+  "report_artifact": {
+    "sha256": "15f7d377d654895beec1280591691d47d1fc8352f663eb0040029358706c7032",
+    "size": 9860
+  },
+  "runner_source_sha256": {
+    "src/harness/__init__.py": "1cb99da2ab5f68f4005bd5a26681ed7a4e012de8384db1dcd8dc80d0c242c2a2",
+    "src/harness/activity.py": "1f842bdc856d8944231aaec965e0fb5a59a3522df65051836ab5571f3fe8f63f",
+    "src/harness/agent.py": "d08fc6465b1a9ab51cf7f95def62e7d8609ee9ef46912fcf7b5f6d6f72b3a59e",
+    "src/harness/agent_runtime.py": "7ba90c3f76e96c53738c278aaacdfa9e45c907c4ea6fc426680b62110221444c",
+    "src/harness/assessment_evaluation.py": "6e9d88c74da754d88f92403f037197ffb2c0c3fea731f7fa074bfc3f8068597c",
+    "src/harness/blobs.py": "6dc9ff7975df76c2f8eb2e4af0bc60d86120e1b01d88c18941a7ff1465650458",
+    "src/harness/budget_cli.py": "75b1a4247f7341ea1287ce5fe8ba7d71198aadcb9d54628ccb2a359b3dcdc4e8",
+    "src/harness/callctx.py": "70e7979654b262ccc715c0f2d34f4171968d5d1f8b282cab21bb916d7131e782",
+    "src/harness/catalog.py": "cf263fd8bacc55aea4123403265cce912239119eb808345e28fbc766006d2247",
+    "src/harness/cc_import.py": "bd2c9bdb5acd194da6fd1bca1edc11643af94f94826cdc384e62091988d69b99",
+    "src/harness/cli.py": "9752eee6eb907e66ce5eb74e837349d1486cd12a7f492ebfa98d830ff68bc40d",
+    "src/harness/compaction.py": "031f51e4ae598f95acad6dc9bce42b99c811aeec2dcdc4967fbdb4ec292d0915",
+    "src/harness/context.py": "bc476c79cf45f19cdfa3fada912a18846459230bc091a30513c2e63fab6c473f",
+    "src/harness/controller.py": "90cb22c51a4b8e5088453b3ed72fdb625e52932065a834edeec0269a259f0731",
+    "src/harness/coordination.py": "2dc0de5e853d541ff20c52a47cccb4667a14c90b6f3dee70197f4f0a9140f9b8",
+    "src/harness/coordination_budgets.py": "91bd77fcb53a0bfe12c6aa23c352e2524828ee37bad2b559ecad33e0dbf7a37a",
+    "src/harness/coordination_checks.py": "b34d0356a555341fcb1a6387e99d7c2c9fa5553c6ab6464beb6fcb194be3243d",
+    "src/harness/coordination_cli.py": "a7f4170556490935aca2a10183ae3d5b9f91d0249f9d1490f6756f08d22e1a75",
+    "src/harness/dispatcher.py": "76a333f906719c8d18bb642e27e04bafd4f66b8cacc2af5ae2aae511a5b4f0e9",
+    "src/harness/errors.py": "32cc7c817ac3639b2d4ab1c03774ed44f34d1d821fa39fa6f1a6b6597fbf74b0",
+    "src/harness/events.py": "19610455c5d3ad4e8bc6190a03f949bf6a79e157cd020bd4455ce90490ade71a",
+    "src/harness/execution.py": "eb6dbc626830cf43d06fd05302947a1b5dec9840c4e8158f2c2407d4a184cf0e",
+    "src/harness/execution_controls.py": "73814cf739b93fd212147f9a2e0c4a24e167c74b41c53fa393abc68abbd2217f",
+    "src/harness/execution_counts.py": "93afba6ed255e3030677cd9e6a7f9ab2754525f4c1ca235adc11e918f0a846f7",
+    "src/harness/export_cli.py": "6bc705c1ba60c931cfc6cfaf29f87288efeae4b434cc801575954e416d278e81",
+    "src/harness/fallback.py": "6bf1f2d1a76cd8c17da99b15658667d5432f54f3b50ab039c855d13b4451f9c0",
+    "src/harness/fold.py": "f19d76de87eba62c8212e6f7d9d3a37aa02f1ebb573c3dfac6619790e0414ddc",
+    "src/harness/frontmatter.py": "2b6531a8b3d506a60f36673634eb3c0f165c277025500e112ce7a0404a9590cf",
+    "src/harness/handoff.py": "c6b53fe7021fa12eac8ae4051a20fef7650334769cdd7f990aa4d1eb3742e5fb",
+    "src/harness/handoff_cli.py": "40a3ab5e3f8b52ea3709752eb6f0a07ebe77a519ef2eda3139351e0f697ac217",
+    "src/harness/hooks.py": "45d1bd793cdc79b58afea81ec50b36721ae3b8e2ea8d0397d06fa51d2a0b6aa7",
+    "src/harness/improvement.py": "f899eb484d88b511bb510501d1559f9c9c9307084d311a8810a8ab59df5f04d6",
+    "src/harness/improvement_cli.py": "1e00cb6a28b5f0f4698ce04351ebd400edbac55715b57b213cfa0eac6ce1990a",
+    "src/harness/improvement_journal.py": "91e44e41bf2c156d747e0400f2132a2ce719556d2f967a3533d7217cbef8fe3c",
+    "src/harness/inference.py": "a606513ef676f03c605f350cae97e907acf2736fe2d98272de8d3b6c4873413d",
+    "src/harness/interaction.py": "4a6c198a67567d39c8fa32f882de20b5d49207100ed474881b246735caa85c4d",
+    "src/harness/log.py": "dfca73b52f98ba6a07f43e87ac1c40c61ff3ab0555377add6eb71042ce7408c7",
+    "src/harness/loop.py": "d219eacd26ee728e39152944749410be833baa90a148dfb1b7ddbaad65f7cb82",
+    "src/harness/math_markdown.py": "860b45ef8ebb50f8fa4b3f9effdc921d9ef2dcfe2d987f96fd99e69fa866b4e5",
+    "src/harness/mcp_config.py": "832432ed48f5b6f95215ec4e21d0e4199a72c58f788326ee3c8ff3de408fbc7b",
+    "src/harness/mcp_host.py": "a2b2266034fd2fd5740130295d2635ccb516bf8ace9aa923593f031e67fc6061",
+    "src/harness/mcp_import.py": "7c42a53f0ff5b5e6f7ddbad6f5a4eb3cbedca81403d2f8efc0363fba01950a1e",
+    "src/harness/mcp_serve.py": "34c0712d8286b8f6d6293625e786d8000ca5b83a80d39bef5933f0241662f6b2",
+    "src/harness/messages.py": "f43d61286b9880513d6cc68ca61e5af94ea746fdf1663e4dad1e972c6397de21",
+    "src/harness/mixture.py": "07f0f30b2893f39f77436091f412b07bd88417213d69b6412f07edb535dedaf1",
+    "src/harness/model_management.py": "75f4a8efa0e744d76f0b8360e5774f97b69ea3ed20abe3a643df9da9a8ba96a0",
+    "src/harness/model_selection.py": "162251730a11264772ee63fbd47e27b619e15a5f2b4fa56edd5ad8642634ae26",
+    "src/harness/models_cli.py": "531b1553a68255e8ff3aee8bf7c6b81cea065b8a002bc2815a9c2bd45a45b959",
+    "src/harness/native_tools.py": "9afbce5adf6727bbdd00c29c952773825a4e84cf5e7b9b1392bc31587ede5c12",
+    "src/harness/parity.py": "0e67f7b7d020677397c6f82e5406df335035ef84365d8304ae8213d098b514b2",
+    "src/harness/permissions.py": "1e2bd05ac58db657bdd5f5dfaeea1b0366d3bd0a7d4f21985281492cc929ec22",
+    "src/harness/persistence.py": "5f5ea659ca2307059a1b68e0abd1c9cf2e8b122e6218f86857069372f3546dc5",
+    "src/harness/plugins.py": "72908a91dc95aee2ef0f491db9cb9c49671e4249f50d546afed9dfc989887557",
+    "src/harness/portable.py": "efd2c159ec36e92ed1e6b57ad2c59519538b6e523392153751dff4f145cf4d42",
+    "src/harness/prompt_improvement.py": "264711c2adbbe19f3407b330b047897d08652baf4c3b13d42df2aded7699c9ab",
+    "src/harness/provider.py": "c4a82a66d23d9ea6f7668f19a021f5084c3b8e327645e38b6b2403daea6f9ba6",
+    "src/harness/provider_antigravity.py": "489118a18456226a1e491d6d3e30d43da10f30db2ab9256c8ca9176357a9676b",
+    "src/harness/provider_claude_code.py": "64352a1da163c35e21eb21f25be3b50775e2227b63c42deadb7650699b4024c0",
+    "src/harness/provider_codex.py": "7c4080cbc7aa38e11eaa694735ee84bb11ca62b96058852438329de644cedb60",
+    "src/harness/provider_litellm.py": "2e1be7aef2a20966e38beb3c7a8c53aaad5b3019ab90ef088740262315bd9349",
+    "src/harness/redaction.py": "f0c5bd0d095d1423a3e5b01c184074c518c00e021304e807c0b3900b81d530aa",
+    "src/harness/resident.py": "4e73105e563bf763b297be9c346e44ab6b5a1e90e78b3cbe0c34ef09d943fcf5",
+    "src/harness/resources.py": "88ceb662f7a5e5dcce7dbfed641c92cb14d52ba8a9f9cefc9947d2a438b3ef07",
+    "src/harness/resume.py": "c269eaf9b20f3c05093e091caf72d5079224a1f757ca3f48c02878f0ecfc37b4",
+    "src/harness/routing.py": "7aa049c64e3ba1cccba80820a48a23403b8b5b2fce7e38a256ff1fd031b38f91",
+    "src/harness/run_budgets.py": "e7fff3d5dea07eec4a0f7f03685611ca8a56032c064c6af209674d3d63c9f545",
+    "src/harness/run_controls.py": "d1088c4c5be08c3ec8336414177a6f78c1568588d466871e5ea5dff1cd791bf9",
+    "src/harness/scheduling.py": "0d293b5535f5865ea664b21b7f361d58ef6bf8ba32f60102c83f94a37703122f",
+    "src/harness/semantic_assessment.py": "b424871311fb7900c7165ba3d72ec725e5b11a035ed03dbec64e14104989e576",
+    "src/harness/semantic_cli.py": "86663d74d5b2a1cbd4985a842f958b5873c1099f68ae73d3204d66f8e79d5832",
+    "src/harness/semantic_evaluation.py": "166ff415d3f603a20d47f3d39648046f2130dca1b85b74a7ac1fce5e76502e44",
+    "src/harness/semantics.py": "56242b95f921db2143554ae11cef49e7ce0c825877dabb3a050a54b18274c2a6",
+    "src/harness/session.py": "88b619706f358e9234fed22368d518576ff84de7ef0b91f6cb4e6c0619b306ab",
+    "src/harness/sessions.py": "bbdfc914a5ca7fe33ff6a9e30410a562404d4e9c1de184f773ba2c5c32fe40f8",
+    "src/harness/skills.py": "1e73e256391ed277e34431217f6c7c1c97f5cfb54fdc84b2f2a0f2f0085fca41",
+    "src/harness/source_improvement.py": "f7e3bb38f699007d60e833ebce3ab8519ab6853477a75af8372844e25a861e65",
+    "src/harness/source_improvement_cli.py": "53cc4067aff445abc82222fdb3467f057148f37dfa964f014c5b48ccf6a59546",
+    "src/harness/source_promotion.py": "a3dfed3f219893c78b5cf7408349763239c7f7af7e83a5618347801d7636df97",
+    "src/harness/status_cli.py": "f50ffd19a04dc9363c206167968094f3859bb88d9577bbfa5b0452815576f027",
+    "src/harness/subagent.py": "938507b02afb556dde3816a4c55edd6fa05869206dec3c732bc9aca8bcb4eeb0",
+    "src/harness/task_cleanup.py": "d6220abe2f4c1707226d90bf67714cfd1b2cae33bc711c96f481f390f3522ce4",
+    "src/harness/task_cli.py": "6b6a885c5656f8543862fa465407eda7445205b2c4ac541e4c22e8654697464b",
+    "src/harness/tasks.py": "3ee764d8ff11d76e0c4748fb86f3c5866bba4739578f37b2e662ef00b9610ef0",
+    "src/harness/telemetry.py": "27a6d937bafc85f749277932577b5d0f81e6d74c3daef7edc33ad2d3f6676639",
+    "src/harness/todo.py": "667002b8fc7ece3b33c0a046584b52f580164b68c808368c0f998461d8c2726a",
+    "src/harness/tools.py": "1e62c2f914ab5ea714b276de08a02f865fceb8cced6461a6db3128bdbaed3f84",
+    "src/harness/tui.py": "2d2b3683a1d34db29df1dd815b46bd9bacea07ec01e6c265d4d6baf3b74e193a",
+    "src/harness/tui_panel.py": "764bcb36e06cafb4769403be78d617187ab891ae18ca72addd4fd2b86354373c",
+    "src/harness/tui_support.py": "2a3ea77081365ce9b73431660bd60115d4d4af4f33165eadf074437523100e04",
+    "src/harness/types.py": "b2681a5fa2529153497b19e7477084969ea06c3a7897a61f1b580f5560e9ff56",
+    "src/harness/usage_budget.py": "203b6caa04e0566def4a0e77a6c40c56c465a651dbe62aef72f2178e3a5ec155",
+    "src/harness/workspace.py": "e53219ad294ae38e09e5aa603eb69eea0f74c1df41c2fcea62e75310bbfe5357"
+  },
+  "suite": {
+    "sha256": "547219d8c4733e25eba5d0b0a3a06802a9df4de18a0f1846e04c6f1666734d9f",
+    "size": 7760
+  },
+  "verdict": "passed"
+}
