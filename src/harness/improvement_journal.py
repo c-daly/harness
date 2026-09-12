@@ -29,6 +29,11 @@ def render_improvements(state: ImprovementState) -> str:
     from harness.telemetry import _safe
     lines = [f"Improvements: {len(state.evidence)} evidence records, "
              f"{len(state.candidates)} candidates, {len(state.results)} experiments"]
+    if len(state.evidence) > 10:
+        lines.append(f"Showing the latest 10 of {len(state.evidence)} evidence records.")
+    for evidence in list(state.evidence.values())[-10:]:
+        lines.append(_safe(f"Evidence {evidence.id}: {evidence.category}; "
+                           f"source={evidence.source_session}:{evidence.source_seq}"))
     for candidate in state.candidates.values():
         results = [r for r in state.results.values()
                    if state.plans[r.plan_id].candidate_id == candidate.id]
@@ -37,6 +42,10 @@ def render_improvements(state: ImprovementState) -> str:
                            f"evaluation={status}; {candidate.hypothesis}"))
         if results:
             lines.append(f"  Run: {results[-1].completion}; result={results[-1].id}")
+        if candidate.target == "code":
+            plans = [p for p in state.plans.values() if p.candidate_id == candidate.id]
+            if plans:
+                lines.append(_safe(f"  Latest of {len(plans)} source plans: {plans[-1].id}"))
     if len(state.runs) > 10:
         lines.append(f"Showing the latest 10 of {len(state.runs)} evaluation runs.")
     for run_id, status in list(state.runs.items())[-10:]:
@@ -60,10 +69,30 @@ def inspect_improvement(state: ImprovementState, blobs, record_id: str) -> str:
     if record is None:
         raise ValueError(f"unknown improvement record: {record_id}")
     lines = [record.model_dump_json(indent=2)]
+    from harness.source_improvement import is_source_patch
+
+    def source_candidate(candidate):
+        return candidate.target == "code" and is_source_patch(blobs, candidate.artifact)
+
+    if isinstance(record, EvaluationPlan) and source_candidate(state.candidates[record.candidate_id]):
+        from harness.source_improvement import SourceSuite, _load
+        lines += ["Frozen source checks (data):", _load(blobs, record.suite, SourceSuite).model_dump_json(indent=2)]
     if isinstance(record, ExperimentResult):
         plan = state.plans[record.plan_id]
         lines += ["Frozen evaluation plan:", plan.model_dump_json(indent=2)]
+        if source_candidate(state.candidates[plan.candidate_id]):
+            from harness.source_improvement import SourceSuite, _load
+            lines += ["Frozen source checks (data):",
+                      _load(blobs, plan.suite, SourceSuite).model_dump_json(indent=2)]
+            if record.artifact.size <= 1024 * 1024:
+                lines += ["Recorded source check outcomes (data):",
+                          blobs.get(record.artifact).decode("utf-8")]
+            else:
+                lines.append("Source check report exceeds 1 MiB; inspect its retained blob for full output.")
         record = state.candidates[plan.candidate_id]
+    if isinstance(record, Candidate) and source_candidate(record):
+        from harness.source_improvement import inspect_patch
+        lines.append(inspect_patch(blobs, record.artifact))
     if isinstance(record, Candidate) and record.target == "prompt":
         from pydantic import TypeAdapter
         from harness.semantic_assessment import AssessmentPrompt

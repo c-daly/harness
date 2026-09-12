@@ -3142,3 +3142,73 @@ warnings. All 240 source/test/driver hashes stayed fixed through those reruns.
 Ruff, whitespace, source/wheel builds and the clean installed CLI/88-module
 smoke pass; all 89 packaged core files match the corrected source. The PR now
 adds 41 regression cases overall. Live model measurements remain unchanged.
+
+## Isolated source improvement experiments
+
+PR56 merged at `ca9cad3`. The next increment implements the
+[source experiment plan](2026-09-12-source-improvement.md) through existing core
+improvement records. An operator selects two committed revisions, existing
+evidence, a hypothesis and fixed Python checks. Core snapshots regular tracked
+files, creates a content-addressed file-change patch, and records its evaluation
+plan before running checks. Dirty and untracked work stays untouched. Binary
+content and executable modes survive; symlinks, submodules, unsafe paths and
+oversize inputs are refused.
+
+Each side of each case runs in a fresh directory with the frozen check outside
+the source tree. Order alternates. The runner bounds time and combined output,
+settles the owned process group before terminal publication, and retains unknown
+measurements after interruption. Candidate test edits cannot replace the frozen
+operator script. These are trusted-code checks with the operator's OS authority;
+fresh directories do not establish a security sandbox or secret held-out cases.
+No code is activated and no model calls are made.
+
+`/improvements source-prepare SPEC.json` and `source-evaluate PLAN_ID` share their
+implementation with `harness improve-source`, which needs no model/catalog.
+Inspection displays the patch, fixed checks and process outcomes. Evidence IDs
+and source-plan IDs stay discoverable across restart. Existing replay aborts
+unfinished evaluations without relaunching code, and legacy code candidates
+remain inspectable. Full usage and authority limits are documented in
+[source improvement](../../source-improvement.md).
+
+A [retained retrospective demonstration](../../handoffs/2026-09-12-source-improvement/README.md)
+compared PR56's `957b8fb` and `6f5fa41` revisions. Both passed checked selection;
+only the corrected source preserved passing work after native judge failure.
+The paired verdict passed with no activation. This uses a known historical
+regression and fake providers, not a new autonomous discovery or model-quality
+trial. The actual merged Harness snapshot also imported successfully: 580 files,
+7,865,740 content bytes. The demonstration retains exact runner source hashes;
+its latencies are shared-host observations.
+
+M5 remains in progress. Core-directed patch authorship, stronger source
+isolation, supervised promotion at a safe activation boundary and rollback remain.
+Installed memory/swarm reconciliation, broader continuation/edit ownership and
+live heterogeneous qualification remain open; M6 daily-use qualification remains
+pending. Neither plugin becomes a dependency of this core feature.
+
+The initial full suites finished with **2,332 passed on Python 3.12 (631.31 s)**
+and **2,331 passed, one failed on Python 3.13 (618.26 s)**, each with seven skips
+and six existing MCP warnings. The failure was an existing cancellation fixture
+whose 50 ms sleep could expire before tool entry. A controlled 300 ms provider
+delay reproduced this gap in all four related tool-gather/repair tests. Fixtures
+now synchronize on real provider/tool entry, and the partial-gather test also
+waits for the fast tool's recorded completion. Original assertions remain;
+all four delayed probes and all 15 loop tests pass. This test-only correction
+does not change the source runner or its retained retrospective measurement.
+
+Review then reproduced implicit parent Git discovery when temporary directories
+were inside an existing checkout. Check subprocesses now set a discovery ceiling
+at their temporary root. This preserves edit separation for ordinary Git commands;
+it does not prevent explicitly addressed access outside the directory. The two
+running validation suites were stopped before editing. All 60 source/loop tests
+pass after the correction; the historical comparison is repeated with this final
+runner before full supported-version validation.
+
+**Final validation:** **2,333 passed on Python 3.13 (594.74 s)** and **2,333 passed
+on Python 3.12 (603.19 s)**, each with seven skips and six existing MCP warnings.
+This adds 45 source-experiment cases, including real subprocess cleanup, CLI and
+rendered terminal controls, fixed checks, patch integrity and restart behavior.
+All 257 frozen source/test/driver files remained unchanged during these final
+runs, and all 91 runner source hashes match the repeated historical comparison.
+Ruff, whitespace, source/wheel builds and the clean installed CLI/90-module smoke
+pass; all 91 packaged core files match source. These results qualify the
+controlled implementation, not automatic activation, model quality or daily use.

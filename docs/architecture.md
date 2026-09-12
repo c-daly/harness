@@ -34,6 +34,10 @@ checks recorded artifacts and tool results, and records explicit user acceptance
 [Semantic evaluation](semantic-evaluation.md) adds shadow observations and paired
 prompt experiments through the same dispatcher, with fixed grading and recovery.
 
+[Source improvement](source-improvement.md) adds operator-controlled committed
+patch import and paired checks in fresh source directories, with fixed artifacts
+and recoverable core results. Passing checks do not activate code.
+
 ---
 
 ## The one big idea: the event log is the unit of truth
