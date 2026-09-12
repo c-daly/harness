@@ -5,7 +5,7 @@ from pathlib import Path
 
 from harness.events import EvaluationRunStarted, EvaluationRunFinished, ImprovementRecorded
 from harness.improvement import (
-    Candidate, EvaluationPlan, Evidence, ExperimentResult, ImprovementRecord, ImprovementState, PromptChange,
+    Candidate, EvaluationPlan, Evidence, ExperimentResult, ImprovementRecord, ImprovementState, PromptChange, SourceChange,
 )
 from harness.log import read_session
 from harness.session import Session
@@ -55,6 +55,11 @@ def render_improvements(state: ImprovementState) -> str:
         function = "message" if change.function == "message_kind" else change.function
         lines.append(_safe(f"Selected {function} prompt for {change.model}: {change.prompt.sha256[:12]} "
                            f"({change.action}; change={change.id}); shadow only. Live compatibility not checked."))
+    for change_id in state.active_sources.values():
+        change = state.source_changes[change_id]
+        lines.append(_safe(f"Selected source {change.slot}: {change.source.sha256[:12]} "
+                           f"({change.action}; change={change.id}); next process only. "
+                           f"Launch: harness run-source SESSION {change.slot} -- ARGS"))
     lines.append("Evaluation records do not activate changes. Adoption and rollback require explicit controls.")
     return "\n".join(lines)
 
@@ -64,7 +69,7 @@ def inspect_improvement(state: ImprovementState, blobs, record_id: str) -> str:
     from harness.prompt_improvement import load_function_prompt
     from harness.telemetry import _safe
     record = next((records[record_id] for records in (
-        state.evidence, state.candidates, state.plans, state.results, state.prompt_changes,
+        state.evidence, state.candidates, state.plans, state.results, state.prompt_changes, state.source_changes,
     ) if record_id in records), None)
     if record is None:
         raise ValueError(f"unknown improvement record: {record_id}")
@@ -137,6 +142,9 @@ class ImprovementJournal:
                 raise ValueError("experiment run already has a terminal result")
         if isinstance(record, EvaluationPlan):
             self.session.blobs.get(record.suite)
+        if isinstance(record, SourceChange):
+            from harness.source_promotion import validate_change
+            validate_change(self.session, updated, record)
         if isinstance(record, PromptChange):
             from harness.semantic_evaluation import EvaluatorConfig
             from harness.prompt_improvement import load_function_prompt

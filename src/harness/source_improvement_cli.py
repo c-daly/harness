@@ -11,6 +11,22 @@ from harness.source_improvement import SourceProposal, prepare_source, run_sourc
 
 
 async def perform(journal, words):
+    if len(words) == 5 and words[0] == "adopt":
+        from harness.improvement import SourceEntrypoint
+        from harness.source_promotion import adopt_source
+        module, separator, function = words[3].partition(":")
+        if not separator:
+            raise ValueError("source entrypoint must be MODULE:FUNCTION")
+        change = adopt_source(journal, words[1], words[2], SourceEntrypoint(
+            module=module, function=function, import_root=words[4]))
+        return (f"Selected source {change.slot}: {change.source.sha256[:12]}; change {change.id}.\n"
+                f"Applies to the next process: harness run-source SESSION {change.slot} -- ARGS.\n"
+                "Running processes keep their existing source. Rollback is available with source-rollback SLOT.")
+    if len(words) == 2 and words[0] == "rollback":
+        from harness.source_promotion import rollback_source
+        change = rollback_source(journal, words[1])
+        return (f"Restored source {change.slot}: {change.source.sha256[:12]}; change {change.id}.\n"
+                "Applies to the next process; running processes keep their existing source.")
     if len(words) == 2 and words[0] == "prepare":
         path = Path(words[1]).absolute()
         if any(p.is_symlink() for p in (path, *path.parents)):
@@ -33,8 +49,11 @@ async def perform(journal, words):
         result = await run_source_evaluation(journal, words[1])
         decision = verdict(journal.state.plans[result.plan_id], result)
         return (f"Source evaluation {result.id}: {decision} ({result.completion}).\n"
-                "Recorded checks do not qualify code activation. Review the retained patch and results.")
-    raise ValueError("use source-prepare SPEC.json or source-evaluate PLAN_ID")
+                "Recorded checks do not qualify code activation. Review the retained patch and results. "
+                + ("Explicit source-adopt RESULT SLOT MODULE:FUNCTION IMPORT_ROOT is available."
+                   if decision == "passed" else "Candidate held."))
+    raise ValueError("use source-prepare SPEC.json, source-evaluate PLAN_ID, "
+                     "source-adopt RESULT SLOT MODULE:FUNCTION IMPORT_ROOT, or source-rollback SLOT")
 
 
 def main(argv):
@@ -50,13 +69,19 @@ def main(argv):
     actions = parser.add_subparsers(dest="action", required=True)
     actions.add_parser("prepare", help="Freeze two committed revisions and operator-authored checks.").add_argument("spec")
     actions.add_parser("evaluate", help="Execute a recorded plan in fresh source directories.").add_argument("plan_id")
+    adopt = actions.add_parser("adopt", help="Select a passing source snapshot for the next process.")
+    for name in ("result_id", "slot", "entrypoint", "import_root"):
+        adopt.add_argument(name)
+    actions.add_parser("rollback", help="Restore the preceding source selection.").add_argument("slot")
     args = parser.parse_args(argv)
 
     async def run():
         session, _ = resume_session(args.base_dir, SessionId(args.session_id))
         with session:
+            fields = {"prepare": ("spec",), "evaluate": ("plan_id",),
+                      "adopt": ("result_id", "slot", "entrypoint", "import_root"), "rollback": ("slot",)}
             print(await perform(ImprovementJournal(session), [args.action,
-                        args.spec if args.action == "prepare" else args.plan_id]))
+                        *(getattr(args, field) for field in fields[args.action])]))
 
     try:
         asyncio.run(run())

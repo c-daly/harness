@@ -2,8 +2,8 @@
 
 This describes the implemented M2 foundation and subsequent core additions. The complete
 [core agency roadmap](superpowers/plans/2026-09-06-core-agency-roadmap.md) remains
-active. Native agent tasks now have distinct results; external runtime migration,
-broader experiment runners and source-change activation remain subsequent work.
+active. Native agent tasks now have distinct results. Source experiments and supervised next-process source activation are documented
+in [source improvement](source-improvement.md) and [source promotion](source-promotion.md).
 The measured local profile and a supervised shadow-prompt loop are now implemented.
 
 [Semantic evaluation](semantic-evaluation.md) adds explicit shadow message
@@ -249,7 +249,8 @@ Eligibility **does not activate changes**. The message-prompt runner now execute
 paired inference with a core-owned fixed grader; candidates supply only prompt
 data. [Source experiments](source-improvement.md) now import committed patches and
 run frozen operator checks in fresh directories, with the same core records and
-recovery. Stronger source isolation, safe activation, and rollback for broader
+recovery. Supervised [source selection and rollback](source-promotion.md) now cover
+new Python processes. Stronger source isolation and activation for broader
 targets remain required M4/M5 work. No candidate authorizes its own adoption.
 
 [Supervised message-prompt improvement](supervised-improvement.md) adds failure

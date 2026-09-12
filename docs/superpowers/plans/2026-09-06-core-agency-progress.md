@@ -3239,3 +3239,54 @@ verified as a false positive: `git ls-tree -rz` and `-r -z` return byte-identica
 recursive listings, and the real importer reads all 580 files at `ca9cad3`,
 including nested source/documentation paths. Evidence is recorded in the PR;
 no source change was needed for that finding.
+
+## Supervised source promotion and rollback
+
+PR57 merged at `b863dbf`. The [source promotion plan](2026-09-12-source-promotion.md)
+adds explicit, session-local source selections through immutable `SourceChange`
+records. Adoption requires the latest completed passing experiment, exact incumbent
+and candidate snapshots, unchanged evaluator/suite and no open evaluation. It
+retains the preceding snapshot and entrypoint. Rollback restores those exact
+values through one durable journal append; replay has no filesystem or process
+side effects.
+
+`/improvements source-adopt RESULT SLOT MODULE:FUNCTION IMPORT_ROOT` and
+`source-rollback SLOT` share their headless implementation with `harness
+improve-source`. `harness run-source` verifies the selected snapshot, creates a
+private source copy and replaces the launcher with a new Python process using
+that entrypoint. The normal project cwd, environment and stdio are preserved;
+ambient PYTHONPATH cannot substitute the entrypoint. Already running processes
+keep their copies. The original management installation remains available for
+rollback. Launch trees are retained for inspection; no dependency installation,
+data migration or service restart is performed.
+
+A [retained historical demonstration](../../handoffs/2026-09-12-source-promotion/README.md)
+re-evaluates the PR56 judge-failure correction with this runner, explicitly adopts
+it, launches the selected Harness CLI, then rolls back and launches the incumbent.
+The paired verdict and both startup checks pass. It makes no model calls and does
+not qualify live plugin operation, UI journeys or daily use.
+
+The 25 new cases exercise actual behavior changes across launch/rollback,
+independent launch copies, second-adoption entrypoint restoration, journal write
+failure, stale/failed/incomplete evaluation refusal, unsafe paths, corrupted
+artifacts, interrupted materialization/exec, event replay and rendered controls.
+The final focused set passes 104 tests. It also exposed an evaluator identity
+mismatch caused by different lexical spellings of the same interpreter path;
+normalization preserves virtual-environment identity while allowing equivalent
+spellings. Complete locked-version suites and packaging checks follow.
+
+This closes supervised source selection/rollback for new Python processes.
+Core-directed patch authorship, stronger isolation, installed memory/swarm
+reconciliation, broader continuation/edit ownership and M5/M6 live qualification
+remain open. Source activation is operator controlled and is not automatic code
+adoption or a release/deployment system.
+
+Final validation passes **2,358 tests on Python 3.13 (663.09 s)** and **2,358 on
+Python 3.12 (670.15 s)**, each with seven skips and six existing MCP warnings.
+All 275 source/test/driver/configuration files remained fixed; all 92 application
+hashes match the repeated historical demonstration. Ruff, whitespace, packaging
+and the installed CLI/91-module smoke pass; all 92 packaged core files match
+source. The [plan](2026-09-12-source-promotion.md) records the interrupted first
+runs, the controlled setup-delay reproduction, and the final timer-fixture and
+torn-journal corrections. These checks qualify the implemented contracts, not
+unattended source adoption or live daily use.

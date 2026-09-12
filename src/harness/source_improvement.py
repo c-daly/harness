@@ -326,7 +326,7 @@ async def _snapshot(repo, revision):
 def evaluator_version(suite):
     source = Path(__file__).parent
     return _digest(json.dumps({"configuration": suite.model_dump(mode="json"),
-        "python": sys.version, "executable": sys.executable,
+        "python": sys.version, "executable": os.path.abspath(sys.executable),
         "implementation": {name: _digest((source / name).read_bytes()) for name in
             ("source_improvement.py", "improvement.py", "improvement_journal.py", "blobs.py")}},
         sort_keys=True).encode())

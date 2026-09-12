@@ -525,7 +525,9 @@ def _subcommand(argv: list[str]) -> None:
 def _run_main() -> None:
     parser = argparse.ArgumentParser(prog="harness", epilog=(
         "Portable continuation: harness export SESSION_ID NEW_FILE.zip [--task ID]. "
-        "Use 'harness export --help' for details."))
+        "Use 'harness export --help' for details. "
+        "Supervised source changes: harness improve-source --help; "
+        "launch a selected snapshot with harness run-source --help."))
     parser.add_argument("-p", "--prompt", default=None)
     parser.add_argument(
         "--base-dir", type=Path, default=Path.home() / ".local" / "share" / "harness"
@@ -1059,6 +1061,10 @@ def _resources_subcommand(argv: list[str]) -> None:
 
 def main() -> None:
     argv = sys.argv[1:]
+    if argv and argv[0] == "run-source":
+        from harness.source_promotion import main as source_launch_main
+        source_launch_main(argv[1:])
+        return
     if argv and argv[0] == "improve-source":
         from harness.source_improvement_cli import main as source_improve_main
         source_improve_main(argv[1:])

@@ -148,9 +148,11 @@ async def test_unrepresentable_deadline_increase_is_refused(tmp_path, seconds):
 
 @pytest.mark.parametrize("written", [False, True])
 async def test_failed_grant_does_not_move_deadline_or_replay_after_restart(tmp_path, monkeypatch, written):
-    async with parked(tmp_path, seconds=.3) as case:
+    async with parked(tmp_path) as case:
         kernel = case.kernel
         row, = rows(kernel)
+        timer = budget(kernel).coordinations._coordinations[row.id].timer
+        before = timer.when()
         append = kernel.session.append
 
         def fail(event):
@@ -164,15 +166,18 @@ async def test_failed_grant_does_not_move_deadline_or_replay_after_restart(tmp_p
             patch.setattr(kernel.session, "append", fail)
             with pytest.raises(OSError, match="persistence"):
                 extend_coordination(kernel, row.id, 10)
-        assert rows(kernel)[0].timeout_seconds == .3
+        assert rows(kernel)[0].timeout_seconds == row.timeout_seconds
+        assert timer.when() == before
+        timer.reschedule(asyncio.get_running_loop().time())
         await asyncio.wait_for(case.work, 3)
+        assert timer.expired()
         assert saved_report(kernel.session).result.reason == "coordination deadline"
-        assert saved_report(kernel.session).timeout_seconds == .3
+        assert saved_report(kernel.session).timeout_seconds == row.timeout_seconds
         sid = kernel.session.id
     resumed = build_kernel(base_dir=tmp_path, model="root", provider=FakeProvider([]), resume_session_id=sid)
     try:
         assert not rows(resumed)
-        assert budget(resumed).limits.coordination_timeout_seconds == .3
+        assert budget(resumed).limits.coordination_timeout_seconds == row.timeout_seconds
         assert len(grants(resumed)) == int(written)
         with pytest.raises(ValueError, match="one live coordinator"):
             extend_coordination(resumed, row.id, 10)
@@ -247,12 +252,17 @@ async def test_stopping_or_elapsed_coordinator_cannot_be_revived(tmp_path, targe
 
 
 async def test_new_deadline_still_expires_and_is_recorded(tmp_path):
-    async with parked(tmp_path, seconds=.2) as case:
+    async with parked(tmp_path) as case:
         row, = rows(case.kernel)
-        extend_coordination(case.kernel, row.id, .2)
+        timer = budget(case.kernel).coordinations._coordinations[row.id].timer
+        before = timer.when()
+        extend_coordination(case.kernel, row.id, 5)
+        assert timer.when() == before + 5
+        timer.reschedule(asyncio.get_running_loop().time())
         await asyncio.wait_for(case.work, 3)
+        assert timer.expired()
         report = saved_report(case.kernel.session)
-        assert report.timeout_seconds == .4 and report.result.reason == "coordination deadline"
+        assert report.timeout_seconds == 15 and report.result.reason == "coordination deadline"
         assert not rows(case.kernel) and not budget(case.kernel).busy
 
 
@@ -288,23 +298,34 @@ async def test_root_timer_and_member_request_timers_remain_binding(tmp_path, mon
 
 
 async def test_root_extension_does_not_extend_coordinator(tmp_path):
-    async with parked(tmp_path, seconds=.3) as case:
+    async with parked(tmp_path) as case:
         row, = rows(case.kernel)
+        timer = budget(case.kernel).coordinations._coordinations[row.id].timer
+        before = timer.when()
         extend_execution(case.kernel, row.run_id, 20)
-        assert rows(case.kernel)[0].timeout_seconds == .3
+        assert rows(case.kernel)[0].timeout_seconds == row.timeout_seconds
+        assert timer.when() == before
+        timer.reschedule(asyncio.get_running_loop().time())
         await asyncio.wait_for(case.work, 3)
+        assert timer.expired()
         assert saved_report(case.kernel.session).result.reason == "coordination deadline"
         assert not grants(case.kernel)
 
 
 async def test_nested_child_grant_keeps_outer_timer_and_exports_root_intent(tmp_path):
-    async with parked(tmp_path, seconds=.5, provider=TeamProvider(nested=True)) as case:
+    async with parked(tmp_path, provider=TeamProvider(nested=True)) as case:
         kernel = case.kernel
         outer = next(r for r in rows(kernel) if r.session_id == kernel.session.id)
         inner = next(r for r in rows(kernel) if r.session_id != kernel.session.id)
+        timer = budget(kernel).coordinations._coordinations[outer.id].timer
+        inner_timer = budget(kernel).coordinations._coordinations[inner.id].timer
+        before, inner_before = timer.when(), inner_timer.when()
         extend_coordination(kernel, inner.id, 10)
-        assert next(r for r in rows(kernel) if r.id == outer.id).timeout_seconds == .5
+        assert next(r for r in rows(kernel) if r.id == outer.id).timeout_seconds == outer.timeout_seconds
+        assert inner_timer.when() == inner_before + 10 and timer.when() == before
+        timer.reschedule(asyncio.get_running_loop().time())
         await asyncio.wait_for(case.work, 3)
+        assert timer.expired()
         assert saved_report(kernel.session).result.reason == "coordination deadline"
         assert grants(kernel)[0].event.target_session_id == inner.session_id
         child_events = read_session(tmp_path, inner.session_id)

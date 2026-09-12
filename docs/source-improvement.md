@@ -155,6 +155,7 @@ permission files remain candidate data and cannot authorize their own activation
 The default automatic-adoption policy remains empty.
 
 This increment implements preparation, paired execution, inspection and recovery.
-Core-directed patch authorship, stronger runtime isolation, source promotion at a
-safe activation boundary, and rollback remain subsequent M5 work. No live model
+[Supervised source promotion and rollback](source-promotion.md) now provide
+explicit selection and launch at a new-process boundary. Core-directed patch
+authorship and stronger runtime isolation remain subsequent M5 work. No live model
 quality or daily-use gate is established by these controlled source checks.
