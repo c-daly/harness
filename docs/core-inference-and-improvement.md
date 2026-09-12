@@ -247,8 +247,10 @@ an experiment. Replay reconstructs facts and never runs inference or experiments
 an explicit versioned `AdoptionPolicy`. The default has no automatic targets.
 Eligibility **does not activate changes**. The message-prompt runner now executes
 paired inference with a core-owned fixed grader; candidates supply only prompt
-data. External evaluator authority, source experiments, safe activation, and
-rollback for broader targets remain required M4/M5 work. No candidate authorizes its own adoption.
+data. [Source experiments](source-improvement.md) now import committed patches and
+run frozen operator checks in fresh directories, with the same core records and
+recovery. Stronger source isolation, safe activation, and rollback for broader
+targets remain required M4/M5 work. No candidate authorizes its own adoption.
 
 [Supervised message-prompt improvement](supervised-improvement.md) adds failure
 discovery, bounded proposal generation, explicit paired evaluation, and operator

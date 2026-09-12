@@ -1059,6 +1059,10 @@ def _resources_subcommand(argv: list[str]) -> None:
 
 def main() -> None:
     argv = sys.argv[1:]
+    if argv and argv[0] == "improve-source":
+        from harness.source_improvement_cli import main as source_improve_main
+        source_improve_main(argv[1:])
+        return
     if argv and argv[0] == "budget":
         from harness.budget_cli import main as budget_main
         budget_main(argv[1:])

@@ -188,7 +188,11 @@ async def test_loop_threads_on_chunk_to_dispatch(tmp_path):
 class NeverProvider:
     """complete() waits forever without yielding."""
 
+    def __init__(self):
+        self.entered = asyncio.Event()
+
     async def complete(self, *, model, messages, tools=()):
+        self.entered.set()
         await asyncio.sleep(3600)
         if False:
             yield  # type: ignore[misc]
@@ -199,7 +203,11 @@ class StallTool:
 
     spec = ToolSpec(name=ToolName("stall"), description="", parameters={})
 
+    def __init__(self):
+        self.entered = asyncio.Event()
+
     async def __call__(self, args):
+        self.entered.set()
         await asyncio.sleep(3600)
         return "never"
 
@@ -236,11 +244,12 @@ _CANCELLED_TEXT = "(call cancelled; side effects may have occurred)"
 
 
 async def test_interrupt_during_model_is_benign(tmp_path):
-    session, loop = _interrupt_loop(tmp_path, NeverProvider())
+    provider = NeverProvider()
+    session, loop = _interrupt_loop(tmp_path, provider)
     await loop.start()
 
     task = asyncio.create_task(loop.run_turn("hi"))
-    await asyncio.sleep(0.05)
+    await asyncio.wait_for(provider.entered.wait(), 5)
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
@@ -259,7 +268,8 @@ async def test_interrupt_during_model_is_benign(tmp_path):
 
 async def test_interrupt_during_tool_gather_repairs_history(tmp_path):
     reg = ToolRegistry()
-    reg.register(StallTool())
+    stall = StallTool()
+    reg.register(stall)
 
     session, loop = _interrupt_loop(
         tmp_path,
@@ -269,7 +279,7 @@ async def test_interrupt_during_tool_gather_repairs_history(tmp_path):
     await loop.start()
 
     task = asyncio.create_task(loop.run_turn("go"))
-    await asyncio.sleep(0.05)
+    await asyncio.wait_for(stall.entered.wait(), 5)
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
@@ -303,7 +313,8 @@ async def test_interrupt_during_tool_gather_repairs_history(tmp_path):
 async def test_interrupt_history_matches_fold_of_log(tmp_path):
     """After tool-gather interrupt + repair, fold(log) agrees with in-memory history."""
     reg = ToolRegistry()
-    reg.register(StallTool())
+    stall = StallTool()
+    reg.register(stall)
 
     session, loop = _interrupt_loop(
         tmp_path,
@@ -313,7 +324,7 @@ async def test_interrupt_history_matches_fold_of_log(tmp_path):
     await loop.start()
 
     task = asyncio.create_task(loop.run_turn("go"))
-    await asyncio.sleep(0.05)
+    await asyncio.wait_for(stall.entered.wait(), 5)
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
@@ -366,7 +377,8 @@ async def test_interrupt_with_partially_completed_gather_repairs_faithfully(tmp_
     of the log pairs each call_id exactly once."""
     reg = ToolRegistry()
     reg.register(FastTool())
-    reg.register(StallTool())
+    stall = StallTool()
+    reg.register(stall)
 
     turn = [
         ToolCallDelta(index=0, call_id=CallId("f1"), tool=ToolName("fast"), args_json="{}"),
@@ -376,9 +388,15 @@ async def test_interrupt_with_partially_completed_gather_repairs_faithfully(tmp_
     ]
     session, loop = _interrupt_loop(tmp_path, FakeProvider([turn]), registry=reg)
     await loop.start()
+    recorded = session.bus.subscribe()
 
     task = asyncio.create_task(loop.run_turn("go"))
-    await asyncio.sleep(0.2)  # fast completes; stall stays parked
+    await asyncio.wait_for(stall.entered.wait(), 5)
+    async with asyncio.timeout(5):
+        while True:
+            event = (await recorded.get()).event
+            if event.type == "tool_call_completed" and event.call_id == CallId("f1"):
+                break
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
@@ -431,7 +449,8 @@ async def test_interrupt_with_partially_completed_gather_repairs_faithfully(tmp_
 
 async def test_repair_turn_returns_count_and_interrupt_delegates(tmp_path):
     reg = ToolRegistry()
-    reg.register(StallTool())
+    stall = StallTool()
+    reg.register(stall)
 
     session, loop = _interrupt_loop(
         tmp_path,
@@ -441,7 +460,7 @@ async def test_repair_turn_returns_count_and_interrupt_delegates(tmp_path):
     await loop.start()
 
     task = asyncio.create_task(loop.run_turn("go"))
-    await asyncio.sleep(0.05)
+    await asyncio.wait_for(stall.entered.wait(), 5)
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
