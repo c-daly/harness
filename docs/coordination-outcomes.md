@@ -116,7 +116,9 @@ aggregate truncation is explicit and incomplete.
 Ensembles exclude incomplete, failed, blocked or truncated answers from voting
 and synthesis. When a sibling is unusable, any remaining answer is delivered as
 incomplete with the successful work retained. Disagreement is recorded even when
-all executions complete. A panel requires complete affirmative reviews from each
+all executions complete. When the calling task has declared requirements,
+ensembles also apply the recorded-evidence selection described below.
+A panel requires complete affirmative reviews from each
 configured critic; the first line must be exactly `APPROVE`. With no critics,
 the proposal is explicitly recorded as unreviewed. An optional escalation verifier similarly uses
 an exact `PASS` first line. A successful premium fallback can recover execution
@@ -167,6 +169,48 @@ inherit a parent's requirements: the gate uses the tracked task owning the actua
 calling run. With no such requirements and `require_checks` omitted/false,
 escalation retains its legacy execution/advisory policy. Agreement, synthesis,
 `APPROVE` and `PASS` alone do not verify user acceptance.
+
+## Checked ensembles
+
+Ensembles now use the same frozen task requirements and read-only child checks
+as escalation. With declared requirements, only complete, untruncated answers
+that pass every check participate in the vote. Two matching wrong answers cannot
+outvote one answer with passing evidence. The report retains every participant,
+its grades and artifact references; disagreement includes rejected alternatives.
+Failed or missing evidence is visible through the existing `/coordination` view.
+
+An optional judge receives only passing candidates and must independently pass
+the same requirements. A failed judge returns incomplete with passing expert
+candidates and any delivered judge output retained under separate labels. This includes
+provider errors, blocked execution and partial delivery; it is not a successful
+fallback to an expert. Coordinator cancellation and deadlines retain their own
+terminal status and settle the judge. It cannot certify an unchecked synthesis.
+If no expert passes, no judge runs.
+The result is incomplete, with complete candidate texts retained and labeled
+unverified. If every execution failed or was partial, the existing failed-result
+behavior remains. An interrupted or partial sibling keeps the aggregate incomplete
+even if another participant passes. No result accepts the user's task.
+
+The `ensemble` tool, Python `ensemble(..., require_checks=True)` API and configured
+`strategy: ensemble` agents support the strict `require_checks` boolean. As with
+escalation, existing requirements always apply; the flag additionally refuses an
+untracked call or a task without requirements. Model-provided replacement criteria
+are ignored. Configured coordinator participants cannot satisfy a direct child's
+evidence contract; they remain blocked under recorded checks.
+
+After declaring the `READY` requirement above, ask for `ensemble` with
+`{"prompt":"Return exactly READY","models":["local","gpt"],"require_checks":true}`
+using aliases from your catalog. An optional `judge` names another catalog alias.
+`/tools ensemble` documents the arguments, and `/coordination` shows each grade.
+With no task requirements and checks not required, voting/synthesis is unchanged.
+
+These are the existing exact output/tool-result checks, not a new semantic
+correctness model or a workspace test runner. A review-only task cannot pass
+automatic selection; model votes cannot supply human review. Parent task review
+and acceptance are separate and never rewrite the historical coordination report.
+The [mixed-runtime journey](mixed-runtime-qualification.md) now
+checks this review hold while retaining its independent file-content oracle.
+Panel and draft/refine selection are unchanged.
 
 [Portable export](portable-continuation.md) includes coordination reports attached
 to the exported task's tool calls and copies their aggregate answer artifacts.

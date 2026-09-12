@@ -59,9 +59,9 @@ class CoordinationReport(BaseModel):
             raise ValueError("coordination requirement IDs must be unique")
         if self.gate == "recorded_checks" and not ids:
             raise ValueError("recorded checks require declared requirements")
-        if self.check_source is not None and (self.strategy != "escalate" or
+        if self.check_source is not None and (self.strategy not in ("escalate", "ensemble") or
                                                self.check_source.session_id != self.source_session_id):
-            raise ValueError("check source must belong to this escalation's calling session")
+            raise ValueError("check source must belong to this checked strategy's calling session")
         for member in self.members:
             if member.evidence is not None and (not ids or [e.requirement_id for e in member.evidence] != ids):
                 raise ValueError("participant evidence must cover every declared requirement in order")

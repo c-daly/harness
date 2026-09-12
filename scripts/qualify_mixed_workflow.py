@@ -181,6 +181,7 @@ def member_evidence(kernel, root, member):
 
     return {"role": role, "model": member.model, "session_id": child,
         "status": member.result.status, "reason": member.result.reason,
+        "checks": [e.model_dump(mode="json") for e in member.evidence] if member.evidence is not None else None,
         "output_retained": member.result.output is not None,
         "fixture_read": any(file_call(c, "read_file", "CASE.json") for c in successful),
         "artifact_written": any(file_call(c, "write_file", f"{role}.json")
@@ -197,6 +198,7 @@ def observe_phase(kernel, root, result):
     report = load_report(kernel.session.blobs, terminal, kernel.session.id)
     return {"root_run_id": result.run_id, "root_status": result.status,
         "coordination_id": report.id, "status": report.result.status, "gate": report.gate,
+        "check_requirements": [r.model_dump(mode="json") for r in report.requirements or ()],
         "acceptance": report.acceptance, "settled": settled(kernel), "accounting": accounting(kernel),
         "members": [member_evidence(kernel, root, member) for member in report.members]}
 
@@ -242,7 +244,14 @@ def assess(report):
         checks["external_completed"] = (checks["only_unfinished_member_retried"]
             and completed_member(second["members"][0], second["root_run_id"])
             and any(run["runtime"] == "codex" for run in second["members"][0]["runs"]))
-        checks["resumed_completion"] = second["status"] == second["root_status"] == "completed"
+        checks["resumed_review_hold"] = (second["status"] == second["root_status"] == "incomplete"
+            and second["gate"] == "recorded_checks"
+            and len(second["check_requirements"]) == 1
+            and second["check_requirements"][0]["check"]["kind"] == "review"
+            and len(second["members"]) == 1
+            and len(second["members"][0].get("checks") or []) == 1
+            and second["members"][0]["checks"][0]["requirement_id"] == second["check_requirements"][0]["id"]
+            and second["members"][0]["checks"][0]["status"] == "unverified")
         checks["settled_and_unaccepted"] = all(p["settled"] and p["acceptance"] == "unverified" for p in phases)
     required = {"controlled_wait_observed", "cancel_intent_recorded", "restart_counts_exact",
         "restart_is_idle", "restart_task_exact", "restart_limits_exact", "restart_context_exact",

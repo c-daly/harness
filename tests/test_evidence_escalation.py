@@ -93,7 +93,8 @@ async def test_all_declared_requirements_must_pass(tmp_path):
 
 
 @pytest.mark.parametrize("damage", ["missing", "corrupt", "wrong_run", "wrong_text", "duplicate_delivery"])
-async def test_fresh_child_provenance_is_required_even_after_a_passing_check(tmp_path, monkeypatch, damage):
+@pytest.mark.parametrize("strategy", ["escalate", "ensemble"])
+async def test_fresh_child_provenance_is_required_even_after_a_passing_check(tmp_path, monkeypatch, damage, strategy):
     from harness.events import SubagentFinished
 
     def configure(kernel):
@@ -114,13 +115,14 @@ async def test_fresh_child_provenance_is_required_even_after_a_passing_check(tmp
                     result = result.model_copy(update={"text": "fabricated"})
                 else:
                     terminal = next(e.event for e in reversed(read_session(tmp_path, kernel.session.id))
-                                    if isinstance(e.event, SubagentFinished))
+                                    if isinstance(e.event, SubagentFinished) and e.event.child_session_id == result.child_session_id)
                     kernel.session.append(terminal)
             return result
 
         monkeypatch.setattr(kernel.runner, "run_result", damaged)
 
-    kernel = await run_case(tmp_path, ["correct", "correct"], [output_requirement()], configure=configure)
+    kernel = await run_case(tmp_path, ["correct", "correct"], [output_requirement()], configure=configure,
+                            root_tool=strategy, models=["cheap", "premium"])
     try:
         report = report_for(kernel)
         assert [e.evidence[0].status for e in report.members] == ["unverified", "passed"]
@@ -206,7 +208,7 @@ async def test_configured_escalation_uses_the_same_core_checks(tmp_path):
         kernel.session.close()
 
 
-def test_require_checks_definition_is_strict_and_escalation_only():
+def test_require_checks_definition_is_strict_and_requires_a_supported_strategy():
     from harness.frontmatter import AgentDef
     with pytest.raises(ValueError, match="only supported"):
         AgentDef(name="plain", description="d", require_checks=True)
@@ -288,10 +290,11 @@ async def test_required_checks_without_declared_requirements_block_before_childr
         kernel.session.close()
 
 
-async def test_gate_follows_the_running_task_not_a_different_selected_task(tmp_path):
+@pytest.mark.parametrize("strategy", ["escalate", "ensemble"])
+async def test_gate_follows_the_running_task_not_a_different_selected_task(tmp_path, strategy):
     from harness.tasks import TaskService, project_tasks
     kernel = build_kernel(base_dir=tmp_path, provider=FakeProvider([
-        tool_call_turn("", ToolName("escalate"), {"prompt": "Solve", "cheap": "cheap", "premium": "premium"}),
+        tool_call_turn("", ToolName(strategy), {"prompt": "Solve", "cheap": "cheap", "premium": "premium", "models": ["cheap"]}),
         text_turn("correct"), text_turn("root summary"),
     ]), model=ModelId("root"))
     try:
@@ -376,15 +379,16 @@ async def test_interrupted_premium_keeps_cheap_evidence_and_settles_children(tmp
         kernel.session.close()
 
 
-async def test_runtime_contract_checks_native_then_external_output(tmp_path, monkeypatch):
+@pytest.mark.parametrize("strategy", ["escalate", "ensemble"])
+async def test_runtime_contract_checks_native_then_external_output(tmp_path, monkeypatch, strategy):
     from harness.catalog import Catalog
     from harness.provider import StreamStop, TextDelta
     from harness.provider_litellm import CatalogProvider
     from tests.test_external_agent_runtime import ScriptedCodex
 
     monkeypatch.setattr("harness.catalog._cost_map_lookup", lambda _: {})
-    steps = [tool_call_turn("", ToolName("escalate"), {
-        "prompt": "Solve", "cheap": "native", "premium": "external", "require_checks": True}),
+    steps = [tool_call_turn("", ToolName(strategy), {
+        "prompt": "Solve", "cheap": "native", "premium": "external", "models": ["native", "external"], "require_checks": True}),
         text_turn("wrong"), text_turn("root summary")]
 
     async def inference(**kwargs):
@@ -411,14 +415,16 @@ async def test_runtime_contract_checks_native_then_external_output(tmp_path, mon
         kernel.session.close()
 
 
-async def test_terminal_exposes_failed_and_passing_checks_without_accepting_task(tmp_path):
+@pytest.mark.parametrize("strategy", ["escalate", "ensemble"])
+async def test_terminal_exposes_failed_and_passing_checks_without_accepting_task(tmp_path, strategy):
     from textual.widgets import Input
     from tests.test_tui import make_app
     from tests.test_tui_queue import screen_text
     from tests.test_tui_tasks import command
 
     provider = FakeProvider([
-        tool_call_turn("", ToolName("escalate"), {"prompt": "Solve", "cheap": "cheap", "premium": "premium", "require_checks": True}),
+        tool_call_turn("", ToolName(strategy), {"prompt": "Solve", "cheap": "cheap", "premium": "premium",
+                                              "models": ["cheap", "premium"], "require_checks": True}),
         text_turn("wrong"), text_turn("correct"), text_turn("root summary"),
     ])
     app = make_app(tmp_path, provider=provider, model=ModelId("root"))
@@ -441,7 +447,8 @@ async def test_terminal_exposes_failed_and_passing_checks_without_accepting_task
 
 
 @pytest.mark.parametrize("cause", ["cancel", "deadline"])
-async def test_late_read_only_verification_cannot_revive_an_interrupted_coordinator(tmp_path, monkeypatch, cause):
+@pytest.mark.parametrize("strategy", ["escalate", "ensemble"])
+async def test_late_read_only_verification_cannot_revive_an_interrupted_coordinator(tmp_path, monkeypatch, cause, strategy):
     from dataclasses import replace
     from harness.coordination_checks import check_child_result
     from harness.coordination_cli import render_coordination
@@ -459,11 +466,11 @@ async def test_late_read_only_verification_cannot_revive_an_interrupted_coordina
 
     monkeypatch.setattr("harness.coordination_checks.check_child_result", delayed)
     kernel = build_kernel(base_dir=tmp_path, provider=FakeProvider([
-        tool_call_turn("", ToolName("escalate"), {"prompt": "Solve", "cheap": "cheap", "premium": "premium"}),
+        tool_call_turn("", ToolName(strategy), {"prompt": "Solve", "cheap": "cheap", "premium": "premium", "models": ["cheap"]}),
         text_turn("correct"), text_turn("root summary"),
     ]), model=ModelId("root"))
     budget = kernel.loop.dispatcher.scope.budget
-    budget.limits = replace(budget.limits, coordination_timeout_seconds=.2 if cause == "deadline" else 10)
+    budget.limits = replace(budget.limits, coordination_timeout_seconds=10)
     work = None
     try:
         await kernel.loop.start()
@@ -476,6 +483,9 @@ async def test_late_read_only_verification_cannot_revive_an_interrupted_coordina
             with pytest.raises(asyncio.CancelledError):
                 await work
         else:
+            coordinator, = budget.coordinations._coordinations.values()
+            assert coordinator.strategy == strategy
+            coordinator.timer.reschedule(asyncio.get_running_loop().time())
             await asyncio.wait_for(work, 3)
         report = report_for(kernel)
         assert report.result.status == ("cancelled" if cause == "cancel" else "incomplete")

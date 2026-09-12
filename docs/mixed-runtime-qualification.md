@@ -60,6 +60,14 @@ not a prepaid reservation or a guarantee about provider-internal work.
    the unchanged fixture. Exports both coordinations and the stop record using
    the ordinary portable task exporter. Operator review remains unresolved.
 
+Current core ensembles enforce the task's declared requirements. This journey
+declares a human-review requirement, so even the fully executed external retry
+now leaves the aggregate and root attempt incomplete. The driver records the
+unverified child check and requires that review hold. Its independent fixture
+oracle still requires correct files and complete participant executions; the
+hold does not excuse an incorrect or missing artifact. This updated behavior is
+covered by scripted integration tests, without another live-model measurement.
+
 `report.json` contains metadata, explicit booleans, source hashes and per-phase
 results. Exit zero requires every obligation, including correct native results.
 Exit one also covers a fully executed journey whose model answer is incorrect.
@@ -98,8 +106,8 @@ recursive database copy.
 
 The [final report](handoffs/2026-09-11-mixed-runtime/report.json) measures the
 source committed as `48f4453`, identified by per-file hashes. It predates PR55's
-export-ownership review correction; that correction has automated regression
-coverage, without a repeat live-model measurement.
+export-ownership review correction and checked ensemble selection. Those changes
+have automated regression coverage, without a repeat live-model measurement.
 The [profile](handoffs/2026-09-11-mixed-runtime/profile.json)
 records the installed Qwen3-8B Q4_K_M weights, llama.cpp 9603, RTX 5070,
 `openai/gpt-5` route and Codex CLI 0.154.0.

@@ -71,6 +71,8 @@ async def test_journey_stops_typed_runtime_keeps_siblings_and_continues_after_re
     assert completed["passed"], completed
     first, second = completed["phases"]
     assert first["accounting"]["children"] == 4  # one coordinator plus three agents
+    assert second["status"] == second["root_status"] == "incomplete"
+    assert second["gate"] == "recorded_checks" and completed["checks"]["resumed_review_hold"]
     assert second["accounting"]["children"] == 6  # fresh coordinator and external attempt
     assert second["accounting"]["model_calls"] == first["accounting"]["model_calls"] + 1
     assert second["accounting"]["unknown_input_attempts"] >= 1
@@ -92,7 +94,8 @@ async def test_completed_text_and_successful_calls_do_not_qualify_incorrect_or_m
         assert not member["artifact"]["exact"]
 
 
-@pytest.mark.parametrize("mutation", ["phase", "member", "codex", "parent", "cycle", "terminal", "check", "error"])
+@pytest.mark.parametrize("mutation", ["phase", "member", "codex", "parent", "cycle", "terminal", "check", "error",
+                                      "review_passed", "review_missing", "unchecked", "completed"])
 async def test_oracle_refuses_missing_evidence(completed, mutation):
     report = copy.deepcopy(completed)
     if mutation == "phase":
@@ -111,6 +114,14 @@ async def test_oracle_refuses_missing_evidence(completed, mutation):
         run["parent_run_id"] = run["id"]
     elif mutation == "error":
         report["error_type"] = "OSError"
+    elif mutation == "review_passed":
+        report["phases"][1]["members"][0]["checks"][0]["status"] = "passed"
+    elif mutation == "review_missing":
+        report["phases"][1]["members"][0]["checks"] = None
+    elif mutation == "unchecked":
+        report["phases"][1]["gate"] = "text_vote"
+    elif mutation == "completed":
+        report["phases"][1]["status"] = report["phases"][1]["root_status"] = "completed"
     else:
         del report["checks"]["restart_counts_exact"]
     assert not assess(report)["passed"]

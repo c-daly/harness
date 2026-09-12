@@ -44,7 +44,7 @@ def render_coordination(base, session_id):
             if result.get("truncated"):
                 detail += "; truncated output"
             rows.append(f"  {member['role']} {member['model']}: {result['status']}{detail}")
-            if report["requirements"] and member["role"] in ("cheap", "premium") and member["evidence"] is None:
+            if report["requirements"] and member["role"] in ("cheap", "premium", "expert", "judge") and member["evidence"] is None:
                 rows.append("    Checks unconfirmed: verification did not finish")
             for evidence in member["evidence"] or ():
                 detail = f"; child event {evidence['source_seq']}" if evidence["source_seq"] is not None else ""

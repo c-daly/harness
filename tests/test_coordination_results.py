@@ -284,7 +284,9 @@ async def test_task_export_and_activity_keep_configured_coordination_partial_sta
         coordination, = package["coordination"]
         assert coordination["status"] == "incomplete"
         assert json.loads(artifacts[coordination["report"]["path"]])["id"] == report.id
-        assert artifacts[coordination["output"]["path"]] == b"useful answer"
+        retained = artifacts[coordination["output"]["path"]]
+        assert b"Unverified candidate [fake]" in retained and b"useful answer" in retained
+        assert report.gate == "recorded_checks" and report.members[0].evidence[0].status == "unverified"
         assert package["task"]["unresolved"] == ["review"] and not package["task"]["accepted"]
         assert package["child_sessions"][0]["contents"] == "not_exported"
     finally:
