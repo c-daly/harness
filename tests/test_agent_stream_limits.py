@@ -17,6 +17,7 @@ from harness.provider_litellm import CatalogProvider
 from harness.session import Session
 from harness.types import CallId, ModelId, SessionId, ToolName
 from tests.test_inference import make_dispatcher
+from tests.timing import inference_timers
 
 
 class ExternalAgent:
@@ -113,18 +114,23 @@ async def test_agent_limit_stops_before_callback_and_completion(tmp_path, monkey
 async def test_agent_deadline_and_cancel_close_forwarded_source(tmp_path, monkeypatch, kind, mode):
     backend = ExternalAgent(hang=True)
     provider = route(backend, kind, monkeypatch)
-    with Session(tmp_path, SessionId("waiting")) as session:
+    with Session(tmp_path, SessionId("waiting")) as session, inference_timers(monkeypatch) as timers:
         session.start()
         dispatcher = make_dispatcher(session)
         task = asyncio.create_task(dispatcher.dispatch_response(
-            provider=provider, request=request(timeout_seconds=0.01 if mode == "deadline" else 30)))
+            provider=provider, request=request(timeout_seconds=30)))
         try:
-            await asyncio.wait_for(backend.entered.wait(), 1)
+            await asyncio.wait_for(backend.entered.wait(), 5)
+            (seconds, deadline), = timers
+            assert 0 < seconds <= 30  # The configured request limit still reaches the collector.
             if mode == "cancel":
                 task.cancel()
+            else:
+                deadline.reschedule(asyncio.get_running_loop().time())
             with pytest.raises(TimeoutError if mode == "deadline" else asyncio.CancelledError):
-                await asyncio.wait_for(asyncio.shield(task), 0.3)
+                await asyncio.wait_for(asyncio.shield(task), 3)
             assert task.done(), "the request deadline must finish the dispatch"
+            assert deadline.expired() == (mode == "deadline")
             assert backend.closed and backend.calls == 1
             events = read_session(tmp_path, session.id)
             assert not fold(events).open_model_intents

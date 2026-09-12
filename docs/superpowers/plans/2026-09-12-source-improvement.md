@@ -66,3 +66,24 @@ source/test/driver hashes stayed fixed. Ruff, source/wheel builds and the clean
 installed CLI/90-module smoke pass, and all 91 packaged core files match source.
 The repeated retrospective judge-failure comparison passes and retains exact
 runner hashes. Source promotion, rollback and stronger isolation remain separate.
+
+## Hosted CI follow-up
+
+The first hosted matrix exposed two existing timing assumptions despite passing
+local suites: a 10 ms external-stream deadline could expire before stream entry,
+and a 300 ms root deadline could expire before a coordinator extension. Controlled
+50 ms stream-entry and 400 ms coordinator-setup delays reproduce both failures.
+
+The fixtures now allow a bounded setup window, then explicitly expire the real
+collector/root timers after entry and extension. They assert the configured
+request limit reaches the collector, coordinator grants preserve enclosing and
+member deadlines, the intended timers actually expire, streams close, and terminal
+records remain correct. Cancellation coverage remains across all four external
+routes. A test-local collector timer helper leaves task/coordinator clocks and
+test watchdogs untouched. Application source and timeouts are unchanged.
+
+All 69 affected cases and all nine delayed probes pass. The complete correction
+passes 2,333 tests on Python 3.13 (604.11 s) and Python 3.12 (616.18 s), with seven
+skips and six existing MCP warnings each. All 258 frozen files stay unchanged;
+application sources still match the retained source comparison. Ruff, packaging
+and installed CLI/module smoke pass before the correction is pushed.

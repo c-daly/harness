@@ -3212,3 +3212,30 @@ runs, and all 91 runner source hashes match the repeated historical comparison.
 Ruff, whitespace, source/wheel builds and the clean installed CLI/90-module smoke
 pass; all 91 packaged core files match source. These results qualify the
 controlled implementation, not automatic activation, model quality or daily use.
+
+### PR57 hosted CI: synchronize deadline tests with their target phase
+
+The first hosted Python 3.13 run failed the existing coordinator/root deadline
+test; Python 3.12 failed an existing Codex stream-deadline case. Each otherwise
+passed 2,332 tests with seven skips and six warnings (438.45 s / 597.58 s).
+The 300 ms root and 10 ms stream deadlines could expire during setup, before the
+tests reached the extension or stream phase they intended to check. Controlled
+400 ms coordinator-setup and 50 ms stream-entry delays reproduced the failures.
+
+Fixtures now expire the real timers after confirmed entry/extension, with a
+bounded setup window. They verify unchanged parent/member deadlines, propagation
+of the configured request limit, actual timer expiry, stream cleanup and terminal
+records. All eight delayed external route/cancellation cases and the delayed
+root/member case pass; the complete affected set passes 69 tests. This correction
+changes only tests; source artifacts and the retained historical comparison stay
+unchanged. Complete supported-version reruns follow before pushing the correction.
+
+The correction passes **2,333 tests on Python 3.13 (604.11 s)** and **2,333 on
+Python 3.12 (616.18 s)**, each with seven skips and six existing MCP warnings.
+All 258 source/test/driver hashes stayed fixed through these reruns; the 91
+application-source hashes still match the retained comparison. Ruff, packaging
+and the installed CLI/90-module smoke pass. The recursion review finding was
+verified as a false positive: `git ls-tree -rz` and `-r -z` return byte-identical
+recursive listings, and the real importer reads all 580 files at `ca9cad3`,
+including nested source/documentation paths. Evidence is recorded in the PR;
+no source change was needed for that finding.

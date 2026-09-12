@@ -24,6 +24,7 @@ from harness.run_controls import cancel_run
 from harness.tui_support import SlashCommand
 from tests.test_coordination_results import saved_report
 from tests.test_run_controls import HeldProvider
+from tests.timing import inference_timers
 
 
 class TeamProvider(HeldProvider):
@@ -255,21 +256,35 @@ async def test_new_deadline_still_expires_and_is_recorded(tmp_path):
         assert not rows(case.kernel) and not budget(case.kernel).busy
 
 
-async def test_root_timer_and_member_request_timers_remain_binding(tmp_path):
-    async with parked(tmp_path / "root", overrides={"task_timeout_seconds": .3}) as case:
+async def test_root_timer_and_member_request_timers_remain_binding(tmp_path, monkeypatch):
+    async with parked(tmp_path / "root") as case:
         row, = rows(case.kernel)
+        deadline = budget(case.kernel).runs._runs[row.run_id].timer
+        before = deadline.when()
         extend_coordination(case.kernel, row.id, 5)
+        assert deadline.when() == before
+        deadline.reschedule(asyncio.get_running_loop().time())
         with pytest.raises(TimeoutError, match="task time budget"):
             await asyncio.wait_for(case.work, 3)
+        assert deadline.expired()
         assert saved_report(case.kernel.session).result.status == "cancelled"
         assert not rows(case.kernel)
-    async with parked(tmp_path / "request", overrides={"inference_timeout_seconds": .3}) as case:
-        row, = rows(case.kernel)
-        extend_coordination(case.kernel, row.id, 5)
-        await asyncio.wait_for(case.work, 3)
-        report = saved_report(case.kernel.session)
-        assert report.result.status == "failed" and report.result.reason != "coordination deadline"
-        assert all(m.result.status != "completed" for m in report.members)
+    with inference_timers(monkeypatch) as timers:
+        async with parked(tmp_path / "request", overrides={"inference_timeout_seconds": 7}) as case:
+            row, = rows(case.kernel)
+            assert len(timers) == len(case.provider.entered)
+            assert all(0 < seconds <= 7 for seconds, _ in timers)
+            deadlines = tuple(timer for _, timer in timers)
+            before = tuple(timer.when() for timer in deadlines)
+            extend_coordination(case.kernel, row.id, 5)
+            assert tuple(timer.when() for timer in deadlines) == before
+            for timer in deadlines:
+                timer.reschedule(asyncio.get_running_loop().time())
+            await asyncio.wait_for(case.work, 3)
+            assert all(timer.expired() for timer in deadlines)
+            report = saved_report(case.kernel.session)
+            assert report.result.status == "failed" and report.result.reason != "coordination deadline"
+            assert all(m.result.status != "completed" for m in report.members)
 
 
 async def test_root_extension_does_not_extend_coordinator(tmp_path):
