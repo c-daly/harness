@@ -1,0 +1,131 @@
+{
+  "active": true,
+  "phase": "monitoring",
+  "tasks": {
+    "1-source-authorship-completion": {
+      "status": "spawned",
+      "retries": 0,
+      "worktree_dir": "/home/fearsidhe/projects/harness/.worktrees/harness-remaining-roadmap/1-source-authorship-completion",
+      "worker_id": "1-source-authorship-completion-w1"
+    },
+    "2-sustained-scenario-driver-and-protocol": {
+      "status": "spawned",
+      "retries": 0,
+      "worktree_dir": "/home/fearsidhe/projects/harness/.worktrees/harness-remaining-roadmap/2-sustained-scenario-driver-and-protocol",
+      "worker_id": "2-sustained-scenario-driver-and-protocol-w1"
+    },
+    "3-plugin-workflow-reconciliation": {
+      "status": "spawned",
+      "retries": 0,
+      "worktree_dir": "/home/fearsidhe/projects/harness/.worktrees/harness-remaining-roadmap/3-plugin-workflow-reconciliation",
+      "worker_id": "3-plugin-workflow-reconciliation-w1"
+    },
+    "4-suspected-stall-observation-and-recorded-assessment": {
+      "status": "spawned",
+      "retries": 0,
+      "worktree_dir": "/home/fearsidhe/projects/harness/.worktrees/harness-remaining-roadmap/4-suspected-stall-observation-and-recorded-assessment",
+      "worker_id": "4-suspected-stall-observation-and-recorded-assessment-w1"
+    },
+    "5-pre-call-usage-reservations": {
+      "status": "pending",
+      "retries": 0,
+      "worktree_dir": "/home/fearsidhe/projects/harness/.worktrees/harness-remaining-roadmap/5-pre-call-usage-reservations"
+    },
+    "6-claude-code-and-antigravity-task-bindings": {
+      "status": "spawned",
+      "retries": 0,
+      "worktree_dir": "/home/fearsidhe/projects/harness/.worktrees/harness-remaining-roadmap/6-claude-code-and-antigravity-task-bindings",
+      "worker_id": "6-claude-code-and-antigravity-task-bindings-w1"
+    },
+    "7-outward-mcp-capability-delivery-without-argv": {
+      "status": "pending",
+      "retries": 0,
+      "worktree_dir": "/home/fearsidhe/projects/harness/.worktrees/harness-remaining-roadmap/7-outward-mcp-capability-delivery-without-argv"
+    },
+    "8-pattern-redaction-and-minimal-child-environments": {
+      "status": "pending",
+      "retries": 0,
+      "worktree_dir": "/home/fearsidhe/projects/harness/.worktrees/harness-remaining-roadmap/8-pattern-redaction-and-minimal-child-environments"
+    },
+    "9-session-integrity-authorized-repair-and-lifecycle-cli": {
+      "status": "pending",
+      "retries": 0,
+      "worktree_dir": "/home/fearsidhe/projects/harness/.worktrees/harness-remaining-roadmap/9-session-integrity-authorized-repair-and-lifecycle-cli"
+    },
+    "10-participant-acceptance-recovery-in-coordinations": {
+      "status": "pending",
+      "retries": 0,
+      "worktree_dir": "/home/fearsidhe/projects/harness/.worktrees/harness-remaining-roadmap/10-participant-acceptance-recovery-in-coordinations"
+    },
+    "11-isolated-worktrees-for-delegated-tasks": {
+      "status": "pending",
+      "retries": 0,
+      "worktree_dir": "/home/fearsidhe/projects/harness/.worktrees/harness-remaining-roadmap/11-isolated-worktrees-for-delegated-tasks"
+    },
+    "12-user-correction-to-repair-loop": {
+      "status": "pending",
+      "retries": 0,
+      "worktree_dir": "/home/fearsidhe/projects/harness/.worktrees/harness-remaining-roadmap/12-user-correction-to-repair-loop"
+    },
+    "13-workspace-artifact-predicates-and-requirement-proposals": {
+      "status": "pending",
+      "retries": 0,
+      "worktree_dir": "/home/fearsidhe/projects/harness/.worktrees/harness-remaining-roadmap/13-workspace-artifact-predicates-and-requirement-proposals"
+    },
+    "14-recursive-child-artifacts-in-continuation-packages": {
+      "status": "pending",
+      "retries": 0,
+      "worktree_dir": "/home/fearsidhe/projects/harness/.worktrees/harness-remaining-roadmap/14-recursive-child-artifacts-in-continuation-packages"
+    },
+    "15-managed-weight-download-and-runtime-installation": {
+      "status": "pending",
+      "retries": 0,
+      "worktree_dir": "/home/fearsidhe/projects/harness/.worktrees/harness-remaining-roadmap/15-managed-weight-download-and-runtime-installation"
+    },
+    "16-multiline-composer-and-complete-permission-review": {
+      "status": "pending",
+      "retries": 0,
+      "worktree_dir": "/home/fearsidhe/projects/harness/.worktrees/harness-remaining-roadmap/16-multiline-composer-and-complete-permission-review"
+    },
+    "17-discoverability-surfaces-and-first-run-onboarding": {
+      "status": "pending",
+      "retries": 0,
+      "worktree_dir": "/home/fearsidhe/projects/harness/.worktrees/harness-remaining-roadmap/17-discoverability-surfaces-and-first-run-onboarding"
+    },
+    "18-plain-interactive-terminal-frontend": {
+      "status": "pending",
+      "retries": 0,
+      "worktree_dir": "/home/fearsidhe/projects/harness/.worktrees/harness-remaining-roadmap/18-plain-interactive-terminal-frontend"
+    },
+    "19-compositor-goldens-size-matrix-and-accessibility-gates": {
+      "status": "pending",
+      "retries": 0,
+      "worktree_dir": "/home/fearsidhe/projects/harness/.worktrees/harness-remaining-roadmap/19-compositor-goldens-size-matrix-and-accessibility-gates"
+    },
+    "20-playability-measurement-activity-table-and-dogfood-protocol": {
+      "status": "pending",
+      "retries": 0,
+      "worktree_dir": "/home/fearsidhe/projects/harness/.worktrees/harness-remaining-roadmap/20-playability-measurement-activity-table-and-dogfood-protocol"
+    },
+    "21-diagnostics-provider-probes-and-compatibility-manifest": {
+      "status": "pending",
+      "retries": 0,
+      "worktree_dir": "/home/fearsidhe/projects/harness/.worktrees/harness-remaining-roadmap/21-diagnostics-provider-probes-and-compatibility-manifest"
+    },
+    "22-execution-profiles-and-recorded-trust-boundary": {
+      "status": "pending",
+      "retries": 0,
+      "worktree_dir": "/home/fearsidhe/projects/harness/.worktrees/harness-remaining-roadmap/22-execution-profiles-and-recorded-trust-boundary"
+    },
+    "23-filesystem-containment-primitives": {
+      "status": "pending",
+      "retries": 0,
+      "worktree_dir": "/home/fearsidhe/projects/harness/.worktrees/harness-remaining-roadmap/23-filesystem-containment-primitives"
+    },
+    "24-plugin-digest-trust-and-atomic-grants": {
+      "status": "pending",
+      "retries": 0,
+      "worktree_dir": "/home/fearsidhe/projects/harness/.worktrees/harness-remaining-roadmap/24-plugin-digest-trust-and-atomic-grants"
+    }
+  }
+}
