@@ -83,25 +83,41 @@ not; never report a partial or interrupted run as green. Copy the exact
 Seven skips (Anthropic/Ollama fixtures and the opt-in Antigravity probe) and
 six MCP deprecation warnings are the known baseline.
 
-## Commit, push, PR
+## Long-running commands
+
+Router calls time out after about 30 seconds. Run anything longer (uv sync,
+full pytest runs, builds) detached and poll the log:
+
+```sh
+nohup uv run pytest -q > /home/fearsidhe/projects/harness/.worktrees/tmp/<task-name>/full-py313.log 2>&1 &
+# later
+tail -5 /home/fearsidhe/projects/harness/.worktrees/tmp/<task-name>/full-py313.log
+```
+
+Wait for the process to exit before reading a summary; a log without the final
+`N passed` line is an incomplete run.
+
+## Commit and PR body (the orchestrator pushes)
+
+Your role cannot push. Where your task text says "push" or "open a PR", do
+this instead:
 
 ```sh
 git add <exact files>
 git commit -m "<type>(<area>): <what changed>"
-git push -u origin <your branch>
-gh pr create --base <base named in your prompt, default main> \
-  --title "<concise title>" --body-file <path to a body you wrote>
 ```
 
-The PR body states: what changed and why, the roadmap items it advances, the
-exact validation summary lines for both Python versions, packaging/smoke
-results, known limits and anything deliberately left out. Do not merge, do
-not enable auto-merge, do not tag. After opening the PR, run
-`gh pr checks <number> --watch` once; if CI fails, fix and push again.
+Then write `docs/handoffs/2026-09-12-<task-slug>/pr-body.md` (commit it too)
+stating: what changed and why, the roadmap items it advances, the exact
+validation summary lines for both Python versions, packaging/smoke results,
+known limits and anything deliberately left out. The orchestrator pushes your
+branch, opens the PR with that body against the base named in your prompt,
+and inspects CI. Do not merge, tag or release anything.
 
 ## Report back
 
 Your final message lists: files changed (path and what changed), tests added
 (names), the exact pytest summary lines for both versions, Ruff/build/smoke
-results, the PR URL, CI status, and anything left undone or deviated from the
-task with the reason. Report blockers instead of working around them.
+results, the commit hashes on your branch, and anything left undone or
+deviated from the task with the reason. Report blockers instead of working
+around them.
