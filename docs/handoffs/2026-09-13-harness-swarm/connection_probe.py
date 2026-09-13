@@ -1,4 +1,5 @@
-import asyncio, json
+import asyncio
+import json
 from pathlib import Path
 from harness.cli import build_kernel
 from harness.mcp_config import load_mcp_file
