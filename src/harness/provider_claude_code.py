@@ -97,6 +97,13 @@ def _kill_process_group(proc: "asyncio.subprocess.Process") -> None:
 class ClaudeCodeProvider:
     execution_kind = "agent"
 
+    def agent_runtime_info(self, model: ModelId):
+        from harness.agent_runtime import AgentRuntimeInfo
+        # --strict-mcp-config plus --disallowedTools naming every CC built-in
+        # (see DISALLOWED_BUILTINS) makes the harness registry the exclusive
+        # tool surface: no native tool runs outside it.
+        return AgentRuntimeInfo(runtime="claude-code", native_tools="none")
+
     def __init__(self, *, binary: str = "claude", timeout_s: float | None = None) -> None:
         self.binary = binary
         self.timeout_s = timeout_s

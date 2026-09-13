@@ -13,6 +13,8 @@ from harness.hooks import Allow, Block, HookBus, ProposedModelCall, Rewrite
 from harness.log import read_session
 from harness.messages import Message
 from harness.provider import StreamStop, TextDelta, ThinkingDelta, Usage, UsageReport
+from harness.provider_antigravity import AntigravityProvider
+from harness.provider_claude_code import ClaudeCodeProvider
 from harness.provider_codex import CodexProvider
 from harness.session import Session
 from harness.types import ModelId, SessionId
@@ -27,9 +29,35 @@ class ScriptedCodex(ExternalAgent, CodexProvider):
         return super().complete(**kwargs)
 
 
-@pytest.mark.parametrize("kind", ["direct", "codex"])
+class ScriptedClaudeCode(ExternalAgent, ClaudeCodeProvider):
+
+    def complete(self, **kwargs):
+        self.received = kwargs
+        return super().complete(**kwargs)
+
+
+class ScriptedAntigravity(ExternalAgent, AntigravityProvider):
+
+    def complete(self, **kwargs):
+        self.received = kwargs
+        return super().complete(**kwargs)
+
+
+# Same scripted-chunk fake used per adapter, plus the runtime name each
+# adapter now declares through bind_agent_runtime via agent_runtime_info.
+_BACKEND_FOR_KIND = {
+    "direct": ScriptedCodex, "codex": ScriptedCodex,
+    "claude-code": ScriptedClaudeCode, "antigravity": ScriptedAntigravity,
+}
+_RUNTIME_FOR_KIND = {
+    "direct": "codex", "codex": "codex",
+    "claude-code": "claude-code", "antigravity": "antigravity",
+}
+
+
+@pytest.mark.parametrize("kind", ["direct", "codex", "claude-code", "antigravity"])
 async def test_interface_uses_typed_runtime_and_replays_one_response(tmp_path, monkeypatch, kind):
-    backend = ScriptedCodex([ThinkingDelta("reasoning", signature="signature"), TextDelta("done"),
+    backend = _BACKEND_FOR_KIND[kind]([ThinkingDelta("reasoning", signature="signature"), TextDelta("done"),
                              UsageReport(Usage(output_tokens=3)), StreamStop("end_turn")])
     provider = route(backend, kind, monkeypatch)
     kernel = build_kernel(base_dir=tmp_path, provider=provider, model=ModelId("external"))
@@ -44,7 +72,7 @@ async def test_interface_uses_typed_runtime_and_replays_one_response(tmp_path, m
         events = read_session(tmp_path, kernel.session.id)
         starts = [e.event for e in events if e.event.type == "agent_run_started"]
         parent, child = starts
-        assert parent.runtime == "harness" and child.runtime == "codex"
+        assert parent.runtime == "harness" and child.runtime == _RUNTIME_FOR_KIND[kind]
         assert child.parent_run_id == parent.run_id
         assert child.capabilities["qualification"] == "unverified"
         assert child.capabilities["resume"] is False
@@ -101,12 +129,13 @@ async def test_bound_runtime_cannot_bypass_policy_or_change_kind(tmp_path, monke
         assert not state.open_agent_runs and not state.open_model_intents
 
 
+@pytest.mark.parametrize("kind", ["codex", "claude-code", "antigravity"])
 @pytest.mark.parametrize("mode", ["bytes", "cancel", "deadline"])
-async def test_external_run_closes_before_terminal(tmp_path, monkeypatch, mode):
-    backend = ScriptedCodex([TextDelta("x" * 2000)], hang=mode != "bytes")
+async def test_external_run_closes_before_terminal(tmp_path, monkeypatch, mode, kind):
+    backend = _BACKEND_FOR_KIND[kind]([TextDelta("x" * 2000)], hang=mode != "bytes")
     with Session(tmp_path, SessionId("bounded")) as session:
         session.start()
-        runtime = bind_agent_runtime(backend, ModelId("codex/default"), make_dispatcher(session))
+        runtime = bind_agent_runtime(backend, ModelId(f"{kind}/default"), make_dispatcher(session))
         append = session.append
 
         def checked_append(event):
@@ -279,7 +308,8 @@ async def test_cancel_reaps_codex_process_before_task_terminal(tmp_path, monkeyp
         assert result.status == "cancelled" and not state.open_agent_runs
 
 
-def test_resume_aborts_external_run_and_tools_without_fabricating_conversation(tmp_path):
+@pytest.mark.parametrize("runtime", ["codex", "claude-code", "antigravity"])
+def test_resume_aborts_external_run_and_tools_without_fabricating_conversation(tmp_path, runtime):
     from harness.events import AgentRunStarted, ToolCallProposed, UserMessage
     from harness.fold import resume_repairs
     from harness.types import CallId, ToolName
@@ -287,7 +317,7 @@ def test_resume_aborts_external_run_and_tools_without_fabricating_conversation(t
     with Session(tmp_path, SessionId("resume")) as session:
         session.start()
         session.append(UserMessage(text="work"))
-        session.append(AgentRunStarted(task_id="task", run_id="run", runtime="codex",
+        session.append(AgentRunStarted(task_id="task", run_id="run", runtime=runtime,
                                        acceptance_criteria=("external check",)))
         session.append(ToolCallProposed(call_id=CallId("tool"), tool=ToolName("write_file"),
                                         args={}, purpose="agent-task", agent_run_id="run"))
@@ -298,3 +328,264 @@ def test_resume_aborts_external_run_and_tools_without_fabricating_conversation(t
         assert not state.open_agent_runs and not state.open_intents
         assert state.agent_runs["run"].status == "aborted"
         assert state.agent_runs["run"].remaining_criteria == ("external check",)
+
+
+@pytest.mark.parametrize("blocked, cancel_during_tool", [(False, False), (True, False), (False, True)])
+async def test_claude_code_process_calls_scoped_mcp_tools_and_preserves_transcript(
+    tmp_path, monkeypatch, blocked, cancel_during_tool,
+):
+    from harness.hooks import ProposedToolCall
+    from harness.tools import ToolSpec
+    from harness.types import ToolName
+    from tests.test_provider_claude_code import _fake_claude
+
+    # This is a real child process and real MCP HTTP request; no subscription use.
+    script = r"""
+import asyncio, json, sys
+from mcp import ClientSession
+from mcp.client.streamable_http import streamablehttp_client
+cfg_path = sys.argv[sys.argv.index("--mcp-config") + 1]
+cfg = json.load(open(cfg_path))
+url = cfg["mcpServers"]["harness"]["url"]
+if not url.endswith("/"):
+    url += "/"
+sys.stdin.read()
+async def run():
+    async with streamablehttp_client(url) as (read, write, _):
+        async with ClientSession(read, write) as client:
+            await client.initialize()
+            result = await client.call_tool("echo", {"text": "from child"})
+            text = "denied" if result.isError else result.content[0].text
+    print(json.dumps({"type": "assistant", "message": {"content": [
+        {"type": "text", "text": text}]}, "session_id": "s-1"}), flush=True)
+    print(json.dumps({"type": "result", "subtype": "success", "is_error": False,
+        "num_turns": 1, "stop_reason": "end_turn", "result": text, "session_id": "s-1",
+        "usage": {"input_tokens": 1, "output_tokens": 2}}), flush=True)
+asyncio.run(run())
+"""
+    binary = _fake_claude(tmp_path, script)
+    backend = ClaudeCodeProvider(binary=binary)
+    kernel = build_kernel(base_dir=tmp_path / "sessions", provider=backend,
+                          model=ModelId("claude-code/default"))
+    invoked = []
+    entered, cleaned = asyncio.Event(), asyncio.Event()
+
+    class Echo:
+        spec = ToolSpec(name=ToolName("echo"), description="Echo", parameters={"type": "object"})
+
+        async def __call__(self, args):
+            try:
+                invoked.append(args)
+                entered.set()
+                if cancel_during_tool:
+                    await asyncio.Event().wait()
+                return "echoed: " + args["text"]
+            finally:
+                cleaned.set()
+
+    kernel.registry.register(Echo())
+    kernel.loop.hooks.register_dispatch("test-policy", lambda action:
+        Block(reason="blocked") if blocked and isinstance(action, ProposedToolCall) else Allow())
+    try:
+        await kernel.loop.start()
+        append = kernel.session.append
+
+        def checked_append(event):
+            if cancel_during_tool and event.type == "agent_run_finished":
+                assert cleaned.is_set(), "the tool must settle before either tasks terminal fact"
+            return append(event)
+
+        monkeypatch.setattr(kernel.session, "append", checked_append)
+        work = asyncio.create_task(kernel.loop.run_task(AgentTask(prompt="use echo")))
+        if cancel_during_tool:
+            try:
+                await asyncio.wait_for(entered.wait(), 3)
+            finally:
+                work.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await asyncio.wait_for(work, 2)
+        else:
+            result = await work
+            assert result.read_text(kernel.session.blobs) == ("denied" if blocked else "echoed: from child")
+        assert len(invoked) == (0 if blocked else 1)
+        events = read_session(tmp_path / "sessions", kernel.session.id)
+        child = next(e.event for e in events
+                    if e.event.type == "agent_run_started" and e.event.runtime == "claude-code")
+        tool = next(e.event for e in events if e.event.type == "tool_call_proposed")
+        assert tool.purpose == "agent-task" and tool.agent_run_id == child.run_id
+        assert tool.task_id == child.task_id
+        terminal_type = "tool_call_cancelled" if cancel_during_tool else "tool_call_completed"
+        assert any(e.event.type == terminal_type for e in events)
+        assert kernel.loop.history == fold(events).messages
+        assert len(kernel.loop.history) == (1 if cancel_during_tool else 2)
+        assert not fold(events).open_agent_runs and not fold(events).open_intents
+    finally:
+        kernel.session.close()
+
+
+@pytest.mark.parametrize("blocked, cancel_during_tool", [(False, False), (True, False), (False, True)])
+async def test_antigravity_process_calls_scoped_mcp_tools_and_preserves_transcript(
+    tmp_path, monkeypatch, blocked, cancel_during_tool,
+):
+    from harness.hooks import ProposedToolCall
+    from harness.tools import ToolSpec
+    from harness.types import ToolName
+    from tests.test_provider_antigravity import _fake_agy
+
+    # This is a real child process and real MCP HTTP request; no subscription use.
+    # agy has no dotted-config-override flag: the harness url reaches the turn
+    # through the same scratch HOME shared by the prior `agy mcp add` call.
+    script = r"""
+import asyncio, json, os, sys
+
+if len(sys.argv) > 1 and sys.argv[1] == "mcp":
+    url = sys.argv[sys.argv.index("harness") + 1]
+    open(os.path.join(os.environ["HOME"], "mcp_url.txt"), "w").write(url)
+    sys.exit(0)
+
+_home = os.environ["HOME"]
+_url = open(os.path.join(_home, "mcp_url.txt")).read()
+if not _url.endswith("/"):
+    _url += "/"
+sys.stdin.read()
+
+from mcp import ClientSession
+from mcp.client.streamable_http import streamablehttp_client
+
+async def run():
+    async with streamablehttp_client(_url) as (read, write, _):
+        async with ClientSession(read, write) as client:
+            await client.initialize()
+            result = await client.call_tool("echo", {"text": "from child"})
+            text = "denied" if result.isError else result.content[0].text
+    print(json.dumps({"event": "step_update", "step_update": {
+        "step_type": "agent_response", "text_delta": text}}), flush=True)
+    print(json.dumps({"event": "result", "result": {"status": "SUCCESS",
+        "usage": {"input_tokens": 1, "output_tokens": 2}}}), flush=True)
+
+asyncio.run(run())
+"""
+    monkeypatch.setenv("HOME", str(tmp_path / "empty-home"))
+    binary = _fake_agy(tmp_path, script)
+    backend = AntigravityProvider(binary=binary)
+    kernel = build_kernel(base_dir=tmp_path / "sessions", provider=backend,
+                          model=ModelId("antigravity/default"))
+    invoked = []
+    entered, cleaned = asyncio.Event(), asyncio.Event()
+
+    class Echo:
+        spec = ToolSpec(name=ToolName("echo"), description="Echo", parameters={"type": "object"})
+
+        async def __call__(self, args):
+            try:
+                invoked.append(args)
+                entered.set()
+                if cancel_during_tool:
+                    await asyncio.Event().wait()
+                return "echoed: " + args["text"]
+            finally:
+                cleaned.set()
+
+    kernel.registry.register(Echo())
+    kernel.loop.hooks.register_dispatch("test-policy", lambda action:
+        Block(reason="blocked") if blocked and isinstance(action, ProposedToolCall) else Allow())
+    try:
+        await kernel.loop.start()
+        append = kernel.session.append
+
+        def checked_append(event):
+            if cancel_during_tool and event.type == "agent_run_finished":
+                assert cleaned.is_set(), "the tool must settle before either tasks terminal fact"
+            return append(event)
+
+        monkeypatch.setattr(kernel.session, "append", checked_append)
+        work = asyncio.create_task(kernel.loop.run_task(AgentTask(prompt="use echo")))
+        if cancel_during_tool:
+            try:
+                await asyncio.wait_for(entered.wait(), 3)
+            finally:
+                work.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await asyncio.wait_for(work, 2)
+        else:
+            result = await work
+            assert result.read_text(kernel.session.blobs) == ("denied" if blocked else "echoed: from child")
+        assert len(invoked) == (0 if blocked else 1)
+        events = read_session(tmp_path / "sessions", kernel.session.id)
+        child = next(e.event for e in events
+                    if e.event.type == "agent_run_started" and e.event.runtime == "antigravity")
+        tool = next(e.event for e in events if e.event.type == "tool_call_proposed")
+        assert tool.purpose == "agent-task" and tool.agent_run_id == child.run_id
+        assert tool.task_id == child.task_id
+        terminal_type = "tool_call_cancelled" if cancel_during_tool else "tool_call_completed"
+        assert any(e.event.type == terminal_type for e in events)
+        assert kernel.loop.history == fold(events).messages
+        assert len(kernel.loop.history) == (1 if cancel_during_tool else 2)
+        assert not fold(events).open_agent_runs and not fold(events).open_intents
+    finally:
+        kernel.session.close()
+
+
+async def test_cancel_reaps_claude_code_process_before_task_terminal(tmp_path, monkeypatch):
+    import os
+
+    from tests.test_provider_claude_code import ONE_DELTA_THEN_SLEEP, _fake_claude
+    from tests.test_provider_codex import _read_pid
+
+    binary = _fake_claude(tmp_path, ONE_DELTA_THEN_SLEEP)
+    with Session(tmp_path / "sessions", SessionId("cancelled")) as session:
+        session.start()
+        runtime = bind_agent_runtime(ClaudeCodeProvider(binary=binary), ModelId("claude-code/default"),
+                                     make_dispatcher(session))
+        work = asyncio.create_task(runtime.run_task(AgentTask(prompt="wait")))
+        try:
+            pid = await _read_pid(binary + ".pid")
+            append = session.append
+
+            def checked_append(event):
+                if event.type == "agent_run_finished":
+                    with pytest.raises(ProcessLookupError):
+                        os.kill(pid, 0)
+                return append(event)
+
+            monkeypatch.setattr(session, "append", checked_append)
+        finally:
+            work.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await work
+        state = fold(read_session(tmp_path / "sessions", session.id))
+        result, = state.agent_runs.values()
+        assert result.status == "cancelled" and not state.open_agent_runs
+
+
+async def test_cancel_reaps_antigravity_process_before_task_terminal(tmp_path, monkeypatch):
+    import os
+
+    from tests.test_provider_antigravity import SLEEPER, _fake_agy
+    from tests.test_provider_codex import _read_pid
+
+    monkeypatch.setenv("HOME", str(tmp_path / "empty-home"))
+    binary = _fake_agy(tmp_path, SLEEPER)
+    with Session(tmp_path / "sessions", SessionId("cancelled")) as session:
+        session.start()
+        runtime = bind_agent_runtime(AntigravityProvider(binary=binary), ModelId("antigravity/default"),
+                                     make_dispatcher(session))
+        work = asyncio.create_task(runtime.run_task(AgentTask(prompt="wait")))
+        try:
+            pid = await _read_pid(binary + ".pid")
+            append = session.append
+
+            def checked_append(event):
+                if event.type == "agent_run_finished":
+                    with pytest.raises(ProcessLookupError):
+                        os.kill(pid, 0)
+                return append(event)
+
+            monkeypatch.setattr(session, "append", checked_append)
+        finally:
+            work.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await work
+        state = fold(read_session(tmp_path / "sessions", session.id))
+        result, = state.agent_runs.values()
+        assert result.status == "cancelled" and not state.open_agent_runs

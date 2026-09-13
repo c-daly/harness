@@ -428,10 +428,12 @@ class CatalogProvider:
             resolved = self.catalog.resolve(str(model))
         except UnknownAliasError:
             return None
-        if resolved.backend == "codex" and self.codex is not None:
-            describe = getattr(self.codex, "agent_runtime_info", None)
-            return describe(ModelId(resolved.route)) if describe is not None else None
-        return None
+        backend = {"claude-code": self.claude_code, "codex": self.codex,
+                   "antigravity": self.antigravity}.get(resolved.backend)
+        if backend is None:
+            return None
+        describe = getattr(backend, "agent_runtime_info", None)
+        return describe(ModelId(resolved.route)) if describe is not None else None
 
     def execution_kind(self, model: ModelId) -> str:
         try:
