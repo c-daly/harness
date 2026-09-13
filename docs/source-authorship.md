@@ -74,7 +74,10 @@ count as improvement.
 Optional `limits` use the core task schema. This author allows one inference
 request, at most 256 KiB input (including schema/context), 128 KiB response,
 16,384 output tokens and 16,384 stream chunks. The default output token budget
-is 8,192. Smaller configured task/context limits still apply. Time budgets are
+is 8,192. A partial `limits` object overrides only the fields it names; every
+omitted field keeps its author default shown above, and an omitted
+`timeout_seconds` keeps ordinary session and task timeout behavior. Smaller
+configured task/context limits still apply. Time budgets are
 explicit execution controls, not hang detection. A large file may exceed the
 model's context or response capacity even within these byte limits; refusal or
 incomplete output does not create a candidate. Provider retry policy remains

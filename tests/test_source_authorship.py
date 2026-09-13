@@ -413,3 +413,31 @@ async def test_authoring_controls_are_visible_in_terminal(tmp_path):
         await submit(app, pilot, "/improvements")
         text = " ".join(screen_text(app).split())
         assert "source-author SPEC.json" in text and "source-finalize AUTHOR_ID" in text
+
+
+@pytest.mark.parametrize("limits", [{"timeout_seconds": 90}, {"max_output_tokens": 1024}, {"max_input_bytes": 8192}])
+async def test_partial_limit_overrides_keep_author_defaults_in_the_shared_command(tmp_path, revisions, limits):
+    from harness.improvement_cli import perform
+    provider = Author()
+    kernel = await setup(tmp_path, provider)
+    data = spec(revisions).model_dump() | {"limits": limits}
+    filename = tmp_path / "partial-limits.json"
+    filename.write_text(json.dumps(data))
+    with kernel.session:
+        assert "Source candidate" in await perform(kernel, ["source-author", str(filename)])
+        request = provider.requests[0]
+        assert request.max_output_tokens == limits.get("max_output_tokens", 8192)
+        assert request.max_input_bytes == limits.get("max_input_bytes", 256 * 1024)
+        assert request.max_output_bytes == 128 * 1024
+
+
+def test_partial_limit_override_direct_spec_keeps_author_defaults(revisions):
+    """Direct SourceAuthorSpec.model_validate, no kernel/CLI round trip."""
+    result = spec(revisions, limits={"max_output_tokens": 1024})
+    limits = result.limits
+    assert limits.max_iterations == 1
+    assert limits.max_input_bytes == 256 * 1024
+    assert limits.max_response_bytes == 128 * 1024
+    assert limits.max_output_tokens == 1024
+    assert limits.max_stream_chunks == 16384
+    assert "timeout_seconds" not in limits.model_fields_set

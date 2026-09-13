@@ -9,7 +9,7 @@ import json
 from pathlib import Path
 from uuid import uuid4
 
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 
 from harness.agent import AgentOutput, AgentTask, TaskLimits, bound_task, execute_task
 from harness.blobs import BlobRef
@@ -25,6 +25,10 @@ from harness.source_improvement import (
 )
 
 
+_AUTHOR_LIMIT_DEFAULTS = dict(max_iterations=1, max_input_bytes=256 * 1024, max_response_bytes=128 * 1024,
+                               max_output_tokens=8192, max_stream_chunks=16384)
+
+
 class SourceAuthorSpec(_Data):
     repository: str | None = Field(default=None, min_length=1, max_length=4096)
     incumbent_revision: str | None = Field(default=None, min_length=1, max_length=256)
@@ -33,9 +37,21 @@ class SourceAuthorSpec(_Data):
     editable_paths: tuple[str, ...] = Field(min_length=1, max_length=32)
     evidence_ids: tuple[str, ...] = Field(min_length=1, max_length=32)
     suite: SourceSuite
-    limits: TaskLimits = Field(default_factory=lambda: TaskLimits(
-        max_iterations=1, max_input_bytes=256 * 1024, max_response_bytes=128 * 1024,
-        max_output_tokens=8192, max_stream_chunks=16384))
+    limits: TaskLimits = Field(default_factory=lambda: TaskLimits(**_AUTHOR_LIMIT_DEFAULTS))
+
+    @field_validator("limits", mode="before")
+    @classmethod
+    def _partial_limits_keep_author_defaults(cls, value):
+        # A partial limits mapping overrides only the fields it names; the
+        # rest keep the author defaults above, not the generic TaskLimits
+        # defaults (20 iterations, 4 MiB input, 1 MiB response, 65536
+        # chunks), which the cap check below would then refuse. An omitted
+        # timeout_seconds stays omitted so session and task timeout
+        # semantics still apply; an explicit timeout_seconds passes
+        # through unchanged.
+        if isinstance(value, dict):
+            return _AUTHOR_LIMIT_DEFAULTS | value
+        return value
 
     @model_validator(mode="after")
     def scope(self):

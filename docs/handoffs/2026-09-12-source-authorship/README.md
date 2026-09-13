@@ -43,7 +43,19 @@ by the operator-authored measurement driver; each selection was rolled back.
 The [retained report](report.json) includes both runs, original report hashes,
 frozen specifications, requests, responses where available, usage attempts,
 paired check outputs, launch/rollback records and all management-source/driver
-hashes. All 93 current core file hashes and the final driver match run v2.
+hashes. Run v2 recorded 93 `src/harness/*.py` hashes plus the measurement
+driver hash (94 total) and matched the source when it ran. Run v1 recorded the
+same 94-file set but differs from run v2 on four files
+(`scripts/measure_source_authorship.py`, `src/harness/cli.py`,
+`src/harness/source_authorship.py`, `src/harness/tui.py`), reflecting iteration
+between the two runs. The final committed `src/harness/source_authorship.py`
+postdates run v2: the partial-limits merge fix in this handoff changed it after
+run v2 completed, so its current hash
+(`9ff2df58f9ec591573198fd5cf052ab71df81c2c3fc9e17eb32e6b6237881ce4`) no longer
+matches the hash recorded by run v2
+(`4e16880886ce4cf089c7e44dad53a81e5c2180ed8ebff3cfc5bab79e3ab92f3c`); every
+other current core-file hash still matches run v2. Neither run measured the
+source authorship code as finally committed here.
 The initial driver used `authorship=not_started` for some attempts that had
 actually failed; `normalized_authorship` derives their proper status from the
 retained agent terminal records without changing the original reports.
