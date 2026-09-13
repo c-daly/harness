@@ -1,7 +1,6 @@
 import asyncio
 import hashlib
-import json
-from dataclasses import is_dataclass
+
 
 import pytest
 
@@ -15,7 +14,8 @@ from harness.completion import (
     CompletionReview,
     CompletionService,
 )
-from harness.events import CompletionChecked, CompletionReviewRecorded
+from harness.events import CompletionReviewRecorded
+from harness.log import read_session
 from harness.execution import ExecutionLimits
 from harness.permissions import PermissionEngine, PermissionRule, RuleSet
 from harness.provider import FakeProvider, text_turn, tool_call_turn
@@ -104,7 +104,7 @@ async def test_review_continue_records_and_allows_progress(tmp_path):
         )
         assert state.status == "checks_passed" and state.attempts == 2
         # A review event must be recorded for the first settled attempt
-        events = [e.event for e in kernel.session._read()]  # type: ignore[attr-defined]
+        events = [e.event for e in read_session(kernel.session.base, kernel.session.id)]
         reviews = [e for e in events if isinstance(e, CompletionReviewRecorded)]
         assert len(reviews) == 1 and reviews[0].decision == "continue" and reviews[0].reason
         # Ensure reviewer saw real observations and outcome
@@ -144,10 +144,10 @@ async def test_review_pause_and_resume_requires_fresh_check(tmp_path):
         # Resume must recheck before continuing (no extra attempt yet)
         resumed = await service.run(plan, reviewer=reviewer, **callbacks)
         assert resumed.status == "checks_passed" and resumed.attempts == 3
-        # Two reviews: one pause, one continue
-        events = [e.event for e in kernel.session._read()]  # type: ignore[attr-defined]
+        # Reviews occur after each unresolved settled attempt: pause, then continue(s) until resolved
+        events = [e.event for e in read_session(kernel.session.base, kernel.session.id)]
         reviews = [e for e in events if isinstance(e, CompletionReviewRecorded)]
-        assert [r.decision for r in reviews] == ["pause", "continue"]
+        assert [r.decision for r in reviews] == ["pause", "continue", "continue"]
     finally:
         kernel.session.close()
 
@@ -168,16 +168,23 @@ async def test_review_invalid_or_error_blocks_without_new_work(tmp_path):
             return CompletionReview(decision="bad", reason="oops")  # type: ignore[arg-type]
 
         service = CompletionService(kernel.session)
-        state = await service.run(plan, execute=execute, reviewer=bad_reviewer, **callbacks)
+        state = await service.run(plan, reviewer=bad_reviewer, **(callbacks | {"execute": execute}))
         assert state.status == "blocked" and "invalid" in state.reason
-        # Error in reviewer
+        # Error in reviewer must block independently (use a fresh session)
         async def exploding(prev_obs, curr_obs, outcome):
             raise RuntimeError("review failed")
 
-        state2 = await service.run(plan, execute=execute, reviewer=exploding, **callbacks)
-        assert state2.status == "blocked" and "review failed" in state2.reason
-        # No further attempts started in either case (only the first baseline check ran)
-        assert provider.calls == []
+        kernel2, provider2, workspace2 = setup(tmp_path, [text_turn("no change")])
+        await kernel2.loop.start()
+        try:
+            plan2, callbacks2 = binding(kernel2, workspace2)
+            service2 = CompletionService(kernel2.session)
+            state2 = await service2.run(plan2, reviewer=exploding, **(callbacks2 | {"execute": execute}))
+            assert state2.status == "blocked" and "review failed" in state2.reason
+            # No further attempts started in either case (only the first baseline check ran)
+            assert provider.calls == [] and provider2.calls == []
+        finally:
+            kernel2.session.close()
     finally:
         kernel.session.close()
 
@@ -194,17 +201,18 @@ def test_review_event_ordering_and_projection_rules(tmp_path):
     from harness.session import Session
 
     base = tmp_path / "journal"
-    with EventLogWriter(base, ModelId("s1")) as w:  # type: ignore[arg-type]
-        sess = Session(w.base, w.session_id)
+    sid = ModelId("s1")  # reuse ModelId for test identity convenience
+    with EventLogWriter(base, sid) as w:  # type: ignore[arg-type]
+        sess = Session(base, sid, _writer=w)  # type: ignore[arg-type]
         plan = CompletionPlan(
             task="t",
             objective="o",
             configuration=sess.blobs.put(b"cfg"),
             checks=(CompletionCheck(id="c", description="d"),),
         )
-        w.append(CompletionConfigured(plan=plan, deadline=None, workspace_sha256="0" * 64))
-        w.append(CompletionAttemptStarted(attempt=1))
-        w.append(
+        sess.append(CompletionConfigured(plan=plan, deadline=None, workspace_sha256="0" * 64))
+        sess.append(CompletionAttemptStarted(attempt=1))
+        sess.append(
             CompletionAttemptFinished(
                 attempt=1,
                 outcome=DelegationResult(status="completed", text="ok"),
@@ -212,8 +220,8 @@ def test_review_event_ordering_and_projection_rules(tmp_path):
             )
         )
         # Insert review without a fresh CompletionChecked
-        w.append(CompletionReviewRecorded(attempt=1, decision="continue", reason="r"))
-        w.append(CompletionStopped(status="blocked", reason="x"))
+        sess.append(CompletionReviewRecorded(attempt=1, decision="continue", reason="r"))
+        sess.append(CompletionStopped(status="blocked", reason="x"))
     from harness.completion import project_completion
 
     with pytest.raises(ValueError):

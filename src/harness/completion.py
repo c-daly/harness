@@ -10,7 +10,7 @@ import asyncio
 import json
 import time
 import contextlib
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, is_dataclass
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -72,6 +72,7 @@ class CompletionState:
     pending: bool = False
     outcome: DelegationResult | None = None
     observation: CompletionObservation | None = None
+    prior_observation: CompletionObservation | None = None
     workspace_sha256: str | None = None
     status: str = "new"
     reason: str = ""
@@ -105,6 +106,8 @@ def project_completion(envelopes):
         elif isinstance(e, CompletionAttemptStarted):
             if state.plan is None or state.pending or e.attempt != state.attempts + 1:
                 raise ValueError("invalid completion attempt order")
+            # Preserve the last observation as the prior window for review.
+            state.prior_observation = state.observation
             state.attempts, state.pending, state.status = e.attempt, True, "working"
             state.observation, state.outcome = None, None
         elif isinstance(e, CompletionAttemptFinished):
@@ -122,14 +125,13 @@ def project_completion(envelopes):
             state.status = "checked"
             state.history.append(e)
         elif isinstance(e, CompletionReviewRecorded):
-            # Must follow a settled attempt and a fresh check, and at most one review per attempt.
+            # Must follow a settled attempt and a fresh check.
             if state.plan is None or state.pending or state.attempts < 1 or state.status != "checked":
                 raise ValueError("completion review requires a settled attempt after a fresh check")
-            if any(isinstance(h.event if hasattr(h, 'event') else h, CompletionReviewRecorded) and (h.event.attempt if hasattr(h, 'event') else h.attempt) == e.attempt for h in state.history):
-                raise ValueError("duplicate completion review for this attempt")
             if e.attempt != state.attempts:
                 raise ValueError("completion review must match the last settled attempt")
             state.history.append(e)
+            state.status = "reviewed"
         elif isinstance(e, CompletionStopped):
             if state.plan is None:
                 raise ValueError("completion stop has no plan")
@@ -216,9 +218,9 @@ class CompletionService:
         if state.status in {"cancelled", "timed_out", "blocked", "exhausted"}:
             return state
         
-        # Track review inputs between settled attempts.
-        prev_observation: CompletionObservation | None = None
-        last_outcome: DelegationResult | None = None
+        # Track review inputs between settled attempts. Seed from state for resumes.
+        prev_observation: CompletionObservation | None = state.prior_observation
+        last_outcome: DelegationResult | None = state.outcome
 
         def stop(status, reason):
             self._emit(CompletionStopped(status=status, reason=reason[:2048]))
@@ -250,21 +252,41 @@ class CompletionService:
                     # report or prior pass substitutes for this host observation.
                     before = await identify()
                     observed = CompletionObservation.model_validate((await verify()).model_dump())
-                    _validate_observation(plan, observed)
+                    try:
+                        _validate_observation(plan, observed)
+                    except Exception as exc:
+                        # Record and re-raise schema/validation faults from the verifier
+                        self._emit(
+                            CompletionStopped(
+                                status="blocked",
+                                reason=(f"completion failed: {type(exc).__name__}: {exc}")[:2048],
+                            )
+                        )
+                        raise
                     if before != observed.workspace_sha256 or before != await identify():
                         return stop("blocked", "workspace changed during independent verification")
                     self._emit(CompletionChecked(attempt=state.attempts, observation=observed))
+                    state = self.state()  # refresh to capture checked status and any persisted fields
                     # Host progress review happens between settled attempts after a fresh check.
                     if reviewer is not None and state.attempts > 0:
+                        # Handle verifier outcomes before review for unresolved work.
+                        if any(c.status == "error" for c in state.observation.checks):
+                            return stop("blocked", "independent verifier could not establish a result")
+                        if all(c.status == "passed" for c in state.observation.checks):
+                            return stop(
+                                "checks_passed", "all declared checks passed on the recorded workspace"
+                            )
+                        if plan.max_attempts is not None and state.attempts >= plan.max_attempts:
+                            return stop("exhausted", "attempt allowance reached with unresolved checks")
                         # Only call reviewer after a settled attempt and a fresh check.
                         try:
                             review = await reviewer(
-                                prev_observation, observed, last_outcome
+                                prev_observation, state.observation, last_outcome
                             )
                         except Exception as exc:  # block on review errors
                             return stop("blocked", f"review failed: {type(exc).__name__}: {exc}")
                         # Validate typed review and bounded reason
-                        if not isinstance(review, CompletionReview):
+                        if not isinstance(review, CompletionReview) or not is_dataclass(review):
                             return stop("blocked", "invalid review decision")
                         if review.decision not in {"continue", "pause", "block"}:
                             return stop("blocked", "invalid review decision")
@@ -332,9 +354,6 @@ class CompletionService:
                         )
         except TimeoutError:
             return stop("timed_out", "recorded completion deadline reached")
-        except ValueError:
-            # Preserve previous behavior: verifier/projection faults raise to caller
-            raise
         except asyncio.CancelledError:
             stop("cancelled", "operator cancellation; partial effects retained")
             raise

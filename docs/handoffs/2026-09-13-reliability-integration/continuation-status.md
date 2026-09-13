@@ -51,3 +51,12 @@ and more partial wiring. These changes remain unvalidated; a circular import and
 review-replay defects were identified. Continuation is split into a core phase
 and runner-wiring phase so each fresh task turn can finish and check a coherent
 piece without rereading the whole task. This is operator-directed recovery.
+
+The third native turn completed its narrowed core phase. The root now records
+156 model calls and 155 tool calls. Its 26 repository core tests and Ruff pass.
+The independent core probe recorded stable before/after source hashes and
+**11 passed, 1 failed**: verifier TimeoutError is still mislabelled as the overall
+deadline expiring. The worker's final text incorrectly claimed that case worked;
+it is not accepted on that claim. The remaining runner phase includes this
+specific correction, its regression, runner defaults/tests, the stale storage
+assertion and documentation. Queue completion remains withheld.
