@@ -156,6 +156,10 @@ The default automatic-adoption policy remains empty.
 
 This increment implements preparation, paired execution, inspection and recovery.
 [Supervised source promotion and rollback](source-promotion.md) now provide
-explicit selection and launch at a new-process boundary. Core-directed patch
-authorship and stronger runtime isolation remain subsequent M5 work. No live model
+explicit selection and launch at a new-process boundary. Stronger runtime
+isolation remains subsequent M5 work. No live model
 quality or daily-use gate is established by these controlled source checks.
+
+[Bounded source authoring](source-authorship.md) now creates a candidate from an
+operator-scoped inference task and freezes its checks before the call. It also
+supports authored incumbent snapshots and recovery from completed responses.

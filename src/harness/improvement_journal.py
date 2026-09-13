@@ -3,9 +3,9 @@
 from copy import deepcopy
 from pathlib import Path
 
-from harness.events import EvaluationRunStarted, EvaluationRunFinished, ImprovementRecorded
+from harness.events import AgentRunStarted, AgentRunFinished, EvaluationRunStarted, EvaluationRunFinished, ImprovementRecorded
 from harness.improvement import (
-    Candidate, EvaluationPlan, Evidence, ExperimentResult, ImprovementRecord, ImprovementState, PromptChange, SourceChange,
+    Candidate, EvaluationPlan, Evidence, ExperimentResult, ImprovementRecord, ImprovementState, PromptChange, SourceChange, SourceAuthoring,
 )
 from harness.log import read_session
 from harness.session import Session
@@ -21,6 +21,11 @@ def read_improvements(base: Path, session_id: SessionId) -> ImprovementState:
             state.runs[envelope.event.run_id] = "running"
         elif isinstance(envelope.event, EvaluationRunFinished):
             state.runs[envelope.event.run_id] = envelope.event.status
+        elif isinstance(envelope.event, AgentRunStarted) and envelope.event.runtime == "resident-source-author":
+            state.source_author_runs[envelope.event.task_id] = "running"
+        elif isinstance(envelope.event, AgentRunFinished) and envelope.event.result.task_id in state.source_author_runs:
+            state.source_author_runs[envelope.event.result.task_id] = envelope.event.result.status
+            state.source_author_results[envelope.event.result.task_id] = envelope.event.result.model_dump(mode="json")
     return state
 
 
@@ -29,6 +34,11 @@ def render_improvements(state: ImprovementState) -> str:
     from harness.telemetry import _safe
     lines = [f"Improvements: {len(state.evidence)} evidence records, "
              f"{len(state.candidates)} candidates, {len(state.results)} experiments"]
+    for author in state.source_authorings.values():
+        candidates = [c for c in state.candidates.values() if c.source_authoring_id == author.id]
+        detail = f"candidate={candidates[0].id}" if candidates else "no candidate published; inspect before source-finalize"
+        lines.append(_safe(f"Source author {author.id}: model={author.model}; "
+            f"task={state.source_author_runs.get(author.id, 'not started')}; {detail}"))
     if len(state.evidence) > 10:
         lines.append(f"Showing the latest 10 of {len(state.evidence)} evidence records.")
     for evidence in list(state.evidence.values())[-10:]:
@@ -69,10 +79,13 @@ def inspect_improvement(state: ImprovementState, blobs, record_id: str) -> str:
     from harness.prompt_improvement import load_function_prompt
     from harness.telemetry import _safe
     record = next((records[record_id] for records in (
-        state.evidence, state.candidates, state.plans, state.results, state.prompt_changes, state.source_changes,
+        state.evidence, state.candidates, state.plans, state.results, state.prompt_changes, state.source_changes, state.source_authorings,
     ) if record_id in records), None)
     if record is None:
         raise ValueError(f"unknown improvement record: {record_id}")
+    if isinstance(record, SourceAuthoring):
+        from harness.source_authorship import inspect_authoring
+        return _safe(inspect_authoring(state, blobs, record))
     lines = [record.model_dump_json(indent=2)]
     from harness.source_improvement import is_source_patch
 
@@ -142,6 +155,12 @@ class ImprovementJournal:
                 raise ValueError("experiment run already has a terminal result")
         if isinstance(record, EvaluationPlan):
             self.session.blobs.get(record.suite)
+        if (isinstance(record, SourceAuthoring)
+                or isinstance(record, Candidate) and record.source_authoring_id is not None
+                or isinstance(record, EvaluationPlan)
+                    and updated.candidates[record.candidate_id].source_authoring_id is not None):
+            from harness.source_authorship import validate_record
+            validate_record(self.session, updated, record)
         if isinstance(record, SourceChange):
             from harness.source_promotion import validate_change
             validate_change(self.session, updated, record)

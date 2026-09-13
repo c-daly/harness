@@ -59,7 +59,7 @@ qualification. Milestone completion requires its roadmap gates, not just code.
 | M2 inference / agent contracts | In progress | Bounded inference, native tasks, Codex task binding, explicit execution kinds, nullable usage, core improvement records and recorded task-evidence checks implemented. Remaining adapters, richer artifact predicates and live capability qualification remain. |
 | M3 local core assistant | Complete for the measured CUDA profile | Qwen3-8B passes six full offline project journeys: twelve exact native file writes, changed-record answers after restart, real cancellation, normal memory, and visible task/context status. Four missing-assets/startup-exit recovery cases pass. Shipped profiles and a launcher reproduce the workflow. Actual use exposed missing startup configuration in the normal catalog; the provisioned host's local aliases are now connected. Core `/models` now inspects public GGUF metadata and registers installed weights with startup profiles, with ordinary CLI/TUI CPU smoke evidence. Runtime installation, weight downloads and broader CPU/daily-use qualification remain outside this gate. |
 | M4 bounded semantic agency | In progress | All three shadow functions now exist with explicit CLI/TUI access and evidence validation. The public 8B comparison failed context/progress gates; deterministic behavior remains. Bounded task-preserving fallback and session-tree local scheduling are implemented. Message-prompt pairing and earlier context/correction experiments use core improvement records. Supervised message-prompt proposal/evaluation/adoption/rollback is implemented. Paired context/progress candidate evaluation is implemented with explicit operator controls. Explicit external-to-native reconciliation and bounded handoff are implemented. Supervised assessment proposal/adoption/rollback is implemented per function/model. Core now filters context eligibility before inference and resolves empty eligible sets without a model call. Required normal-memory loss, busy preflight, destination loss after a write and Esc during continuation now have bounded offline terminal evidence. Truncated OpenAI-compatible streams cannot fabricate completion. Held-out quality and broader handoff qualification remain. |
-| M5 heterogeneous work / plugins | In progress | Core CLI/TUI exports a documented Markdown/JSON continuation package with task evidence, context snapshots/references, artifacts and original provenance. A controlled independent frontend continues after source-database removal. Coordination now consumes typed child outcomes, preserves partial work/disagreement/provenance, settles cancelled siblings and exports its reports; `/coordination` inspects them. Pure coordinators have separate active admission and an overall deadline while retaining shared descendant/depth limits; interrupted starts remain unconfirmed. Native file mutations retain per-path ownership through cancellation and settle before descendant terminal facts. Per-session content observations now reject stale writes/edits and support reread recovery. Escalation and ensemble selection apply frozen active-task requirements to participants and ensemble judges, with read-only evidence checks, inspection and export. Failed ensemble candidates cannot outvote passing evidence; unsuccessful synthesis and review-only work remain incomplete. Shared usage stop limits and durable root accounting now cover descendants and restart, with explicit unknown usage and CLI/TUI inspection. Core operator controls now expose task, native-request, coordination and admission limits, retain settings across resume, and propagate process deadlines without hidden adapter defaults. Live activity/wait inspection and audited operator extensions of eligible root timers are implemented. Model/tool/descendant admission counts now survive restart in a shared root ledger, with explicit holds for legacy untracked child work. Audited operator cancellation now targets individual live agent runs, preserves independent siblings and waits for cleanup. Explicit grants now extend individual live coordinator timers without changing root or member-agent caps. Direct coordinations and child references now carry explicit task ownership for export. A live local/remote/Codex journey confirms controlled interruption, restart accounting and export behavior, but fails its local artifact correctness gate. Exact pre-call token/cost reservations, live accounting qualification, broader edit ownership, live mixed-agent supervision, installed-plugin reconciliation, broader portable continuation, isolated improvement patches and rollback remain. |
+| M5 heterogeneous work / plugins | In progress | Core CLI/TUI exports a documented Markdown/JSON continuation package with task evidence, context snapshots/references, artifacts and original provenance. A controlled independent frontend continues after source-database removal. Coordination now consumes typed child outcomes, preserves partial work/disagreement/provenance, settles cancelled siblings and exports its reports; `/coordination` inspects them. Pure coordinators have separate active admission and an overall deadline while retaining shared descendant/depth limits; interrupted starts remain unconfirmed. Native file mutations retain per-path ownership through cancellation and settle before descendant terminal facts. Per-session content observations now reject stale writes/edits and support reread recovery. Escalation and ensemble selection apply frozen active-task requirements to participants and ensemble judges, with read-only evidence checks, inspection and export. Failed ensemble candidates cannot outvote passing evidence; unsuccessful synthesis and review-only work remain incomplete. Shared usage stop limits and durable root accounting now cover descendants and restart, with explicit unknown usage and CLI/TUI inspection. Core operator controls now expose task, native-request, coordination and admission limits, retain settings across resume, and propagate process deadlines without hidden adapter defaults. Live activity/wait inspection and audited operator extensions of eligible root timers are implemented. Model/tool/descendant admission counts now survive restart in a shared root ledger, with explicit holds for legacy untracked child work. Audited operator cancellation now targets individual live agent runs, preserves independent siblings and waits for cleanup. Explicit grants now extend individual live coordinator timers without changing root or member-agent caps. Direct coordinations and child references now carry explicit task ownership for export. A live local/remote/Codex journey confirms controlled interruption, restart accounting and export behavior, but fails its local artifact correctness gate. Bounded source authorship, fixed paired checks, supervised selection for new Python processes and rollback are implemented and exercised on small local-model trials. Exact pre-call token/cost reservations, live accounting qualification, broader edit ownership, live mixed-agent supervision, installed-plugin reconciliation, broader portable continuation and stronger source isolation remain. |
 | M6 daily-use qualification | Pending | Measured UI, live adapter boundaries, offline and human dogfood gates. |
 
 `4a98d3f` added durable task requirements and recorded evidence in
@@ -3290,3 +3290,54 @@ source. The [plan](2026-09-12-source-promotion.md) records the interrupted first
 runs, the controlled setup-delay reproduction, and the final timer-fixture and
 torn-journal corrections. These checks qualify the implemented contracts, not
 unattended source adoption or live daily use.
+
+## Bounded source authoring
+
+PR58 merged at `4c09803`. The [source authorship plan](2026-09-12-source-authorship.md)
+adds the missing source proposal step to the core improvement lifecycle. An
+operator freezes a committed or stored incumbent, selected evidence, editable
+text paths and paired checks before an inference model proposes a patch. The
+native author task uses existing model permissions, shared execution/usage
+accounting, local readiness, configured context retrieval, cancellation and
+durable run recovery. It does not change the selected user task or transcript.
+
+Typed authoring intents retain model, author implementation digest, scope,
+incumbent and fixed checks. Candidates link their exact completed response;
+journal publication rejects altered source, hypothesis, scope or grading.
+Interrupted candidate/plan publication can be finalized without another model
+call. Failed or unfinished runs remain ineligible. Authored snapshots are
+explicitly distinguished from committed Git revisions and can seed subsequent
+author tasks. Existing evaluation, supervised adoption, rollback and fresh-process
+launch consume these artifacts without editing the running installation.
+
+`/improvements source-author SPEC.json` and `harness improve --model ALIAS SESSION
+source-author SPEC.json` expose authoring. `/improvements source-finalize AUTHOR_ID`
+and model-free `harness improve-source SESSION finalize AUTHOR_ID` recover a
+completed response. Inspection retains failed responses and task status. Source
+proposal/check/selection controls occupy separate terminal lines.
+
+M5 remains in progress. This is a bounded single-proposal native author, not an
+iterative coding-agent runtime. Stronger source isolation, installed memory/swarm
+reconciliation, broader continuation/edit ownership and live M5/M6 qualification
+remain open. Normal-context integration is tested with a fixture source; this
+increment does not qualify installed-plugin interoperability or general coding
+quality. Validation and live local measurements follow below.
+
+The [retained local measurement](../../handoffs/2026-09-12-source-authorship/README.md)
+uses three operator-seeded maintenance defects and the provisioned 4B Instruct
+and 8B GGUF profiles. The first six attempts produced two passing improvements,
+both on retry-limit handling. The diagnostic repeat produced one passing
+improvement and three startup timeouts before inference. Other attempts produced
+malformed responses, an incorrect Unicode patch or unchanged source accompanied
+by improvement claims. They remained held. Every selected trial passed its
+fresh-process launch and rollback check; all twelve original source-preservation
+checks passed. These results demonstrate the supervised lifecycle and weak local
+author reliability on this small sample, not a general coding or latency gate.
+
+The first complete supported-version runs finished with **2,400 passed on
+Python 3.12.14 (829.78 s)** and **2,399 passed, one failed on 3.13.15 (828.43 s)**,
+each with seven skips and six existing MCP warnings. The failure occurred before
+the invalid-grant assertion in a coordinator fixture's three-second startup wait.
+A controlled 3.2-second member delay reproduced it. The fixture now awaits actual
+readiness or task completion; all 76 affected/probe tests pass. Production timers
+and the application source remain unchanged. Complete final suites follow.

@@ -65,6 +65,7 @@ class SourceFile(_Data):
 
 
 class SourceSnapshot(_Data):
+    origin: Literal["git", "authored"] = "git"
     revision: str = Field(pattern=r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
     files: dict[str, SourceFile] = Field(max_length=MAX_FILES)
 
@@ -88,6 +89,7 @@ class SourceEdit(_Data):
 class SourcePatch(_Data):
     format: Literal["harness-source-patch-v1"] = "harness-source-patch-v1"
     version: int = Field(default=1, ge=1, le=1, strict=True)
+    origin: Literal["git", "authored"] = "git"
     incumbent: BlobRef
     revision: str = Field(pattern=r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
     edits: tuple[SourceEdit, ...] = Field(min_length=1, max_length=MAX_FILES * 2)
@@ -157,7 +159,7 @@ def load_patch(blobs, artifact):
             files.pop(edit.path)
         else:
             files[edit.path] = edit.after
-    candidate = SourceSnapshot(revision=patch.revision, files=files)
+    candidate = SourceSnapshot(origin=patch.origin, revision=patch.revision, files=files)
     return patch, incumbent, candidate
 
 
@@ -450,6 +452,7 @@ async def run_source_evaluation(journal, plan_id):
             "completion": status, "activation_qualified": False,
             "isolation": "fresh_directory_not_security_sandbox", "held_out_provenance": "operator_declared",
             "incumbent_revision": incumbent.revision, "candidate_revision": changed.revision,
+            "incumbent_origin": incumbent.origin, "candidate_origin": changed.origin,
             "candidate_tree_sha256": _digest(_encoded(changed)), "evaluator_version": version,
             "suite": plan.suite.model_dump(), "python": sys.version, "executable": sys.executable,
             "cases": [{**case.model_dump(), **{side: rows[case.id].get(side)

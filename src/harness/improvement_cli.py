@@ -24,7 +24,13 @@ def refusal_message(exc):
 
 async def perform(kernel, words):
     """Shared CLI/TUI actions. These are not registered as model tools."""
-    if words and words[0] in {"source-prepare", "source-evaluate", "source-adopt", "source-rollback"}:
+    if len(words) == 2 and words[0] == "source-author":
+        from harness.source_authorship import SourceAuthorSpec, author_source
+        from harness.source_improvement_cli import prepared, read_spec
+        plan = await author_source(kernel, SourceAuthorSpec.model_validate_json(read_spec(words[1])))
+        author_id = kernel.improvements.state.candidates[plan.candidate_id].source_authoring_id
+        return f"Source authoring {author_id}.\n" + prepared(plan)
+    if words and words[0] in {"source-prepare", "source-finalize", "source-evaluate", "source-adopt", "source-rollback"}:
         from harness.source_improvement_cli import perform as source_perform
         return await source_perform(kernel.improvements, [words[0].removeprefix("source-"), *words[1:]])
     service, model = kernel.improvement_service, kernel.loop.model
@@ -69,7 +75,7 @@ async def perform(kernel, words):
         return f"Restored {label} prompt {change.prompt.sha256[:12]}; change {change.id}. Shadow mode."
     raise ValueError("use propose [message|context|progress], evaluate CANDIDATE EXPERIMENT.json, "
                      "compare ASSESSMENT.json, adopt RESULT [message|context|progress], rollback [message|context|progress], "
-                     "source-prepare SPEC.json, source-evaluate PLAN_ID, "
+                     "source-author SPEC.json, source-finalize AUTHOR_ID, source-prepare SPEC.json, source-evaluate PLAN_ID, "
                      "source-adopt RESULT SLOT MODULE:FUNCTION IMPORT_ROOT, or source-rollback SLOT")
 
 
@@ -92,6 +98,7 @@ def main(argv):
     parser.add_argument("session_id")
     actions = parser.add_subparsers(dest="action", required=True)
     propose = actions.add_parser("propose")
+    actions.add_parser("source-author", help="Author one bounded source patch using frozen operator scope/checks.").add_argument("spec")
     evaluate = actions.add_parser("evaluate")
     evaluate.add_argument("candidate_id")
     evaluate.add_argument("experiment")
@@ -106,7 +113,7 @@ def main(argv):
     try:
         catalog = Catalog.load(args.catalog)
         if catalog.resolve(args.model).execution_kind != "inference":
-            parser.error("prompt improvement requires an inference model alias")
+            parser.error("improvement authorship and prompt evaluation require an inference model alias")
     except (OSError, ValueError, UnknownAliasError) as exc:
         parser.error(f"invalid improvement catalog ({type(exc).__name__})")
     engine = default_engine(project_dir=Path.cwd())
@@ -116,7 +123,9 @@ def main(argv):
     kernel = build_kernel(base_dir=args.base_dir, model=ModelId(args.model), provider=CatalogProvider(catalog),
         permissions=engine, resume_session_id=SessionId(args.session_id))
     words = [args.action]
-    if args.action == "evaluate":
+    if args.action == "source-author":
+        words += [args.spec]
+    elif args.action == "evaluate":
         words += [args.candidate_id, args.experiment]
     elif args.action == "compare":
         words += [args.experiment]

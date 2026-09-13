@@ -252,6 +252,10 @@ run frozen operator checks in fresh directories, with the same core records and
 recovery. Supervised [source selection and rollback](source-promotion.md) now cover
 new Python processes. Stronger source isolation and activation for broader
 targets remain required M4/M5 work. No candidate authorizes its own adoption.
+[Bounded source authorship](source-authorship.md) now runs a native author task
+with a selected inference model, fixed operator scope/checks, normal context
+retrieval and durable finalization. A completed response remains unverified;
+the existing paired evaluator and supervised selection remain separate steps.
 
 [Supervised message-prompt improvement](supervised-improvement.md) adds failure
 discovery, bounded proposal generation, explicit paired evaluation, and operator

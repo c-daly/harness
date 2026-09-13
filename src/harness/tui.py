@@ -1865,8 +1865,10 @@ class HarnessApp(App[None]):
                     self.say("", line)
             self.say("", "Controls: /improvements propose [message|context|progress] | show ID | "
                 "evaluate CANDIDATE EXPERIMENT.json | compare ASSESSMENT.json | "
-                "adopt RESULT [message|context|progress] | rollback [message|context|progress] | "
-                "source-prepare SPEC.json | source-evaluate PLAN_ID | "
+                "adopt RESULT [message|context|progress] | rollback [message|context|progress]")
+            self.say("", "Source proposals: /improvements source-author SPEC.json | source-finalize AUTHOR_ID")
+            self.say("", "Source checks: /improvements source-prepare SPEC.json | source-evaluate PLAN_ID")
+            self.say("", "Source selection: /improvements "
                 "source-adopt RESULT SLOT MODULE:FUNCTION IMPORT_ROOT | source-rollback SLOT")
         elif command.name in ("resources", "models"):
             if self._rebuild_in_progress:
