@@ -1,0 +1,64 @@
+project: harness-progress-continuation
+base_branch: integration/harness-reliability
+max_retries: 2
+project_dir: .
+tasks:
+- name: progress-aware-completion
+  branch_name: feat/progress-aware-completion
+  description: "Continue the reliability increment on `feat/progress-aware-completion`,\
+    \ based\non the integrated checkpoint. The user rejected arbitrary supervisor\
+    \ deadlines\nand wants actual work to continue while it makes progress. Reviews\
+    \ of the older\nPRs are deferred. Do not change the preserved session lifecycle\
+    \ candidate.\n\n**Files:**\n- `src/harness/completion.py`\n- `src/harness/events.py`\n\
+    - `plugins/agent-swarm-runner/run_verified.py`\n- `plugins/agent-swarm-runner/run_one.py`\
+    \ only for compatible host wiring\n- `tests/test_completion.py`, `tests/test_agent_swarm_runner.py`\n\
+    - `docs/verified-completion.md`\n\n**Do:**\n- Add meaningful regression tests\
+    \ first, reproduce them, then implement.\n- Make CompletionPlan.timeout_seconds\
+    \ and max_attempts optional, default None.\n  Explicit values remain strict finite\
+    \ positive limits and remain immutable on\n  replay; never relax old recorded\
+    \ plans/deadlines or cumulative execution budgets.\n- Make CompletionConfigured.deadline\
+    \ optional for new unlimited plans while\n  retaining parsing/enforcement of existing\
+    \ numeric records. Preserve strict\n  event projection, interrupted-attempt protection\
+    \ and single-owner guards.\n- Add a recorded host progress review between settled\
+    \ attempts, using a typed\n  decision and bounded reason. A supplied async host\
+    \ reviewer receives the prior\n  and current independent observations plus the\
+    \ attempt outcome, and can return\n  continue, pause, or block. It cannot rewrite\
+    \ checks, accept tasks, reset budgets,\n  change limits, or act as model-controlled\
+    \ execution authority. Record the\n  review before the next attempt. Do not manufacture\
+    \ a productivity score or\n  infer useful progress merely from changed bytes,\
+    \ a model claim, or equal\n  passing-test counts. With no reviewer, preserve ordinary\
+    \ check-and-continue\n  behavior; host admission and explicit limits still apply.\n\
+    - Validate review ordering/decisions and preserve pause/resume behavior. Invoke\n\
+    \  a review only after a settled attempt and a fresh independent check, never\n\
+    \  while an uncertain attempt is pending. Errors in review block without running\n\
+    \  another worker. Resumption rechecks before continuing and does not reinterpret\n\
+    \  an explicit exhaustion, cancellation, deadline or block as permission to retry.\n\
+    - Update run_verified argparse defaults so it no longer silently inserts six\n\
+    \  attempts or a 30-minute completion deadline. Separate optional overall timeout\n\
+    \  from worker execution defaults; retain existing finite lower-level controls,\n\
+    \  clearly document those remaining boundaries, and record every effective host\n\
+    \  setting for configuration comparison on resume. Avoid substituting a huge\n\
+    \  number for unlimited. Do not broaden execution.py, agent.py or all agent\n\
+    \  timeout schemas in this increment. Keep run_one's existing CLI compatible.\n\
+    - Keep model-visible check descriptions as the interface contract; ensure all\n\
+    \  descriptions are actually present in the worker prompt/requirements. The\n\
+    \  external grading path is not usable as the sole implementation specification.\n\
+    - Document behavior, explicit limits, progress review callback, and the remaining\n\
+    \  worker/count boundaries honestly. This is continuation, not task acceptance,\n\
+    \  autonomous promotion, or a completed release gate.\n\n**Verify:**\n- Omitted\
+    \ supervisor limits permit more than four settled attempts without\n  max-attempt\
+    \ exhaustion and have no recorded overall deadline.\n- Explicit attempt limit\
+    \ and deadline stop and remain stopped after reopening;\n  cancellation, budget\
+    \ exhaustion, changed workspace and pending attempts retain\n  their existing\
+    \ protections. Old finite records remain enforced on replay.\n- Review callback\
+    \ sees actual before/after checks and worker outcome, continued\n  work records\
+    \ its decision, pause resumes after fresh verification, block/error\n  cannot\
+    \ launch another attempt, and an invalid decision fails closed.\n- Existing fake-provider\
+    \ native runner tests and event roundtrips still pass;\n  new optional defaults\
+    \ do not break run_one or kernel limit construction.\n- Run focused tests plus\
+    \ Ruff on touched files. Retain original tests unless\n  changed behavior requires\
+    \ updating an expectation. The operator will run\n  independent checks, integration\
+    \ suites and packaging separately. No commit,\n  push, merge, package installation,\
+    \ network or alternate agent CLI from worker.\n"
+  target_dir: .
+  test_dir: tests
