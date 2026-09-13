@@ -92,10 +92,30 @@ class SessionLock:
 
 
 class EventLogWriter:
-    def __init__(self, base: Path, session_id: SessionId, *, _lock: SessionLock | None = None) -> None:
+    def __init__(
+        self,
+        base: Path,
+        session_id: SessionId,
+        *,
+        _lock: SessionLock | None = None,
+        storage_limits=None,
+        free_bytes=None,
+    ) -> None:
+        """Open a session log for appends with storage guardrails.
+
+        Optional testing hooks:
+        - storage_limits: inject a StorageLimits instance
+        - free_bytes: inject a 0-arg callable returning free bytes (wrapped as a probe)
+        """
         sessions = _session_directory(base, session_id)
         self._lock = _lock or SessionLock(base, session_id)
         self.path = sessions / f"{session_id}.jsonl"
+        # load limits once per writer lifetime (resolved via module to allow monkeypatching in tests)
+        from harness import storage as _storage_mod
+
+        self._limits = storage_limits or _storage_mod.load_storage_limits()
+        # translate an injected 0-arg free-bytes function into the internal probe signature
+        self._probe_free_bytes = (lambda p: int(free_bytes())) if callable(free_bytes) else _storage_mod._probe_free_bytes
         try:
             fd = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW, 0o600)
             self._fh = os.fdopen(fd, "a", encoding="utf-8")
@@ -110,7 +130,17 @@ class EventLogWriter:
             raise
 
     def append(self, envelope: Envelope) -> None:
-        self._fh.write(envelope.model_dump_json() + "\n")
+        line = envelope.model_dump_json() + "\n"
+        line_bytes = line.encode("utf-8")
+        # small terminal check for oversized event line
+        self._limits.check_event_size(len(line_bytes))
+        # refuse new turn if size/free-space boundaries would be crossed
+        self._limits.check_session_log_and_free_space(
+            log_path=self.path,
+            next_event_bytes=len(line_bytes),
+            probe_free_bytes=self._probe_free_bytes,
+        )
+        self._fh.write(line)
         self._fh.flush()
         if envelope.event.is_intent:
             os.fsync(self._fh.fileno())

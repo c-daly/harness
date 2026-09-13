@@ -2,10 +2,10 @@ import json
 
 import pytest
 
-from harness.events import Envelope, SessionStarted, UserMessage
+from harness.events import Envelope, SessionStarted, ToolCallProposed, UserMessage
 from harness.log import EventLogWriter
-from harness.session_admin import RepairAuthorization, TornLogError, verify_session, repair_session
-from harness.types import SessionId
+from harness.session_admin import RepairAuthorization, TornLogError, repair_session, verify_session
+from harness.types import CallId, SessionId, ToolName
 
 
 def _env(session: str, seq: int, event):
@@ -78,3 +78,19 @@ def test_repair_refuses_when_locked(tmp_path):
         auth = RepairAuthorization(session_id=SessionId("s1"), operation="torn-tail", integrity_report_sha256=rep.report_sha256)
         with pytest.raises(TornLogError):
             repair_session(tmp_path, SessionId("s1"), auth)
+
+
+def test_verify_reports_unsettled_intent_and_lock_state(tmp_path):
+    # While the writer holds the lock, append only an intent event with a call id that never settles.
+    with EventLogWriter(tmp_path, SessionId("s1")) as w:
+        w.append(
+            _env(
+                "s1",
+                1,
+                ToolCallProposed(call_id=CallId("unsettled"), tool=ToolName("bash"), args={}),
+            )
+        )
+        # Verify with the lock held: should report 'locked' (info) and a dangling intent (warn)
+        rep = verify_session(tmp_path, SessionId("s1"), mode="quick")
+        assert any(f.severity == "info" and "locked" in f.message for f in rep.findings)
+        assert any(f.call_id == "unsettled" and f.remediation for f in rep.findings)

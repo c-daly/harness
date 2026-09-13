@@ -547,6 +547,25 @@ Override the session/data root with `--base-dir`. Resume a past session with
 there are no sessions to continue; mutually exclusive with `--resume`). Tag a
 run for later querying with `--tag NAME` (repeatable).
 
+### Sessions administration
+
+Inspect and manage past sessions from the CLI:
+
+- `harness sessions list` — list known session ids (one per line)
+- `harness sessions show <id>` — show a summary row as JSON
+- `harness sessions verify <id> [--quick|--full]` — integrity report over the log and blobs
+- `harness sessions repair <id>` — apply an authorized repair (torn-tail only for now)
+- `harness sessions export <id>` — export a session as a deterministic tar archive
+- `harness sessions trash <id>` — move a session directory to trash (refused while locked)
+- `harness sessions restore <id>` — restore a trashed session
+- `harness sessions purge <id> <confirm-id>` — permanently delete a trashed session after a second
+  exact-id confirmation
+
+All lifecycle operations refuse a locked session. `verify --quick` checks only presence/size
+of referenced blobs and the lock state; `--full` also hashes every blob to detect same-size
+corruption. `repair` requires an explicit authorization binding to a prior integrity report
+hash; the CLI prints the token for inspection and confirmation before applying it.
+
 Catalog selections are saved when they take effect, including `/model` changes
 made before sending another prompt. `--continue`, `--resume` and the `/resume`
 picker restore the target session's saved alias and whether it was pinned against

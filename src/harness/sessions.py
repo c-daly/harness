@@ -13,6 +13,7 @@ from pathlib import Path
 from harness.events import ModelCallCompleted, UserMessage
 from harness.log import read_session
 from harness.types import SessionId
+from harness.session_admin import IntegrityReport, verify_session
 
 _FIRST_PROMPT_CAP = 80
 
@@ -25,6 +26,9 @@ class SessionSummary:
     first_prompt: str
     last_model: str | None
     error: str | None = None
+    # New fields for integrity summaries and lock state
+    integrity: IntegrityReport | None = None
+    locked: bool | None = None
 
 
 def list_sessions(base: Path, limit: int | None = None) -> list[SessionSummary]:
@@ -70,6 +74,18 @@ def list_sessions(base: Path, limit: int | None = None) -> list[SessionSummary]:
                 or (event.purpose == "agent-task" and event.execution_kind == "agent")
             ):
                 last_model = str(event.model)
+        # Verify quickly and probe lock state
+        from harness.log import SessionLock, SessionLockedError
+
+        locked = None
+        try:
+            # try to acquire and immediately release; don't create the lock file if missing
+            lock = SessionLock(base, session_id)
+        except SessionLockedError:
+            locked = True
+        else:
+            locked = False
+            lock.close()
         summaries.append(
             SessionSummary(
                 session_id=session_id,
@@ -77,6 +93,8 @@ def list_sessions(base: Path, limit: int | None = None) -> list[SessionSummary]:
                 event_count=len(envelopes),
                 first_prompt=first_prompt,
                 last_model=last_model,
+                integrity=verify_session(base, session_id, mode="quick"),
+                locked=locked,
             )
         )
 

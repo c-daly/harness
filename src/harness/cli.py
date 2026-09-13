@@ -1085,6 +1085,7 @@ def main() -> None:
         from harness.export_cli import main as export_main
         export_main(argv[1:])
         return
+    # Insert the sessions ladder command immediately after export
     if argv and argv[0] == "sessions":
         from harness.session_admin import main as sessions_main
         sessions_main(argv[1:])

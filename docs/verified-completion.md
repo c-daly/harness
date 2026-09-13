@@ -60,6 +60,13 @@ host's API keys or unrelated environment variables. For example:
 }
 ```
 
+Check descriptions are attached to the child's recorded task requirements.
+Include required CLI flags, data formats and API signatures there. A pathname
+outside the candidate workspace is not readable through its native file tools;
+do not rely on that pathname to convey implementation requirements. Keep
+independent grading code outside the editable workspace while supplying the
+necessary interface contract as model-visible task context.
+
 The initial candidate must be clean and on the plugin's declared branch. The
 host pins the selected native inference route. It keeps queue completion
 withheld even after checks pass, so the operator can finish scope and release
