@@ -9,7 +9,7 @@ emits TaskAccepted. Execution budgets still belong to the existing root scope.
 import asyncio
 import json
 import time
-import contextlib
+
 from dataclasses import dataclass, field, is_dataclass
 from typing import Literal
 
@@ -100,7 +100,9 @@ def project_completion(envelopes):
                 raise ValueError("completion plan already configured")
             # Old finite plans must retain a recorded deadline; refuse a missing deadline when a timeout was configured.
             if e.plan.timeout_seconds is not None and e.deadline is None:
-                raise ValueError("completion configured without a recorded deadline for a finite plan")
+                raise ValueError(
+                    "completion configured without a recorded deadline for a finite plan"
+                )
             state.plan, state.deadline = e.plan, e.deadline
             state.workspace_sha256, state.status = e.workspace_sha256, "ready"
         elif isinstance(e, CompletionAttemptStarted):
@@ -126,7 +128,12 @@ def project_completion(envelopes):
             state.history.append(e)
         elif isinstance(e, CompletionReviewRecorded):
             # Must follow a settled attempt and a fresh check.
-            if state.plan is None or state.pending or state.attempts < 1 or state.status != "checked":
+            if (
+                state.plan is None
+                or state.pending
+                or state.attempts < 1
+                or state.status != "checked"
+            ):
                 raise ValueError("completion review requires a settled attempt after a fresh check")
             if e.attempt != state.attempts:
                 raise ValueError("completion review must match the last settled attempt")
@@ -173,7 +180,9 @@ class CompletionService:
         if self.session.append(event).event != event:
             raise ValueError("completion records cannot be rewritten")
 
-    async def run(self, plan, *, prompt, execute, verify, identify, pause_after=None, reviewer=None):
+    async def run(
+        self, plan, *, prompt, execute, verify, identify, pause_after=None, reviewer=None
+    ):
         # The session lock excludes other processes, not two async callers
         # sharing this writer. Claim ownership before the first await.
         if getattr(self.session, "_completion_active", False):
@@ -217,7 +226,7 @@ class CompletionService:
             )
         if state.status in {"cancelled", "timed_out", "blocked", "exhausted"}:
             return state
-        
+
         # Track review inputs between settled attempts. Seed from state for resumes.
         prev_observation: CompletionObservation | None = state.prior_observation
         last_outcome: DelegationResult | None = state.outcome
@@ -231,11 +240,7 @@ class CompletionService:
             deadline = None
             if plan.timeout_seconds is not None:
                 deadline = time.time() + plan.timeout_seconds
-            self._emit(
-                CompletionConfigured(
-                    plan=plan, deadline=deadline, workspace_sha256=digest
-                )
-            )
+            self._emit(CompletionConfigured(plan=plan, deadline=deadline, workspace_sha256=digest))
             state = self.state()
         remaining = None if state.deadline is None else state.deadline - time.time()
         if remaining is not None and remaining <= 0:
@@ -267,18 +272,25 @@ class CompletionService:
                     if before != observed.workspace_sha256 or before != await identify():
                         return stop("blocked", "workspace changed during independent verification")
                     self._emit(CompletionChecked(attempt=state.attempts, observation=observed))
-                    state = self.state()  # refresh to capture checked status and any persisted fields
+                    state = (
+                        self.state()
+                    )  # refresh to capture checked status and any persisted fields
                     # Host progress review happens between settled attempts after a fresh check.
                     if reviewer is not None and state.attempts > 0:
                         # Handle verifier outcomes before review for unresolved work.
                         if any(c.status == "error" for c in state.observation.checks):
-                            return stop("blocked", "independent verifier could not establish a result")
+                            return stop(
+                                "blocked", "independent verifier could not establish a result"
+                            )
                         if all(c.status == "passed" for c in state.observation.checks):
                             return stop(
-                                "checks_passed", "all declared checks passed on the recorded workspace"
+                                "checks_passed",
+                                "all declared checks passed on the recorded workspace",
                             )
                         if plan.max_attempts is not None and state.attempts >= plan.max_attempts:
-                            return stop("exhausted", "attempt allowance reached with unresolved checks")
+                            return stop(
+                                "exhausted", "attempt allowance reached with unresolved checks"
+                            )
                         # Only call reviewer after a settled attempt and a fresh check.
                         try:
                             review = await reviewer(

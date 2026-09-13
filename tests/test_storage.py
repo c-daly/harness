@@ -45,10 +45,13 @@ def test_storage_limits_enforce_event_log_and_free_space_boundaries(tmp_path, mo
     # Writer picks up limits on init
     with EventLogWriter(tmp_path, SessionId("s1")) as w:
         w.append(_env(1, SessionStarted()))
-        # Oversized event fails early with ValueError (terminal, small)
+        # Oversized event fails early with StorageLimitExceeded (terminal, small) and leaves prior bytes intact
+        before = (tmp_path / "sessions" / "s1.jsonl").read_bytes()
         big_text = "x" * 1000
-        with pytest.raises(ValueError):
+        with pytest.raises(StorageLimitExceeded):
             w.append(_env(2, UserMessage(text=big_text)))
+        # journal not grown by refused append
+        assert (tmp_path / "sessions" / "s1.jsonl").read_bytes() == before
 
     # Switch to low free space to trigger StorageLimitExceeded on new writer
     def low_free(path):

@@ -62,7 +62,7 @@ specific correction, its regression, runner defaults/tests, the stale storage
 assertion and documentation. Queue completion remains withheld.
 
 The fourth turn corrected timeout classification but then reached the host's
-context byte bound. All 12 independent contract regressions now pass (1.15s),
+context byte bound. All 12 independent contract regressions now pass (0.69s),
 and are retained in the repository as test_completion_contract.py and
  test_completion_review_contract.py. These two files were authored by the
 operator; the native worker authored the implementation and its own tests.
@@ -74,3 +74,36 @@ in the installed LiteLLM gpt-5 metadata. Full-file reads consumed the host's
 262144-byte profile. The next idle invocation records a 524288-byte profile;
 this is an explicit operator host configuration change, not automatic model-aware
 context sizing. Active-turn context management remains a product follow-up.
+
+
+The fifth startup failed before inference because the operator driver tried to
+assign to an immutable ExecutionScope. No model or tool calls occurred. The
+operator inspected the journal, recovered its dead-PID marker while holding the
+permanent advisory guard, recorded the failure and closed that setup. The fixed
+driver replaces the scope at the idle boundary and updates the root reference.
+The failed startup is retained in progress-continuation-native-v5.
+
+The sixth startup completed the runner phase with the larger context profile.
+There are five model-bearing turns across these six startups. The native root
+retains 232 model calls and 230 tools, with all tools settled; recorded estimated
+cost is $16.70727875. These counts describe this supervised development task,
+not a mature productivity score. The worker's six focused tests passed, but
+independent review found one remaining timeout-default defect (4 passed,
+1 failed in 1.73s) and four Ruff errors. Its completion claim did not establish
+full compliance. The operator corrected worker timeout separation, kept
+run_one's one-child admission in its existing budget, removed unused scaffolding,
+and strengthened the tests to inspect actual child limits and model context.
+
+The finished candidate's focused checks now pass: 40 passed in 4.91s, with
+repository Ruff and git diff --check passing. Complete Python 3.12/3.13 suite
+and packaging qualification follows on a frozen candidate. The native worker is
+stopped; plugin queue completion remains withheld for scope/release review.
+No older PR or original roadmap task was merged or marked complete.
+
+The operator-authored restart tests are retained as
+ tests/test_runner_resume_contract.py, alongside the twelve independent core
+contract tests. Native implementation/test work and operator review corrections
+are distinct contributions. The latest driver is retained as
+ continue_native_worker.py.txt; the v1 driver remains unchanged. Live journals
+and the failed independent probe are retained under .worktrees/tmp rather than
+bundled into the source tree.

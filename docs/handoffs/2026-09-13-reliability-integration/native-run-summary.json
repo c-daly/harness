@@ -1,0 +1,109 @@
+{
+  "root_session_id": "2d47f29611704cda8cdd8e7b67fefa55",
+  "binding": "installed agent-swarm queue with operator-supervised native Harness root worker",
+  "candidate_is_worker_host": false,
+  "queue_completion_recorded": false,
+  "startups": [
+    {
+      "startup": 1,
+      "model_calls": 47,
+      "tool_calls": 47,
+      "error": "ContextOverflow: pinned context and current turn exceed the context profile byte limit; reduce supplied context or compact the session",
+      "result_status": null,
+      "run_id": null,
+      "recorded_cost_usd": "3.16966750",
+      "candidate_head": "dc46fec80d266e45f1e9f807b77815bbdc5e2a2e",
+      "host_head": "d03e1a3b55cc549839319d9d7d1b3bedca63a27c",
+      "host_sha256": "59d289a3c761379a8dbaac92e21093be1b5f3eb95554b74a87bf9ca05eeaeb5e",
+      "context_policy": null,
+      "evidence": ".worktrees/tmp/progress-continuation-native-v1"
+    },
+    {
+      "startup": 2,
+      "model_calls": 100,
+      "tool_calls": 100,
+      "error": "ContextOverflow: pinned context and current turn exceed the context profile byte limit; reduce supplied context or compact the session",
+      "result_status": null,
+      "run_id": null,
+      "recorded_cost_usd": "6.32040875",
+      "candidate_head": "3be8e40bcb88bccfe470768375f49527feeb0d3c",
+      "host_head": "d03e1a3b55cc549839319d9d7d1b3bedca63a27c",
+      "host_sha256": "cf40d6713077e22adc92970567261e846cd61ad2131f3908fbf8f857981a6c22",
+      "context_policy": null,
+      "evidence": ".worktrees/tmp/progress-continuation-native-v2"
+    },
+    {
+      "startup": 3,
+      "model_calls": 156,
+      "tool_calls": 155,
+      "error": null,
+      "result_status": "completed",
+      "run_id": "09230d5417ce413e973ed71787fc2939",
+      "recorded_cost_usd": "9.62346000",
+      "candidate_head": "1c6d664d3fb76d1d848d2ee12b642f14310e06ac",
+      "host_head": "d03e1a3b55cc549839319d9d7d1b3bedca63a27c",
+      "host_sha256": "f8346be19859ea36330b625252af75837f8302578e44af19651494a5125bdd54",
+      "context_policy": null,
+      "evidence": ".worktrees/tmp/progress-continuation-native-v3"
+    },
+    {
+      "startup": 4,
+      "model_calls": 180,
+      "tool_calls": 179,
+      "error": "ContextOverflow: pinned context and current turn exceed the context profile byte limit; reduce supplied context or compact the session",
+      "result_status": null,
+      "run_id": null,
+      "recorded_cost_usd": "10.85267625",
+      "candidate_head": "ff878120782b8cb711d7c849cd659ca920b415e1",
+      "host_head": "d03e1a3b55cc549839319d9d7d1b3bedca63a27c",
+      "host_sha256": "78b62c1e36cc53b48ea006c91769aba4bd6531f2ae381d3530c6af3d78db37ea",
+      "context_policy": null,
+      "evidence": ".worktrees/tmp/progress-continuation-native-v4"
+    },
+    {
+      "startup": 5,
+      "startup_failure": {
+        "error": "FrozenInstanceError: cannot assign to field context_policy",
+        "reconciled": true,
+        "no_model_or_tool_execution": true,
+        "reason": "Operator startup failed before model or tool execution: FrozenInstanceError assigning context_policy; corrected by replacing immutable scope. Closing failed setup after independent journal inspection."
+      },
+      "evidence": ".worktrees/tmp/progress-continuation-native-v5"
+    },
+    {
+      "startup": 6,
+      "model_calls": 232,
+      "tool_calls": 230,
+      "error": null,
+      "result_status": "completed",
+      "run_id": "9ac2e37fc33242c9983787a9319e02c0",
+      "recorded_cost_usd": "16.70727875",
+      "candidate_head": "b310caba8d78b86cb6c3c302daca9cff64c6f91d",
+      "host_head": "d03e1a3b55cc549839319d9d7d1b3bedca63a27c",
+      "host_sha256": "f877425fac51298083f45cd9425289df50a8bff7850ad6eb2902b9cf6ed49cd0",
+      "context_policy": {
+        "history_turns": 8,
+        "max_input_bytes": 524288,
+        "tools": [
+          "dispatch_agent",
+          "read_file",
+          "write_file",
+          "edit_file",
+          "glob",
+          "grep",
+          "bash"
+        ],
+        "parallel_tool_calls": false,
+        "tool_recovery_attempts": 1,
+        "response": {
+          "temperature": null,
+          "max_output_tokens": 16384,
+          "max_output_bytes": null,
+          "instructions": "Make one tool call per response. Continue through implementation and checks."
+        },
+        "sources": []
+      },
+      "evidence": ".worktrees/tmp/progress-continuation-native-v6"
+    }
+  ]
+}

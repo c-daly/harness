@@ -107,6 +107,14 @@ def build_native_kernel(args, workspace, *, max_children=None, resume=None):
             instructions="Make one tool call per response. Continue through implementation and checks.",
         ),
     )
+    # Verified runs have separate supervisor and worker controls. Legacy run_one
+    # callers still use timeout for the worker. Neither omission means infinity.
+    if hasattr(args, "worker_timeout"):
+        task_timeout = args.worker_timeout
+    else:
+        task_timeout = getattr(args, "timeout", None)
+    if task_timeout is None:
+        task_timeout = ExecutionLimits().task_timeout_seconds
     kernel = build_kernel(
         provider=CatalogProvider(catalog),
         base_dir=args.output / "journal",
@@ -123,10 +131,12 @@ def build_native_kernel(args, workspace, *, max_children=None, resume=None):
         execution_limits=ExecutionLimits(
             max_model_calls=args.max_model_calls,
             max_tool_calls=200,
-            max_children=(max_children if max_children is not None else ExecutionLimits().max_children),
+            max_children=(
+                max_children if max_children is not None else ExecutionLimits().max_children
+            ),
             max_active_children=1,
             max_depth=1,
-            task_timeout_seconds=(args.timeout if getattr(args, "timeout", None) is not None else 1800),
+            task_timeout_seconds=task_timeout,
             inference_timeout_seconds=180,
         ),
         usage_limits=(
@@ -162,7 +172,7 @@ async def execute(args, request):
         raise ValueError("selected worktree branch differs from plugin request")
     if command(["git", "status", "--porcelain"], cwd=workspace):
         raise ValueError("selected worktree is dirty; reconcile preserved work before retrying")
-    kernel, resolved = build_native_kernel(args, workspace)
+    kernel, resolved = build_native_kernel(args, workspace, max_children=1)
     prompt = worker_prompt(request)
     kernel.hooks.register_dispatch("agent-swarm-single-worker", SingleWorker(prompt, args.model))
     launch = {

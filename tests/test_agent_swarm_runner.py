@@ -200,6 +200,7 @@ async def test_verified_binding_continues_native_worker_and_withholds_release(
         max_model_calls=10,
         max_attempts=3,
         timeout=30,
+        worker_timeout=30,
         pause_after=None,
     )
     state = await run_verified.execute(

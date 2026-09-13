@@ -99,9 +99,7 @@ async def test_review_continue_records_and_allows_progress(tmp_path):
             seen["outcome_status"] = outcome.status
             return CompletionReview(decision="continue", reason="still unresolved")
 
-        state = await CompletionService(kernel.session).run(
-            plan, reviewer=reviewer, **callbacks
-        )
+        state = await CompletionService(kernel.session).run(plan, reviewer=reviewer, **callbacks)
         assert state.status == "checks_passed" and state.attempts == 2
         # A review event must be recorded for the first settled attempt
         events = [e.event for e in read_session(kernel.session.base, kernel.session.id)]
@@ -170,6 +168,7 @@ async def test_review_invalid_or_error_blocks_without_new_work(tmp_path):
         service = CompletionService(kernel.session)
         state = await service.run(plan, reviewer=bad_reviewer, **(callbacks | {"execute": execute}))
         assert state.status == "blocked" and "invalid" in state.reason
+
         # Error in reviewer must block independently (use a fresh session)
         async def exploding(prev_obs, curr_obs, outcome):
             raise RuntimeError("review failed")
@@ -179,7 +178,9 @@ async def test_review_invalid_or_error_blocks_without_new_work(tmp_path):
         try:
             plan2, callbacks2 = binding(kernel2, workspace2)
             service2 = CompletionService(kernel2.session)
-            state2 = await service2.run(plan2, reviewer=exploding, **(callbacks2 | {"execute": execute}))
+            state2 = await service2.run(
+                plan2, reviewer=exploding, **(callbacks2 | {"execute": execute})
+            )
             assert state2.status == "blocked" and "review failed" in state2.reason
             # No further attempts started in either case (only the first baseline check ran)
             assert provider.calls == [] and provider2.calls == []

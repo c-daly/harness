@@ -6,15 +6,12 @@ passing these checks leaves release review and queue completion to the operator.
 
 import argparse
 import asyncio
+from dataclasses import asdict
 import fcntl
 import hashlib
 import json
 from pathlib import Path
 import signal
-from types import SimpleNamespace
-
-from harness.execution import ExecutionLimits
-
 from harness.completion import CompletionCheck, CompletionPlan, CompletionService
 from harness.completion_checks import CommandChecks, CommandVerifier
 from harness.hooks import Allow, Block, ProposedModelCall
@@ -63,6 +60,12 @@ async def execute(args, request, *, resume=None):
             "max_model_calls": args.max_model_calls,
             "max_attempts": args.max_attempts,
             "timeout": args.timeout,
+            "worker_timeout": kernel.runner.scope_for(
+                kernel.session
+            ).budget.limits.task_timeout_seconds,
+            "effective_execution_limits": asdict(
+                kernel.runner.scope_for(kernel.session).budget.limits
+            ),
             "worker_prompt": worker_prompt(request),
             "agent_definition": kernel.runner.agents["swarm-implementer"].model_dump(mode="json"),
             "context_policy": kernel.context_policy.model_dump(mode="json"),
@@ -183,7 +186,14 @@ def main():
     parser.add_argument("--model", required=True)
     parser.add_argument("--max-model-calls", type=int, default=160)
     parser.add_argument("--max-attempts", type=int)
-    parser.add_argument("--timeout", type=float)
+    parser.add_argument(
+        "--timeout", type=float, help="optional overall completion deadline in seconds"
+    )
+    parser.add_argument(
+        "--worker-timeout",
+        type=float,
+        help="worker timeout in seconds (default: core execution timeout)",
+    )
     parser.add_argument("--pause-after", type=int)
     parser.add_argument(
         "--resume", action="store_true", help="resume a recorded checkpoint in --output"

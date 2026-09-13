@@ -71,6 +71,7 @@ class ExecutionConfigured(_Event):
     @classmethod
     def validate_limits(cls, value):
         from harness.execution import ExecutionLimits
+
         ExecutionLimits.from_record(value)
         return value  # Preserve newer fields through serialization; fold only supported limits.
 
@@ -240,7 +241,9 @@ class ContextSourceObserved(_Event):
     policy_digest: str = ""
     tool: str = ""
     call_id: CallId | None = None
-    status: Literal["fetching", "ready", "unavailable", "timeout", "oversized", "cancelled"] = "unavailable"
+    status: Literal["fetching", "ready", "unavailable", "timeout", "oversized", "cancelled"] = (
+        "unavailable"
+    )
     reason: str = ""
     result: BlobRef | None = None
     byte_count: int = 0

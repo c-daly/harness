@@ -9,12 +9,15 @@ The core `CompletionService` supervises one task using an operator-supplied
 function. Queue selection, decomposition and provider preferences remain host
 or plugin policy. The service is not registered as an agent tool.
 
-The host freezes the original task, check IDs, grading configuration, maximum
-attempts and deadline before execution. Harness records a baseline check, runs
-a native child, checks the resulting workspace and supplies unresolved findings
-to the next child. All children retain the same root execution and usage
-accounting. Partial files remain in the worktree; no checkpoint commit, reset,
-cleanup, merge or permission renewal happens between attempts.
+The host freezes the original task, check IDs, grading configuration, and any
+explicit limits (max attempts or an overall deadline) before execution. If not
+supplied, there is no implicit supervisor attempt cap or deadline; progress may
+continue across many attempts while checks remain unresolved. Harness records a
+baseline check, runs a native child, checks the resulting workspace and supplies
+unresolved findings to the next child. All children retain the same root
+execution and usage accounting. Partial files remain in the worktree; no
+checkpoint commit, reset, cleanup, merge or permission renewal happens between
+attempts.
 
 Every attempt and check result is retained in the session journal. Check output
 is a verified blob, with its return code, elapsed time and bounded stdout/stderr.
@@ -40,8 +43,18 @@ PYTHONPATH=src:. python plugins/agent-swarm-runner/run_verified.py \
   --output /path/to/new-evidence-directory \
   --catalog /path/to/models.toml --model gpt \
   --checks /path/to/operator-checks.json \
-  --max-attempts 6 --max-model-calls 160 --timeout 1800
+  --max-model-calls 160 --worker-timeout 600
 ```
+
+Omitting `--max-attempts` and `--timeout` leaves the supervisor without an attempt
+cap or overall deadline. Supply them when the task has an explicit allowance.
+`--worker-timeout` controls each worker separately and defaults to the core
+execution timeout (600 seconds). An overall deadline does not replace that
+setting. The worker's iteration and context bounds, inference timeout, and
+shared model/tool/child admission limits still apply. The retained configuration
+records effective execution controls; resumption preserves consumed counts and
+rejects changed controls. A worker budget stop remains blocked for operator
+review; this binding does not automatically grant extensions.
 
 The check file contains explicit commands and pinned verifier files outside the
 candidate worktree. Check subprocesses receive an explicit environment, not the
@@ -74,13 +87,25 @@ review before releasing dependent tasks. There is no automatic provider
 escalation or second queue scheduler. The experimental binding still lacks the
 Claude router's identities and hooks, normal memory integration and TUI parity.
 
-## Stop and resume behavior
+## Stop, host review, and resume behavior
 
 `--pause-after 1` records a checkpoint after one attempt and its checks. Reuse
 the same options and evidence directory with `--resume` to continue. The host
 requires the same plugin owner, grading contract, route, limits and workspace
 bytes. Previously consumed root counts, attempts and the original deadline
 remain in force. Verification runs again before any new work.
+
+Between settled attempts, a host can pass `reviewer=...` to `CompletionService.run`.
+This async callback receives the actual before-attempt observation, fresh
+after-attempt observation, and worker outcome. It returns
+`CompletionReview(decision="continue" | "pause" | "block", reason="...")`, with a
+nonempty reason retained up to 2048 characters. The returned decision cannot
+change limits, rewrite checks, accept tasks, reset budgets, or act as execution
+authority. Reviews are recorded before the next attempt and only after a fresh
+independent check. Invalid decisions or review errors fail closed (blocked).
+Resuming a review pause repeats verification and retains the original
+before-attempt comparison. The command-line binding does not install a reviewer
+or infer a productivity score; that remains host policy.
 
 Cancellation, an expired deadline, exhausted attempts, a failed verifier or a
 worker stopped by its budget leaves an explicit stop state. The service does
