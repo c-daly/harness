@@ -1073,6 +1073,10 @@ def main() -> None:
         from harness.budget_cli import main as budget_main
         budget_main(argv[1:])
         return
+    if argv and argv[0] == "plugins":
+        from harness.plugin_reconciliation import main as plugins_main
+        plugins_main(argv[1:])
+        return
     if argv and argv[0] == "coordination":
         from harness.coordination_cli import main as coordination_main
         coordination_main(argv[1:])

@@ -397,6 +397,18 @@ broken dispatch hook that registered would turn fail-closed enforcement into a
 runtime denial-of-service, so it must never register. Loading is all-or-nothing.
 Full details in [plugin-authoring.md](plugin-authoring.md).
 
+Plugins that expose MCP servers (an agent-swarm workflow, the reference
+memory plugin) are referenced by core through the same tool-call facts
+described above, never through a plugin import: `plugin_reconciliation.py`
+folds completed `mcp__SERVER__workflow__workflow_*` calls into
+`PluginWorkflowRef` facts and completed `mcp__memory__*` calls into
+contribution and accepted-record counts, purely from the session log.
+Restart reconciliation re-dispatches `workflow__workflow_get_state` through
+the ordinary dispatcher and classifies the answer as active, finished, or
+unavailable; an in-memory plugin workflow lost across a plugin restart is
+explicitly not resumable by core. See
+[plugin-reconciliation.md](plugin-reconciliation.md).
+
 ---
 
 ## The TUI
