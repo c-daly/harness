@@ -11,6 +11,9 @@ import hashlib
 import json
 from pathlib import Path
 import signal
+from types import SimpleNamespace
+
+from harness.execution import ExecutionLimits
 
 from harness.completion import CompletionCheck, CompletionPlan, CompletionService
 from harness.completion_checks import CommandChecks, CommandVerifier
@@ -41,8 +44,10 @@ async def execute(args, request, *, resume=None):
     if resume is None and command(["git", "status", "--porcelain"], cwd=workspace):
         raise ValueError("initial worktree is dirty; reconcile preserved work before starting")
     specification = CommandChecks.model_validate_json(args.checks.read_text())
+    # Use core child capacity when no explicit attempt cap is supplied.
+    default_children = None if args.max_attempts is None else args.max_attempts
     kernel, resolved = build_native_kernel(
-        args, workspace, max_children=(args.max_attempts or 1), resume=resume
+        args, workspace, max_children=default_children, resume=resume
     )
     kernel.hooks.register_dispatch("verified-worker-model", PinnedRoute(args.model))
     service = CompletionService(kernel.session)

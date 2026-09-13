@@ -44,3 +44,10 @@ the current-turn 262144-byte context bound, not a timer. This is a separate
 runtime limitation. The same session will resume with a fresh task turn and
 concrete review findings; earlier history, effects and usage remain recorded.
 Final candidate validation belongs separately from this checkpoint baseline.
+
+The second native turn also reached the context bound. The same root now records
+100 model calls and 100 tool calls cumulatively. It added review and runner tests
+and more partial wiring. These changes remain unvalidated; a circular import and
+review-replay defects were identified. Continuation is split into a core phase
+and runner-wiring phase so each fresh task turn can finish and check a coherent
+piece without rereading the whole task. This is operator-directed recovery.

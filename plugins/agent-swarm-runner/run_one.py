@@ -75,7 +75,7 @@ class SingleWorker:
         )
 
 
-def build_native_kernel(args, workspace, *, max_children=1, resume=None):
+def build_native_kernel(args, workspace, *, max_children=None, resume=None):
     catalog = Catalog.load(args.catalog)
     resolved = catalog.resolve(args.model)
     if resolved.execution_kind != "inference":
@@ -123,10 +123,10 @@ def build_native_kernel(args, workspace, *, max_children=1, resume=None):
         execution_limits=ExecutionLimits(
             max_model_calls=args.max_model_calls,
             max_tool_calls=200,
-            max_children=max_children,
+            max_children=(max_children if max_children is not None else ExecutionLimits().max_children),
             max_active_children=1,
             max_depth=1,
-            task_timeout_seconds=args.timeout,
+            task_timeout_seconds=(args.timeout if getattr(args, "timeout", None) is not None else 1800),
             inference_timeout_seconds=180,
         ),
         usage_limits=(

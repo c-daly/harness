@@ -636,7 +636,7 @@ class CompletionConfigured(_Event):
     type: Literal["completion_configured"] = "completion_configured"
     is_intent: ClassVar[bool] = True
     plan: CompletionPlan
-    deadline: float | None = Field(default=None, allow_inf_nan=False)
+    deadline: float | None = Field(default=None, gt=0, allow_inf_nan=False)
     workspace_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
