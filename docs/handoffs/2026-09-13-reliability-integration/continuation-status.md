@@ -123,3 +123,22 @@ watchdog and still must report output_limit with bounded retained bytes.
 The large-output test retains an outer 45-second cleanup watchdog. No runtime
 source-evaluation deadline or acceptance condition changed. Complete validation
 is repeated after this test correction; v1 failures remain retained.
+
+
+Complete validation v2 also retained stable source hashes, at 0aefb46. Both
+versions had 1 failed, 2495 passed, 7 skipped, 6 warnings (761.88s on Python
+3.12; 761.91s on 3.13). The output-limit cases now pass. The sole remaining
+failure on each version is test_full_operator_loop_from_terminal_commands.
+Retained semantic observations show fake inference exceeding the fixture's
+2-second limit, and on 3.12 the helper's 3-second wait cancels the evaluation.
+The same unchanged UI test passes in isolation: 1 passed in 3.67s, with a 2.13s
+test call. This is not yet a proven runtime or rendering defect. The next full
+matrix runs versions sequentially to separate concurrent host pressure from
+functional behavior; no UI deadlines or adoption gates have been relaxed.
+The concurrent-run failures remain part of the qualification boundary.
+
+The operator host restored the core tool admission default (4096) at an idle
+boundary while preserving all consumed counts, and recorded that configuration
+change. The original 200-tool measurement cap was not a user allowance.
+The plugin's persisted spawned/monitoring state is ownership awaiting scope and
+release review, not evidence of a live worker. Its native journal ends cleanly.
