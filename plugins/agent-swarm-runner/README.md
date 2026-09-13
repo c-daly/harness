@@ -1,5 +1,10 @@
 # Experimental native manifest-runner binding
 
+For independent checks and automatic continuation of partial attempts, use
+[`run_verified.py`](run_verified.py) and the
+[verified-completion guide](../../docs/verified-completion.md). The original
+`run_one.py` remains available for one supervised attempt and comparison.
+
 This driver hands the installed agent-swarm runner's first eligible request to
 a real Harness coordinator and `dispatch_agent` child. The installed plugin
 parses the existing manifest, computes dependency eligibility, builds the worker

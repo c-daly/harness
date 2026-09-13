@@ -75,13 +75,7 @@ class SingleWorker:
         )
 
 
-async def execute(args, request):
-    workspace = Path(request["worktree_dir"]).resolve(strict=True)
-    branch = command(["git", "branch", "--show-current"], cwd=workspace).strip()
-    if branch != request["branch_name"]:
-        raise ValueError("selected worktree branch differs from plugin request")
-    if command(["git", "status", "--porcelain"], cwd=workspace):
-        raise ValueError("selected worktree is dirty; reconcile preserved work before retrying")
+def build_native_kernel(args, workspace, *, max_children=1, resume=None):
     catalog = Catalog.load(args.catalog)
     resolved = catalog.resolve(args.model)
     if resolved.execution_kind != "inference":
@@ -117,6 +111,7 @@ async def execute(args, request):
         provider=CatalogProvider(catalog),
         base_dir=args.output / "journal",
         model=ModelId(args.model),
+        resume_session_id=resume,
         model_pinned=True,
         native_tools=True,
         workspace_root=workspace,
@@ -128,7 +123,7 @@ async def execute(args, request):
         execution_limits=ExecutionLimits(
             max_model_calls=args.max_model_calls,
             max_tool_calls=200,
-            max_children=1,
+            max_children=max_children,
             max_active_children=1,
             max_depth=1,
             task_timeout_seconds=args.timeout,
@@ -140,7 +135,11 @@ async def execute(args, request):
             else UsageLimits()
         ),
     )
-    prompt = (
+    return kernel, resolved
+
+
+def worker_prompt(request):
+    return (
         request["prompt"]
         + "\n\nNative Harness supervisor instructions (take precedence):\n"
         + (
@@ -154,6 +153,17 @@ async def execute(args, request):
             "No arbitrary minimum test count. Use simple bash commands without chaining or redirects."
         )
     )
+
+
+async def execute(args, request):
+    workspace = Path(request["worktree_dir"]).resolve(strict=True)
+    branch = command(["git", "branch", "--show-current"], cwd=workspace).strip()
+    if branch != request["branch_name"]:
+        raise ValueError("selected worktree branch differs from plugin request")
+    if command(["git", "status", "--porcelain"], cwd=workspace):
+        raise ValueError("selected worktree is dirty; reconcile preserved work before retrying")
+    kernel, resolved = build_native_kernel(args, workspace)
+    prompt = worker_prompt(request)
     kernel.hooks.register_dispatch("agent-swarm-single-worker", SingleWorker(prompt, args.model))
     launch = {
         "task": request["task_name"],

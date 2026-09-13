@@ -10,7 +10,8 @@ from typing import Annotated, Any, ClassVar, Literal, Union
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from harness.blobs import BlobRef
-from harness.agent import AgentResult
+from harness.agent import AgentResult, DelegationResult
+from harness.completion import CompletionPlan, CompletionObservation
 from harness.handoff import HandoffRecord
 from harness.resources import ResourceObservation
 from harness.context import ContextPolicy
@@ -631,6 +632,42 @@ class ImprovementRecorded(_Event):
     record: ImprovementRecord
 
 
+class CompletionConfigured(_Event):
+    type: Literal["completion_configured"] = "completion_configured"
+    is_intent: ClassVar[bool] = True
+    plan: CompletionPlan
+    deadline: float = Field(gt=0, allow_inf_nan=False)
+    workspace_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class CompletionAttemptStarted(_Event):
+    type: Literal["completion_attempt_started"] = "completion_attempt_started"
+    is_intent: ClassVar[bool] = True
+    attempt: int = Field(ge=1, strict=True)
+
+
+class CompletionAttemptFinished(_Event):
+    type: Literal["completion_attempt_finished"] = "completion_attempt_finished"
+    is_intent: ClassVar[bool] = True
+    attempt: int = Field(ge=1, strict=True)
+    outcome: DelegationResult
+    workspace_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class CompletionChecked(_Event):
+    type: Literal["completion_checked"] = "completion_checked"
+    is_intent: ClassVar[bool] = True
+    attempt: int = Field(ge=0, strict=True)
+    observation: CompletionObservation
+
+
+class CompletionStopped(_Event):
+    type: Literal["completion_stopped"] = "completion_stopped"
+    is_intent: ClassVar[bool] = True
+    status: Literal["checks_passed", "paused", "blocked", "exhausted", "timed_out", "cancelled"]
+    reason: str = Field(max_length=2048)
+
+
 class UnknownEvent(_Event):
     """A type this binary doesn't know. Raw JSON retained; never dropped."""
 
@@ -705,6 +742,11 @@ Event = Annotated[
         AssessmentObserved,
         EvaluationRunStarted,
         EvaluationRunFinished,
+        CompletionConfigured,
+        CompletionAttemptStarted,
+        CompletionAttemptFinished,
+        CompletionChecked,
+        CompletionStopped,
         UnknownEvent,
     ],
     Field(discriminator="type"),

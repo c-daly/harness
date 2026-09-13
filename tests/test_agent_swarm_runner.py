@@ -124,3 +124,104 @@ async def test_dirty_task_refused_before_queue_mutation_or_inference(tmp_path, m
             argparse.Namespace(), {"worktree_dir": str(tmp_path), "branch_name": "task/test"}
         )
     assert queue_calls == []
+
+
+async def test_verified_binding_continues_native_worker_and_withholds_release(
+    tmp_path, monkeypatch
+):
+    import hashlib
+    import subprocess
+    import sys
+
+    directory = Path(__file__).parents[1] / "plugins/agent-swarm-runner"
+    monkeypatch.syspath_prepend(str(directory))
+    import run_verified
+    import run_one
+
+    workspace = tmp_path / "work"
+    workspace.mkdir()
+    subprocess.run(["git", "init", "-qb", "task/test", str(workspace)], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(workspace),
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "commit",
+            "--allow-empty",
+            "-qm",
+            "initial",
+        ],
+        check=True,
+    )
+    output = tmp_path / "output"
+    output.mkdir()
+    script = tmp_path / "check.py"
+    script.write_text(
+        "from pathlib import Path\nassert Path('result.txt').read_text() == 'ready'\n"
+    )
+    checks = tmp_path / "checks.json"
+    checks.write_text(
+        json.dumps(
+            {
+                "files": {str(script): hashlib.sha256(script.read_bytes()).hexdigest()},
+                "checks": [
+                    {
+                        "id": "result",
+                        "description": "result is ready",
+                        "argv": [sys.executable, str(script)],
+                    }
+                ],
+            }
+        )
+    )
+    catalog = Catalog(entries={"test": {"route": "openai/test"}})
+    monkeypatch.setattr(run_one.Catalog, "load", lambda path: catalog)
+    provider = FakeProvider(
+        [
+            text_turn("All done!"),
+            tool_call_turn("", "write_file", {"file_path": "result.txt", "content": "ready"}),
+            text_turn("Now implemented"),
+        ]
+    )
+    monkeypatch.setattr(run_one, "CatalogProvider", lambda catalog: provider)
+    queue_calls = []
+    monkeypatch.setattr(
+        run_verified, "plugin_command", lambda args, *parts: queue_calls.append(parts)
+    )
+    args = argparse.Namespace(
+        output=output,
+        checks=checks,
+        catalog=tmp_path / "catalog",
+        model="test",
+        max_model_calls=10,
+        max_attempts=3,
+        timeout=30,
+        pause_after=None,
+    )
+    state = await run_verified.execute(
+        args,
+        {
+            "task_name": "test",
+            "branch_name": "task/test",
+            "worktree_dir": str(workspace),
+            "prompt": "Create result.txt with ready",
+        },
+    )
+    assert state.status == "checks_passed" and state.attempts == 2
+    report = json.loads((output / "result.json").read_text())
+    assert report["queue_completion_recorded"] is False
+    assert [call[0] for call in queue_calls] == ["spawned"]
+    assert (
+        len(
+            [
+                e
+                for e in read_session(output / "journal", report["root_session_id"])
+                if isinstance(e.event, SubagentSpawned)
+            ]
+        )
+        == 2
+    )

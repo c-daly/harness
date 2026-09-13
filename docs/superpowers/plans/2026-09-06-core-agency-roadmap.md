@@ -8,6 +8,14 @@ and validation; the roadmap's gates are not claims of completed behavior.
 
 **Baseline:** `main` at `ce722b4`.
 
+> **September 13 priority change:** reliable completion of useful tasks takes
+> precedence over further capability expansion. Qualify native Harness and
+> agent-swarm through independent checks, continuation after partial results,
+> retained work and budgets, and honest stop/review states. Measure completed
+> tasks and operator interventions, not dispatched workers or final responses.
+> See [verified task continuation](../../verified-completion.md). The remaining
+> roadmap stays in scope; it is not evidence that these reliability gates pass.
+
 **Scope:** A local, single-user Harness, initially on Linux/WSL2. Preserve the
 existing provider, frontend, and plugin extension points while changing what
 the core owns.
