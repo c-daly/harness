@@ -1,7 +1,8 @@
 """Bind task execution separately from inference, retaining dispatch authority.
 
-The first migration is Codex. Its completion stream is a transport compatibility
-layer, recorded once for accounting; the typed task result owns the conversation.
+Codex, Claude Code, and Antigravity are all bound through this module. Each
+adapter completion stream is a transport compatibility layer, recorded once for
+accounting; the typed task result owns the conversation.
 Descriptors declare adapter support, not installed-CLI qualification or authority.
 """
 
@@ -25,7 +26,7 @@ class AgentRuntimeInfo(BaseModel):
     qualification: Literal["unverified"] = "unverified"
     resume: Literal[False] = False
     harness_tools: Literal["dispatcher"] = "dispatcher"
-    native_tools: Literal["provider-controlled"] = "provider-controlled"
+    native_tools: Literal["provider-controlled", "none", "unconfined"] = "provider-controlled"
     internal_iteration_limit: Literal[False] = False
     output_token_limit: Literal["reported-usage-check"] = "reported-usage-check"
     response_limits: Literal["adapter-chunks"] = "adapter-chunks"

@@ -8,6 +8,7 @@ import stat
 
 import pytest
 
+from harness.agent_runtime import AgentRuntimeInfo
 from harness.dispatcher import ToolOutcome, current_dispatch_tool
 from harness.errors import MalformedStreamError, ProviderError
 from harness.messages import Message, Role, TextBlock
@@ -335,3 +336,15 @@ async def test_contextvar_dispatch_overrides_bound_dispatcher(tmp_path, monkeypa
         current_dispatch_tool.reset(token)
 
     assert captured["dispatch"] is recorder_b
+
+
+def test_agent_runtime_info_declares_harness_exclusive_tool_surface():
+    provider = ClaudeCodeProvider(binary="claude")
+    info = provider.agent_runtime_info(ModelId("claude-code/default"))
+    assert info == AgentRuntimeInfo(runtime="claude-code", native_tools="none")
+    # Every strict-mcp-config/disallowedTools adapter shares these regardless
+    # of model suffix: the descriptor never varies by which model is asked.
+    assert provider.agent_runtime_info(ModelId("claude-code/opus")) == info
+    assert info.qualification == "unverified"
+    assert info.resume is False
+    assert info.internal_iteration_limit is False
