@@ -636,7 +636,7 @@ class CompletionConfigured(_Event):
     type: Literal["completion_configured"] = "completion_configured"
     is_intent: ClassVar[bool] = True
     plan: CompletionPlan
-    deadline: float = Field(gt=0, allow_inf_nan=False)
+    deadline: float | None = Field(default=None, allow_inf_nan=False)
     workspace_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
@@ -659,6 +659,14 @@ class CompletionChecked(_Event):
     is_intent: ClassVar[bool] = True
     attempt: int = Field(ge=0, strict=True)
     observation: CompletionObservation
+
+
+class CompletionReviewRecorded(_Event):
+    type: Literal["completion_review_recorded"] = "completion_review_recorded"
+    is_intent: ClassVar[bool] = True
+    attempt: int = Field(ge=1, strict=True)
+    decision: Literal["continue", "pause", "block"]
+    reason: str = Field(default="", max_length=2048)
 
 
 class CompletionStopped(_Event):
@@ -746,6 +754,7 @@ Event = Annotated[
         CompletionAttemptStarted,
         CompletionAttemptFinished,
         CompletionChecked,
+        CompletionReviewRecorded,
         CompletionStopped,
         UnknownEvent,
     ],

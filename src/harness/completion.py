@@ -9,6 +9,7 @@ emits TaskAccepted. Execution budgets still belong to the existing root scope.
 import asyncio
 import json
 import time
+import contextlib
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -35,8 +36,8 @@ class CompletionPlan(_Data):
     # Host configuration (including prompt, route and grading controls) is
     # retained as a blob. A restart must supply exactly the same configuration.
     configuration: BlobRef
-    max_attempts: int = Field(default=4, ge=1, le=32, strict=True)
-    timeout_seconds: float = Field(default=1800, gt=0, le=86400)
+    max_attempts: int | None = Field(default=None, ge=1, le=32, strict=True)
+    timeout_seconds: float | None = Field(default=None, gt=0, le=86400)
 
     @model_validator(mode="after")
     def unique_checks(self):
@@ -60,7 +61,7 @@ class CompletionObservation(_Data):
 @dataclass
 class CompletionState:
     plan: CompletionPlan | None = None
-    deadline: float = 0
+    deadline: float | None = None
     attempts: int = 0
     pending: bool = False
     outcome: DelegationResult | None = None
@@ -151,7 +152,7 @@ class CompletionService:
         if self.session.append(event).event != event:
             raise ValueError("completion records cannot be rewritten")
 
-    async def run(self, plan, *, prompt, execute, verify, identify, pause_after=None):
+    async def run(self, plan, *, prompt, execute, verify, identify, pause_after=None, reviewer=None):
         # The session lock excludes other processes, not two async callers
         # sharing this writer. Claim ownership before the first await.
         if getattr(self.session, "_completion_active", False):
@@ -165,17 +166,19 @@ class CompletionService:
                 verify=verify,
                 identify=identify,
                 pause_after=pause_after,
+                reviewer=reviewer,
             )
         finally:
             self.session._completion_active = False
 
-    async def _run(self, plan, *, prompt, execute, verify, identify, pause_after):
+    async def _run(self, plan, *, prompt, execute, verify, identify, pause_after, reviewer):
         from harness.events import (
             CompletionConfigured,
             CompletionAttemptStarted,
             CompletionAttemptFinished,
             CompletionChecked,
             CompletionStopped,
+            CompletionReviewRecorded,
         )
 
         plan = CompletionPlan.model_validate(plan.model_dump())
@@ -193,6 +196,10 @@ class CompletionService:
             )
         if state.status in {"cancelled", "timed_out", "blocked", "exhausted"}:
             return state
+        
+        # Track review inputs between settled attempts.
+        prev_observation: CompletionObservation | None = None
+        last_outcome: DelegationResult | None = None
 
         def stop(status, reason):
             self._emit(CompletionStopped(status=status, reason=reason[:2048]))
@@ -200,18 +207,21 @@ class CompletionService:
 
         if state.plan is None:
             digest = await identify()
+            deadline = None
+            if plan.timeout_seconds is not None:
+                deadline = time.time() + plan.timeout_seconds
             self._emit(
                 CompletionConfigured(
-                    plan=plan, deadline=time.time() + plan.timeout_seconds, workspace_sha256=digest
+                    plan=plan, deadline=deadline, workspace_sha256=digest
                 )
             )
             state = self.state()
-        remaining = state.deadline - time.time()
-        if remaining <= 0:
+        remaining = None if state.deadline is None else state.deadline - time.time()
+        if remaining is not None and remaining <= 0:
             return stop("timed_out", "recorded completion deadline reached")
         invocation_attempts = 0
         try:
-            async with asyncio.timeout(remaining):
+            async with (asyncio.timeout(remaining) if remaining is not None else contextlib.nullcontext()):
                 if await identify() != state.workspace_sha256:
                     return stop(
                         "blocked", "workspace changed outside the recorded attempt; reconcile it"
@@ -225,13 +235,34 @@ class CompletionService:
                     if before != observed.workspace_sha256 or before != await identify():
                         return stop("blocked", "workspace changed during independent verification")
                     self._emit(CompletionChecked(attempt=state.attempts, observation=observed))
+                    # Host progress review happens between settled attempts after a fresh check.
+                    if reviewer is not None and state.attempts > 0:
+                        try:
+                            decision = await reviewer(
+                                prev_observation, observed, last_outcome
+                            )
+                        except Exception as exc:  # block on review errors
+                            return stop("blocked", f"review failed: {type(exc).__name__}: {exc}")
+                        if decision not in {"continue", "pause", "block"}:
+                            return stop("blocked", "invalid review decision")
+                        self._emit(
+                            CompletionReviewRecorded(
+                                attempt=state.attempts, decision=decision, reason=""
+                            )
+                        )
+                        if decision == "pause":
+                            return stop("paused", "host review requested a pause")
+                        if decision == "block":
+                            return stop("blocked", "host review blocked further attempts")
+                    # Update previous observation for the next review window.
+                    prev_observation = observed
                     if any(c.status == "error" for c in observed.checks):
                         return stop("blocked", "independent verifier could not establish a result")
                     if all(c.status == "passed" for c in observed.checks):
                         return stop(
                             "checks_passed", "all declared checks passed on the recorded workspace"
                         )
-                    if state.attempts >= plan.max_attempts:
+                    if plan.max_attempts is not None and state.attempts >= plan.max_attempts:
                         return stop("exhausted", "attempt allowance reached with unresolved checks")
                     if pause_after is not None and invocation_attempts >= pause_after:
                         return stop("paused", "host requested a checkpoint between attempts")
@@ -262,6 +293,7 @@ class CompletionService:
                         )
                     )
                     state = self.state()
+                    last_outcome = state.outcome
                     invocation_attempts += 1
                     if outcome.status not in {"completed", "incomplete"}:
                         return stop(
@@ -274,6 +306,9 @@ class CompletionService:
                         )
         except TimeoutError:
             return stop("timed_out", "recorded completion deadline reached")
+        except ValueError as exc:
+            # Reviewer validation errors block progression
+            return stop("blocked", f"review error: {exc}")
         except asyncio.CancelledError:
             stop("cancelled", "operator cancellation; partial effects retained")
             raise

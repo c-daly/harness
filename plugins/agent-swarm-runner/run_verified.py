@@ -42,7 +42,7 @@ async def execute(args, request, *, resume=None):
         raise ValueError("initial worktree is dirty; reconcile preserved work before starting")
     specification = CommandChecks.model_validate_json(args.checks.read_text())
     kernel, resolved = build_native_kernel(
-        args, workspace, max_children=args.max_attempts, resume=resume
+        args, workspace, max_children=(args.max_attempts or 1), resume=resume
     )
     kernel.hooks.register_dispatch("verified-worker-model", PinnedRoute(args.model))
     service = CompletionService(kernel.session)
@@ -177,8 +177,8 @@ def main():
         parser.add_argument(f"--{name}", type=Path, required=True)
     parser.add_argument("--model", required=True)
     parser.add_argument("--max-model-calls", type=int, default=160)
-    parser.add_argument("--max-attempts", type=int, default=6)
-    parser.add_argument("--timeout", type=float, default=1800)
+    parser.add_argument("--max-attempts", type=int)
+    parser.add_argument("--timeout", type=float)
     parser.add_argument("--pause-after", type=int)
     parser.add_argument(
         "--resume", action="store_true", help="resume a recorded checkpoint in --output"
