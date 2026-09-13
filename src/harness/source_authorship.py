@@ -42,15 +42,17 @@ class SourceAuthorSpec(_Data):
     @field_validator("limits", mode="before")
     @classmethod
     def _partial_limits_keep_author_defaults(cls, value):
-        # A partial limits mapping overrides only the fields it names; the
-        # rest keep the author defaults above, not the generic TaskLimits
-        # defaults (20 iterations, 4 MiB input, 1 MiB response, 65536
-        # chunks), which the cap check below would then refuse. An omitted
-        # timeout_seconds stays omitted so session and task timeout
-        # semantics still apply; an explicit timeout_seconds passes
-        # through unchanged.
+        # A partial limits mapping or explicit TaskLimits instance overrides
+        # only the fields it names; the rest keep the author defaults above,
+        # not the generic TaskLimits defaults (20 iterations, 4 MiB input,
+        # 1 MiB response, 65536 chunks), which the cap check below would
+        # then refuse. An omitted timeout_seconds stays omitted so session
+        # and task timeout semantics still apply; an explicit
+        # timeout_seconds passes through unchanged.
         if isinstance(value, dict):
             return _AUTHOR_LIMIT_DEFAULTS | value
+        if isinstance(value, TaskLimits):
+            return _AUTHOR_LIMIT_DEFAULTS | value.model_dump(exclude_unset=True)
         return value
 
     @model_validator(mode="after")
@@ -147,7 +149,7 @@ def _response(session, intent):
     results = [e.event.result for e in events if isinstance(e.event, AgentRunFinished)
                and e.event.result.run_id == starts[0].run_id]
     if (len(results) != 1 or results[0].task_id != intent.id or results[0].status != "completed"
-            or results[0].output is None or results[0].output.size > 128 * 1024):
+            or results[0].output is None or results[0].output.size > _AUTHOR_LIMIT_DEFAULTS["max_response_bytes"]):
         raise ValueError("source finalization requires its completed bounded author response")
     return SourceResponse.model_validate_json(session.blobs.get(results[0].output))
 
@@ -293,7 +295,7 @@ def inspect_authoring(state, blobs, intent):
         lines += ["Recorded task outcome:", json.dumps(result, sort_keys=True, indent=2)]
         if result["output"] is not None:
             ref = BlobRef.model_validate(result["output"])
-            if ref.size > 128 * 1024:
+            if ref.size > _AUTHOR_LIMIT_DEFAULTS["max_response_bytes"]:
                 raise ValueError("recorded author response exceeds 128 KiB")
             lines += ["Author response (unverified data):", blobs.get(ref).decode("utf-8")]
     return "\n".join(lines)

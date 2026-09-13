@@ -441,3 +441,17 @@ def test_partial_limit_override_direct_spec_keeps_author_defaults(revisions):
     assert limits.max_output_tokens == 1024
     assert limits.max_stream_chunks == 16384
     assert "timeout_seconds" not in limits.model_fields_set
+
+
+def test_explicit_tasklimits_instance_keeps_author_defaults(revisions):
+    from harness.agent import TaskLimits
+    result = spec(revisions, limits=TaskLimits(max_output_tokens=1024))
+    limits = result.limits
+    assert limits.max_iterations == 1
+    assert limits.max_input_bytes == 256 * 1024
+    assert limits.max_response_bytes == 128 * 1024
+    assert limits.max_output_tokens == 1024
+    assert limits.max_stream_chunks == 16384
+    assert "timeout_seconds" not in limits.model_fields_set
+    with pytest.raises(ValueError):
+        spec(revisions, limits=TaskLimits(max_iterations=3))
