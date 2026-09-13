@@ -83,6 +83,7 @@ class SubagentRunner:
         scope.budget.usage.attach(parent)
         registry: ToolRegistry | FilteredRegistry = scope.registry
         limit: int | None = None
+        task_limits = None
         chosen = model or self.default_model
         # an explicit dispatch_agent model= or an AgentDef.model is a pin (routing-exempt);
         # an unpinned child inherits the routable default_model
@@ -113,6 +114,7 @@ class SubagentRunner:
                     current_scope.reset(token)
             system_prompt = definition.body or system_prompt
             limit = definition.max_output_chars
+            task_limits = definition.limits
             if definition.model is not None:
                 chosen = ModelId(definition.model)
                 pinned = True
@@ -130,12 +132,14 @@ class SubagentRunner:
             return await self._run_child(prompt=prompt, parent=parent, agent=agent,
                                          chosen=chosen, pinned=pinned, registry=registry,
                                          system_prompt=system_prompt, limit=limit, scope=scope,
-                                         on_result=on_result, requirements=requirements, requirement_title=requirement_title)
+                                         on_result=on_result, requirements=requirements,
+                                         requirement_title=requirement_title, task_limits=task_limits)
         finally:
             scope.budget.release_child()
 
     async def _run_child(self, *, prompt, parent, agent, chosen, pinned, registry,
-                         system_prompt, limit, scope, on_result=None, requirements=None, requirement_title=None):
+                         system_prompt, limit, scope, on_result=None, requirements=None,
+                         requirement_title=None, task_limits=None):
         child_id = new_session_id()
         active = current_agent_run.get()
         spawn_env = parent.append(
@@ -180,6 +184,9 @@ class SubagentRunner:
                 self.base, child_id, parent=(parent.id, spawn_env.seq), default_model=chosen,
                 redactors=parent._redactors,
             )
+            task = AgentTask(prompt=prompt, agent=AgentId(agent) if agent else None)
+            if task_limits is not None:
+                task = task.model_copy(update={"limits": task_limits})
             loop = AgentLoop(
                 session=child,
                 provider=self.provider,
@@ -191,17 +198,18 @@ class SubagentRunner:
                 pricing=self.pricing,
                 pricing_for=self.pricing_for,
                 pinned=pinned,
+                max_iterations=task.limits.max_iterations,
                 scope=ExecutionScope(child, registry, scope.budget, scope.depth + 1,
                                      scope.resources, scope.context_policy),
             )
             await loop.start()
-            task = AgentTask(prompt=prompt, agent=AgentId(agent) if agent else None)
             if requirements is not None:
                 service = TaskService(child)
                 service.create(requirement_title if requirement_title is not None else prompt[:4096])
                 for requirement in requirements:
                     service.add_requirement(requirement)
-                task = service.prepare(prompt).model_copy(update={"agent": task.agent})
+                task = service.prepare(prompt).model_copy(update={"agent": task.agent,
+                                                                 "limits": task.limits})
             result = await loop.run_task(task)
             if requirements is not None:
                 service.check()

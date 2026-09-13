@@ -1,5 +1,10 @@
 # Actual Harness and agent-swarm integration checks
 
+Subsequent user-approved GPT execution, the native binding, a reproduced core
+limit problem and independent review recovery are documented in
+[Native Harness execution and review recovery](native-runner.md). The checks
+below retain the earlier local-probe results and approval history.
+
 The earlier 24-task execution was launched directly in Claude Code, not through
 Harness. That did not test the host the user intended. The separate session
 `4b0d4271` is now stopped. Its queue, branches, uncommitted work, PRs and
