@@ -16,10 +16,11 @@
       "worker_id": "2-sustained-scenario-driver-and-protocol-w1"
     },
     "3-plugin-workflow-reconciliation": {
-      "status": "spawned",
+      "status": "completed",
       "retries": 0,
       "worktree_dir": "/home/fearsidhe/projects/harness/.worktrees/harness-remaining-roadmap/3-plugin-workflow-reconciliation",
-      "worker_id": "3-plugin-workflow-reconciliation-w1"
+      "worker_id": "3-plugin-workflow-reconciliation-w1",
+      "error": ""
     },
     "4-suspected-stall-observation-and-recorded-assessment": {
       "status": "spawned",
@@ -28,9 +29,10 @@
       "worker_id": "4-suspected-stall-observation-and-recorded-assessment-w1"
     },
     "5-pre-call-usage-reservations": {
-      "status": "pending",
+      "status": "spawned",
       "retries": 0,
-      "worktree_dir": "/home/fearsidhe/projects/harness/.worktrees/harness-remaining-roadmap/5-pre-call-usage-reservations"
+      "worktree_dir": "/home/fearsidhe/projects/harness/.worktrees/harness-remaining-roadmap/5-pre-call-usage-reservations",
+      "worker_id": "5-pre-call-usage-reservations-w1"
     },
     "6-claude-code-and-antigravity-task-bindings": {
       "status": "spawned",

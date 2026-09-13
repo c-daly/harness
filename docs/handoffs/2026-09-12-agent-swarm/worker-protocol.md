@@ -38,7 +38,11 @@ uv run ruff check .
 uv run pytest -q tests/test_<focused>.py
 ```
 
-Use `uv run …` for every Python command. `uv sync --locked` must succeed
+Use `uv run …` for every Python command. The router shell exports a global
+`PYTHONPATH` pointing at the agent-swarm plugin, whose `scripts` package
+shadows this repository's `scripts/` namespace and breaks collection of the
+`scripts.*`-importing tests; clear it for every test, build and smoke command:
+`env -u PYTHONPATH uv run pytest -q` (or `PYTHONPATH= uv run …`). `uv sync --locked` must succeed
 without editing `pyproject.toml` or `uv.lock`; a dependency change is a
 reportable deviation, not something to do quietly. If the default uv cache is
 not writable, prefix commands with `UV_CACHE_DIR=/home/fearsidhe/projects/harness/.worktrees/tmp/uv-cache`.

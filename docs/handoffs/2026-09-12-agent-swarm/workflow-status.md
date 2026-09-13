@@ -39,10 +39,11 @@ with the router briefing, the orchestrator preface and the runner prompt.
 | 1-source-authorship-completion | `feat/source-authorship` (existing worktree) | `1-source-authorship-completion-w1` | batch 1 | completed: 3 commits (`7577abf`, `5c1b985`, `e385d49`); partial-limit defect fixed; 46/46 authorship tests on 3.12 and 3.13; local complete runs 2398/2399 passed with 6/5 failures, all traced to host contention or the fake-CLI `python3` PATH artifact (verified: 3 passed with locked `bin` on PATH) | [PR #59](https://github.com/c-daly/harness/pull/59) head `e385d49`; hosted CI run 34728082425 succeeded on 3.12 and 3.13 at `e385d49`; reviewer `pr59-review-r1` found no blocking issues, one should-fix and one nit, both fixed in `1bce83b` (+ body `c6b1f51`); CI on the new head pending | `docs/handoffs/2026-09-12-source-authorship/{README.md,pr-body.md}` |
 | 12-user-correction-to-repair-loop | `task/12-…` (prerequisite `feat/source-authorship` merged in) | `12-user-correction-to-repair-loop-w1` | batch 2 | running | PR base `feat/source-authorship` | — |
 | 2-sustained-scenario-driver-and-protocol | `task/2-…` | `2-sustained-scenario-driver-and-protocol-w1` | batch 1 | running | — | — |
-| 3-plugin-workflow-reconciliation | `task/3-…` | `3-plugin-workflow-reconciliation-w1` | batch 1 | running | — | — |
+| 3-plugin-workflow-reconciliation | `task/3-…` | `3-plugin-workflow-reconciliation-w1` | batch 1 | completed: `9827f33` (+ body `e52543d`); 11 focused tests; complete suites 2369 passed / 7 skipped on 3.13 (681 s) and 3.12 (616 s, third attempt after two host-load flakes in untouched files); build and smoke OK | [PR #60](https://github.com/c-daly/harness/pull/60) head `e52543d`, CI pending, reviewer pending | `docs/handoffs/2026-09-12-plugin-reconciliation/pr-body.md`, `docs/plugin-reconciliation.md` |
 | 4-suspected-stall-observation-and-recorded-assessment | `task/4-…` | `4-suspected-stall-observation-and-recorded-assessment-w1` | batch 1 | running | — | — |
 | 6-claude-code-and-antigravity-task-bindings | `task/6-…` | `6-claude-code-and-antigravity-task-bindings-w1` | batch 1 | running | — | — |
-| 5, 9, 10, 11, 13, 14, 15 | `task/<slug>` | — | queued (spawnable, waiting for a free slot; max 5 parallel) | pending | — | — |
+| 5-pre-call-usage-reservations | `task/5-…` | `5-pre-call-usage-reservations-w1` | batch 2 | running | — | — |
+| 9, 10, 11, 13, 14, 15 | `task/<slug>` | — | queued (spawnable, waiting for a free slot; max 5 parallel) | pending | — | — |
 | 7, 8, 12, 16–24 | `task/<slug>` | — | blocked on dependencies | pending | — | — |
 
 ## Orchestration decisions
@@ -74,6 +75,12 @@ with the router briefing, the orchestrator preface and the runner prompt.
 - Task 1's worker invoked the locked interpreters by absolute path without
   their `bin` on `PATH`, which makes the Codex fake-CLI subprocess tests fail
   deterministically; worker protocol now requires `uv run …`.
+- The router shell exports `PYTHONPATH=/home/fearsidhe/.claude/plugins/agent-swarm`
+  globally (found by Task 3's worker). That plugin's `scripts` package shadows
+  the repository's `scripts/` namespace and breaks collection of the nine
+  `scripts.*`-importing test files. Worker protocol now requires
+  `env -u PYTHONPATH uv run …`; running workers were notified. This is an
+  agent-swarm environment issue, not a Harness defect.
 
 ## Completion reporting
 
