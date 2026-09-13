@@ -35,15 +35,17 @@
       "worker_id": "5-pre-call-usage-reservations-w1"
     },
     "6-claude-code-and-antigravity-task-bindings": {
-      "status": "spawned",
+      "status": "completed",
       "retries": 0,
       "worktree_dir": "/home/fearsidhe/projects/harness/.worktrees/harness-remaining-roadmap/6-claude-code-and-antigravity-task-bindings",
-      "worker_id": "6-claude-code-and-antigravity-task-bindings-w1"
+      "worker_id": "6-claude-code-and-antigravity-task-bindings-w1",
+      "error": ""
     },
     "7-outward-mcp-capability-delivery-without-argv": {
-      "status": "pending",
+      "status": "spawned",
       "retries": 0,
-      "worktree_dir": "/home/fearsidhe/projects/harness/.worktrees/harness-remaining-roadmap/7-outward-mcp-capability-delivery-without-argv"
+      "worktree_dir": "/home/fearsidhe/projects/harness/.worktrees/harness-remaining-roadmap/7-outward-mcp-capability-delivery-without-argv",
+      "worker_id": "7-outward-mcp-capability-delivery-without-argv-w1"
     },
     "8-pattern-redaction-and-minimal-child-environments": {
       "status": "pending",

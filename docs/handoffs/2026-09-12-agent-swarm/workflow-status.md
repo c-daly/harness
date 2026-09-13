@@ -41,10 +41,11 @@ with the router briefing, the orchestrator preface and the runner prompt.
 | 2-sustained-scenario-driver-and-protocol | `task/2-…` | `2-sustained-scenario-driver-and-protocol-w1` | batch 1 | running | — | — |
 | 3-plugin-workflow-reconciliation | `task/3-…` | `3-plugin-workflow-reconciliation-w1` | batch 1 | completed: `9827f33` (+ body `e52543d`); 11 focused tests; complete suites 2369 passed / 7 skipped on 3.13 (681 s) and 3.12 (616 s, third attempt after two host-load flakes in untouched files); build and smoke OK | [PR #60](https://github.com/c-daly/harness/pull/60) head `e52543d`, CI pending, reviewer pending | `docs/handoffs/2026-09-12-plugin-reconciliation/pr-body.md`, `docs/plugin-reconciliation.md` |
 | 4-suspected-stall-observation-and-recorded-assessment | `task/4-…` | `4-suspected-stall-observation-and-recorded-assessment-w1` | batch 1 | running | — | — |
-| 6-claude-code-and-antigravity-task-bindings | `task/6-…` | `6-claude-code-and-antigravity-task-bindings-w1` | batch 1 | running | — | — |
+| 6-claude-code-and-antigravity-task-bindings | `task/6-…` | `6-claude-code-and-antigravity-task-bindings-w1` | batch 1 | completed: `bfa2a9e`; adds `agent_runtime_info` for Claude Code and Antigravity, widens `native_tools`, generalizes catalog routing (declared deviation in `provider_litellm.py`); complete suites 2378 passed / 7 skipped on 3.13 (681 s) and 3.12 (after two host-load flakes in untouched files); build and smoke OK | [PR #61](https://github.com/c-daly/harness/pull/61) head `bfa2a9e`, CI pending, reviewer `pr61-review-r1` dispatched | `docs/handoffs/2026-09-12-agent-task-bindings/pr-body.md` |
+| 7-outward-mcp-capability-delivery-without-argv | `task/7-…` (prerequisite `task/6-…` merged in) | `7-outward-mcp-capability-delivery-without-argv-w1` | batch 3 | running | PR base `task/6-…` | — |
 | 5-pre-call-usage-reservations | `task/5-…` | `5-pre-call-usage-reservations-w1` | batch 2 | running | — | — |
 | 9, 10, 11, 13, 14, 15 | `task/<slug>` | — | queued (spawnable, waiting for a free slot; max 5 parallel) | pending | — | — |
-| 7, 8, 12, 16–24 | `task/<slug>` | — | blocked on dependencies | pending | — | — |
+| 8, 16–24 | `task/<slug>` | — | blocked on dependencies | pending | — | — |
 
 ## Orchestration decisions
 
