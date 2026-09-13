@@ -1,5 +1,47 @@
 # Continuation status
 
+The continuation increment is implemented and pushed on
+`feat/progress-aware-completion`, based on the preserved
+`integration/harness-reliability` checkpoint (`d03e1a3`). The final implementation
+and test candidate was validated at `9267a33`; later receipt updates change only
+this handoff. The main checkout and original dirty worktrees remain preserved.
+
+Current qualification:
+
+- Python 3.12.14: **2496 passed, 7 skipped, 6 warnings** in 719.39s.
+- Python 3.13.15: **2496 passed, 7 skipped, 6 warnings** in 687.19s.
+- These complete suites ran sequentially on unchanged source. Repository Ruff,
+  source/wheel build, console help and imports from the installed wheel passed.
+- `validation.json` retains the commit, artifact hashes and evidence locations.
+  Evidence paths below are relative to the primary Harness checkout.
+- Earlier concurrent suites exposed output-test deadline races (corrected in
+  tests) and UI fixture timeouts (still a qualification limit). The isolated and
+  sequential UI passes are consistent with host contention, but do not prove its
+  cause or qualify responsiveness under concurrent load. No UI deadline or
+  adoption gate was relaxed.
+
+Core CompletionPlan now defaults to no supervisor attempt cap or overall
+deadline. Explicit limits remain enforced, and a typed host review can continue,
+pause or block after fresh independent checks. Reviews retain actual before/
+after observations across resume. The native verified runner separates worker
+limits from supervisor limits, records effective controls, preserves root counts
+and supplies required check descriptions to actual model context. Tests cover
+these behaviors and retain the independently authored contracts.
+
+The native Harness worker selected through installed agent-swarm has stopped:
+all 230 tool calls are settled and all 232 model calls remain accounted for.
+It required operator-directed context recovery and implementation corrections;
+this is supervised integration evidence. Queue completion remains withheld.
+Older PRs and the original roadmap queue were not merged or completed here.
+
+Remaining work includes automatic resident review/time extension, model-aware
+context sizing and active-turn recovery, UI behavior under contention, and the
+preserved session-repair/purge-confirmation task. The command-line runner does
+not yet install a resident reviewer. The integration baseline's failed lifecycle
+oracle remains unresolved; the green repository suites do not replace it.
+
+## Retained development and validation history
+
 The integration checkpoint is `d03e1a3` on `integration/harness-reliability`.
 It is pushed to origin, along with `feat/progress-aware-completion` (plan commit
 `dc46fec`). Existing PRs 59 through 62 remain open for later user review.

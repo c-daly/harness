@@ -1,0 +1,48 @@
+{
+  "validated_commit": "9267a335e6041942f6611fe1870a0adcb364ad84",
+  "integration_commit": "d03e1a3b55cc549839319d9d7d1b3bedca63a27c",
+  "matrix_mode": "sequential",
+  "source_unchanged_during_validation": true,
+  "tests": {
+    "3.12.14": {
+      "passed": 2496,
+      "skipped": 7,
+      "warnings": 6,
+      "seconds": 719.39,
+      "exit_code": 0
+    },
+    "3.13.15": {
+      "passed": 2496,
+      "skipped": 7,
+      "warnings": 6,
+      "seconds": 687.19,
+      "exit_code": 0
+    }
+  },
+  "ruff_exit_code": 0,
+  "build_exit_code": 0,
+  "wheel_smoke_exit_code": 0,
+  "wheel_imported_module_count": 97,
+  "artifacts": {
+    "harness-0.0.1.tar.gz": {
+      "sha256": "a367629d527f20e679c3e58fe0dcbc8d970bd031aef068826768f4a92a4e116b",
+      "bytes": 1873521
+    },
+    "harness-0.0.1-py3-none-any.whl": {
+      "sha256": "51a5f8e83d2d2c5431651458e3b9265e22b35bba328568361c439a765dd83169",
+      "bytes": 363338
+    }
+  },
+  "evidence_directory": ".worktrees/tmp/progress-continuation-validation-v3",
+  "source_snapshot_sha256": "52c975c50867b6cd68f66c297a77431b2a991a24b7dd2c56c138f42059a819be",
+  "prior_complete_runs_retained": [
+    ".worktrees/tmp/progress-continuation-validation-v1",
+    ".worktrees/tmp/progress-continuation-validation-v2"
+  ],
+  "qualification_limits": [
+    "Concurrent matrix runs exposed UI fixture timeouts; sequential success does not qualify UI responsiveness under contention.",
+    "Native implementation required operator recovery, independent review and corrections.",
+    "Agent-swarm queue completion and task acceptance remain withheld for scope and release review.",
+    "Preserved lifecycle repair task still fails its independent purge-confirmation oracle."
+  ]
+}

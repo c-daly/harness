@@ -31,3 +31,9 @@ gate while this mechanism is still under development.
 Outstanding reviews remain deferred. Known follow-ups include errored-tool
 workflow-reference handling in PR60 and formatting in PR61. No PR is merged or
 closed by this checkpoint, and no original workflow task is marked complete.
+
+
+The follow-on continuation increment and its final qualification are recorded in
+[continuation-status.md](continuation-status.md) and [validation.json](validation.json).
+Both complete supported-Python suites pass when run sequentially; the retained
+concurrent-run UI timing failures remain a separate qualification limit.
