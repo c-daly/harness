@@ -53,9 +53,11 @@
       "worktree_dir": "/home/fearsidhe/projects/harness/.worktrees/harness-remaining-roadmap/8-pattern-redaction-and-minimal-child-environments"
     },
     "9-session-integrity-authorized-repair-and-lifecycle-cli": {
-      "status": "pending",
-      "retries": 0,
-      "worktree_dir": "/home/fearsidhe/projects/harness/.worktrees/harness-remaining-roadmap/9-session-integrity-authorized-repair-and-lifecycle-cli"
+      "status": "spawned",
+      "retries": 2,
+      "worktree_dir": "/home/fearsidhe/projects/harness/.worktrees/harness-remaining-roadmap/9-session-integrity-authorized-repair-and-lifecycle-cli",
+      "worker_id": "harness:208e78c1af9c49088f40121c2f8baee8",
+      "last_error": "Independent review rejected native Harness candidate 73717b5. Preserve and extend it. Three frozen operator checks fail at /home/fearsidhe/projects/harness/.worktrees/tmp/harness-swarm-native-v2/operator_review/test_candidate_review.py: report digest must bind actual session bytes even when findings/offset are unchanged; stale authorization must refuse changed torn-tail bytes without modifying the new contents; harness sessions --help must work (main is missing). Run these checks with env PYTHONPATH=src:. and the supplied Python before and after the fix; do not edit these operator checks. Ruff has four failures (unused os, parse_envelope_line, present, pathlib.Path). The task is still incomplete: implement storage limits, the requested lifecycle CLI and docs and appropriate checks. Do not stop because a narrow self-authored test set passed; enumerate every original manifest requirement against actual implementation and checks before reporting. A WIP checkpoint was made solely to preserve the rejected candidate; no acceptance or publication occurred. Use native Harness tools and the approved gpt route, no external agent CLI."
     },
     "10-participant-acceptance-recovery-in-coordinations": {
       "status": "pending",

@@ -1,6 +1,12 @@
 # Workflow status: Harness remaining roadmap (agent-swarm pipeline)
 
-Living record maintained by the orchestrator session `4b0d4271` (started
+**Current handoff, 2026-09-13:** the direct Claude orchestrator `4b0d4271` is
+stopped. The dispatch table below is historical, including its "running"
+labels. Three later native Harness attempts are complete; no native worker is
+currently running. Read [the native-host handoff](native-host-handoff.md) before
+resuming. Stored runner `active`/`spawned` flags are not liveness evidence.
+
+Historical record maintained by the orchestrator session `4b0d4271` (started
 2026-09-12). Machine-readable state is in `orchestration-state/` (runner JSON
 `harness-remaining-roadmap.json`, initial pending prompts, spawn timestamps).
 A generated plan or manifest is not an executing workflow; only the dispatch
