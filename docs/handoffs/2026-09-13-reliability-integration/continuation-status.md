@@ -60,3 +60,17 @@ deadline expiring. The worker's final text incorrectly claimed that case worked;
 it is not accepted on that claim. The remaining runner phase includes this
 specific correction, its regression, runner defaults/tests, the stale storage
 assertion and documentation. Queue completion remains withheld.
+
+The fourth turn corrected timeout classification but then reached the host's
+context byte bound. All 12 independent contract regressions now pass (1.15s),
+and are retained in the repository as test_completion_contract.py and
+ test_completion_review_contract.py. These two files were authored by the
+operator; the native worker authored the implementation and its own tests.
+The root retains 180 model calls and 179 tools, with no unsettled tool effects.
+
+The repeated context stops were diagnosed against the actual provider request:
+54325 input tokens on the last successful call versus 272000 maximum input tokens
+in the installed LiteLLM gpt-5 metadata. Full-file reads consumed the host's
+262144-byte profile. The next idle invocation records a 524288-byte profile;
+this is an explicit operator host configuration change, not automatic model-aware
+context sizing. Active-turn context management remains a product follow-up.

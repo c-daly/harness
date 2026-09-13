@@ -241,8 +241,9 @@ class CompletionService:
         if remaining is not None and remaining <= 0:
             return stop("timed_out", "recorded completion deadline reached")
         invocation_attempts = 0
+        cm = asyncio.timeout(remaining)
         try:
-            async with (asyncio.timeout(remaining) if remaining is not None else contextlib.nullcontext()):
+            async with cm:
                 if await identify() != state.workspace_sha256:
                     return stop(
                         "blocked", "workspace changed outside the recorded attempt; reconcile it"
@@ -352,8 +353,13 @@ class CompletionService:
                         return stop(
                             "blocked", f"worker stopped at its {outcome.reason}; no automatic reset"
                         )
-        except TimeoutError:
-            return stop("timed_out", "recorded completion deadline reached")
+        except TimeoutError as exc:
+            # Only treat as deadline expiry if the timeout context expired.
+            if hasattr(cm, "expired") and cm.expired():
+                return stop("timed_out", "recorded completion deadline reached")
+            # Verifier/identify raised TimeoutError without an overall deadline: block and propagate.
+            stop("blocked", f"completion failed: {type(exc).__name__}: {exc}")
+            raise
         except asyncio.CancelledError:
             stop("cancelled", "operator cancellation; partial effects retained")
             raise
