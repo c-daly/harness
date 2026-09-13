@@ -1081,6 +1081,10 @@ def main() -> None:
         from harness.export_cli import main as export_main
         export_main(argv[1:])
         return
+    if argv and argv[0] == "sessions":
+        from harness.session_admin import main as sessions_main
+        sessions_main(argv[1:])
+        return
     if argv and argv[0] == "models":
         from harness.models_cli import main as models_main
         models_main(argv[1:])
