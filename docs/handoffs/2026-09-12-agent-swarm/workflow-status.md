@@ -36,7 +36,8 @@ with the router briefing, the orchestrator preface and the runner prompt.
 
 | Task | Branch | Worker | Spawned | Outcome | Branch/PR | Evidence |
 |---|---|---|---|---|---|---|
-| 1-source-authorship-completion | `feat/source-authorship` (existing worktree) | `1-source-authorship-completion-w1` | batch 1 | running | — | — |
+| 1-source-authorship-completion | `feat/source-authorship` (existing worktree) | `1-source-authorship-completion-w1` | batch 1 | completed: 3 commits (`7577abf`, `5c1b985`, `e385d49`); partial-limit defect fixed; 46/46 authorship tests on 3.12 and 3.13; local complete runs 2398/2399 passed with 6/5 failures, all traced to host contention or the fake-CLI `python3` PATH artifact (verified: 3 passed with locked `bin` on PATH) | [PR #59](https://github.com/c-daly/harness/pull/59) head `e385d49`, CI pending | `docs/handoffs/2026-09-12-source-authorship/{README.md,pr-body.md}` |
+| 12-user-correction-to-repair-loop | `task/12-…` (prerequisite `feat/source-authorship` merged in) | `12-user-correction-to-repair-loop-w1` | batch 2 | running | PR base `feat/source-authorship` | — |
 | 2-sustained-scenario-driver-and-protocol | `task/2-…` | `2-sustained-scenario-driver-and-protocol-w1` | batch 1 | running | — | — |
 | 3-plugin-workflow-reconciliation | `task/3-…` | `3-plugin-workflow-reconciliation-w1` | batch 1 | running | — | — |
 | 4-suspected-stall-observation-and-recorded-assessment | `task/4-…` | `4-suspected-stall-observation-and-recorded-assessment-w1` | batch 1 | running | — | — |

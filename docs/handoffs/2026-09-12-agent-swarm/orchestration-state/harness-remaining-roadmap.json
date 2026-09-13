@@ -3,10 +3,11 @@
   "phase": "monitoring",
   "tasks": {
     "1-source-authorship-completion": {
-      "status": "spawned",
+      "status": "completed",
       "retries": 0,
       "worktree_dir": "/home/fearsidhe/projects/harness/.worktrees/harness-remaining-roadmap/1-source-authorship-completion",
-      "worker_id": "1-source-authorship-completion-w1"
+      "worker_id": "1-source-authorship-completion-w1",
+      "error": ""
     },
     "2-sustained-scenario-driver-and-protocol": {
       "status": "spawned",
@@ -63,9 +64,10 @@
       "worktree_dir": "/home/fearsidhe/projects/harness/.worktrees/harness-remaining-roadmap/11-isolated-worktrees-for-delegated-tasks"
     },
     "12-user-correction-to-repair-loop": {
-      "status": "pending",
+      "status": "spawned",
       "retries": 0,
-      "worktree_dir": "/home/fearsidhe/projects/harness/.worktrees/harness-remaining-roadmap/12-user-correction-to-repair-loop"
+      "worktree_dir": "/home/fearsidhe/projects/harness/.worktrees/harness-remaining-roadmap/12-user-correction-to-repair-loop",
+      "worker_id": "12-user-correction-to-repair-loop-w1"
     },
     "13-workspace-artifact-predicates-and-requirement-proposals": {
       "status": "pending",
