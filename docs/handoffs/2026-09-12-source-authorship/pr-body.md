@@ -145,3 +145,57 @@ here. Left unfixed as out of scope for this task.
   this branch touches.
 - Per task instructions, used the two locked interpreters directly with
   PYTHONPATH=src:. instead of uv sync for all Python invocations.
+
+
+## Review fixes
+
+Addressed two items from review on PR #59:
+
+1. should-fix: the `limits` before-validator only merged author defaults
+   for a dict; a bare `TaskLimits(...)` instance skipped the merge and
+   only failed later in `scope()`. Added an explicit
+   isinstance(value, TaskLimits) branch that merges
+   value.model_dump(exclude_unset=True) over the author defaults, so unset
+   fields still keep author defaults (including an absent
+   `timeout_seconds`) and the existing cap check still refuses an
+   explicit max_iterations above the author cap. Added
+   test_explicit_tasklimits_instance_keeps_author_defaults.
+2. nit: replaced the two remaining hardcoded 128 * 1024 response-size caps
+   (`_response()` and `inspect_authoring()`) with a lookup into
+   `_AUTHOR_LIMIT_DEFAULTS["max_response_bytes"]`.
+
+Verification after the fix (PATH-prefixed locked 3.13.15 interpreter,
+PYTHONPATH=src:.):
+
+```
+47 passed in 7.64s   # tests/test_source_authorship.py alone
+61 passed in 9.56s   # tests/test_source_authorship.py + tests/test_external_agent_runtime.py
+```
+
+Ruff:
+
+```
+All checks passed!
+```
+
+Packaging:
+
+```
+Successfully built dist/harness-0.0.1.tar.gz
+Successfully built dist/harness-0.0.1-py3-none-any.whl
+```
+
+scripts/smoke_wheel.sh dist/*.whl:
+
+```
+== wheel smoke OK
+```
+
+Note: test_codex_process_calls_scoped_mcp_tools_and_preserves_transcript,
+which failed deterministically in isolation during the initial completion
+pass, passed cleanly here (4 of the 14 tests in that file) and again when
+re-isolated with -k codex_process (4 passed, 10 deselected). That failure was
+environment/load-dependent, not a real defect in this branch.
+
+Commit: 1bce83b fix(source-authorship): merge explicit TaskLimits over author
+defaults
