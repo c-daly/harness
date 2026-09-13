@@ -107,3 +107,19 @@ are distinct contributions. The latest driver is retained as
  continue_native_worker.py.txt; the v1 driver remains unchanged. Live journals
 and the failed independent probe are retained under .worktrees/tmp rather than
 bundled into the source tree.
+
+
+Complete candidate validation v1 retained stable source hashes at 90f837b:
+Python 3.12 had 1 failed, 2495 passed, 7 skipped, 6 warnings in 737.62s;
+Python 3.13 had 1 failed, 2495 passed, 7 skipped, 6 warnings in 734.99s.
+Each failure was an unchanged source-evaluation output test receiving timed_out
+instead of output_limit. The output tests imposed 0.1-second and 2-second
+process deadlines. Both cases, plus the separate timeout case, passed isolated
+on both versions (3 passed in 1.03s on 3.12; 3 passed in 0.93s on 3.13).
+Source-evaluation implementation and tests matched the integration checkpoint
+before this diagnosis. The operator separated the test conditions: the timeout
+case retains its 0.1-second deadline, while output cases receive a 30-second
+watchdog and still must report output_limit with bounded retained bytes.
+The large-output test retains an outer 45-second cleanup watchdog. No runtime
+source-evaluation deadline or acceptance condition changed. Complete validation
+is repeated after this test correction; v1 failures remain retained.

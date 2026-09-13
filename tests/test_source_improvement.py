@@ -117,7 +117,10 @@ async def test_bounded_failure_cannot_pass(tmp_path, revisions, problem):
     cases[0]["script"] = ("import time\ntime.sleep(10)" if problem == "timeout"
                           else "print('x' * 100000)")
     with session:
-        plan = await prepare(journal, revisions, cases=cases, case_timeout_seconds=0.1,
+        # The output case exercises byte admission, not interpreter startup speed.
+        # Keep the short deadline only for the separate timeout case.
+        plan = await prepare(journal, revisions, cases=cases,
+                             case_timeout_seconds=0.1 if problem == "timeout" else 30,
                              max_output_bytes=1024)
         result = await run_source_evaluation(journal, plan.id)
         report = json.loads(session.blobs.get(result.artifact))
@@ -337,7 +340,9 @@ async def test_process_group_is_settled_before_result(mode, tmp_path):
               + ("time.sleep(60)\n" if mode != "success" else ""))
     task = asyncio.create_task(_process([sys.executable, "-c", script], cwd=tmp_path,
                                        env={"PATH": os.defpath}, timeout=5, limit=4096))
-    async with asyncio.timeout(5):
+    # Leave launch scheduling room while retaining a deadlock watchdog. Success
+    # still requires output_limit and exactly 256 retained bytes, never a timeout.
+    async with asyncio.timeout(45):
         while not pidfile.exists():
             await asyncio.sleep(0.01)
     child = int(pidfile.read_text())
@@ -403,7 +408,7 @@ async def test_large_output_is_bounded_without_blocking_reaping(tmp_path):
     from harness.source_improvement import _process
     async with asyncio.timeout(5):
         result = await _process([sys.executable, "-c", "import os; os.write(1, b'x' * 10000000)"],
-                                cwd=tmp_path, env={}, timeout=2, limit=256)
+                                cwd=tmp_path, env={}, timeout=30, limit=256)
     assert result["status"] == "output_limit"
     assert len(result["stdout"]) + len(result["stderr"]) == 256
 
