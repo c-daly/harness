@@ -41,7 +41,7 @@ with the router briefing, the orchestrator preface and the runner prompt.
 | 2-sustained-scenario-driver-and-protocol | `task/2-…` | `2-sustained-scenario-driver-and-protocol-w1` | batch 1 | running | — | — |
 | 3-plugin-workflow-reconciliation | `task/3-…` | `3-plugin-workflow-reconciliation-w1` | batch 1 | completed: `9827f33` (+ body `e52543d`); 11 focused tests; complete suites 2369 passed / 7 skipped on 3.13 (681 s) and 3.12 (616 s, third attempt after two host-load flakes in untouched files); build and smoke OK | [PR #60](https://github.com/c-daly/harness/pull/60) head `e52543d`, hosted CI run 34729727500 succeeded on 3.12 and 3.13; reviewer `pr60-review-r1` found 1 blocking (errored `ToolCallCompleted` fabricated a workflow ref from args), 2 should-fix (missing negative tests; architecture paragraph undercounts outcomes); fixes dispatched to the worker | `docs/handoffs/2026-09-12-plugin-reconciliation/pr-body.md`, `docs/plugin-reconciliation.md` |
 | 4-suspected-stall-observation-and-recorded-assessment | `task/4-…` | `4-suspected-stall-observation-and-recorded-assessment-w1` | batch 1 | running | — | — |
-| 6-claude-code-and-antigravity-task-bindings | `task/6-…` | `6-claude-code-and-antigravity-task-bindings-w1` | batch 1 | completed: `bfa2a9e`; adds `agent_runtime_info` for Claude Code and Antigravity, widens `native_tools`, generalizes catalog routing (declared deviation in `provider_litellm.py`); complete suites 2378 passed / 7 skipped on 3.13 (681 s) and 3.12 (after two host-load flakes in untouched files); build and smoke OK | [PR #61](https://github.com/c-daly/harness/pull/61) head `bfa2a9e`, CI pending, reviewer `pr61-review-r1` dispatched | `docs/handoffs/2026-09-12-agent-task-bindings/pr-body.md` |
+| 6-claude-code-and-antigravity-task-bindings | `task/6-…` | `6-claude-code-and-antigravity-task-bindings-w1` | batch 1 | completed: `bfa2a9e`; adds `agent_runtime_info` for Claude Code and Antigravity, widens `native_tools`, generalizes catalog routing (declared deviation in `provider_litellm.py`); complete suites 2378 passed / 7 skipped on 3.13 (681 s) and 3.12 (after two host-load flakes in untouched files); build and smoke OK | [PR #61](https://github.com/c-daly/harness/pull/61) head `bfa2a9e`, CI pending; reviewer `pr61-review-r1` found no blocking issues and one should-fix (seven new lines over 100 columns); wrap fix dispatched to the worker | `docs/handoffs/2026-09-12-agent-task-bindings/pr-body.md` |
 | 7-outward-mcp-capability-delivery-without-argv | `task/7-…` (prerequisite `task/6-…` merged in) | `7-outward-mcp-capability-delivery-without-argv-w1` | batch 3 | running | PR base `task/6-…` | — |
 | 5-pre-call-usage-reservations | `task/5-…` | `5-pre-call-usage-reservations-w1` | batch 2 | running | — | — |
 | 9, 10, 11, 13, 14, 15 | `task/<slug>` | — | queued (spawnable, waiting for a free slot; max 5 parallel) | pending | — | — |
@@ -76,6 +76,12 @@ with the router briefing, the orchestrator preface and the runner prompt.
 - Task 1's worker invoked the locked interpreters by absolute path without
   their `bin` on `PATH`, which makes the Codex fake-CLI subprocess tests fail
   deterministically; worker protocol now requires `uv run …`.
+- The repository's 100-column law (`docs/contributing.md`) is not enforced by CI:
+  `pyproject.toml` sets `line-length = 100` but never selects Ruff rule E501, so
+  `ruff check .` passes over-long lines (found by the PR #61 review; the repo
+  already contains pre-existing over-long lines). Enabling E501 repo-wide is a
+  separate decision for the user; this workflow asks workers to wrap only the
+  lines they add.
 - The router shell exports `PYTHONPATH=/home/fearsidhe/.claude/plugins/agent-swarm`
   globally (found by Task 3's worker). That plugin's `scripts` package shadows
   the repository's `scripts/` namespace and breaks collection of the nine
