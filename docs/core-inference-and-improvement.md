@@ -216,8 +216,11 @@ Every adapter reports unsupported native resume and internal iteration caps,
 response bounds over adapter chunks, and token overrun checks based on reported
 usage. Native tool exposure differs by adapter: Codex keeps its own shell
 active but sandboxed read-only (`native_tools="provider-controlled"`); Claude
-Code disables every built-in via `--strict-mcp-config`/`--disallowedTools`, so
-the harness registry is the exclusive tool surface (`native_tools="none"`);
+Code supplies Harness MCP tools and a finite built-in denylist, but has no
+verified exclusive tool inventory across supported CLI versions
+(`native_tools="provider-controlled"`). Harness permissions and tool events
+cover calls through its dispatcher; they do not establish control or auditing
+of remaining native tools.
 Antigravity leaves its built-ins active and unsandboxed, additive to the
 harness tools rather than confined the way Codex's shell is
 (`native_tools="unconfined"`). Zero iterations prevents launch; a positive

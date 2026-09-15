@@ -338,12 +338,11 @@ async def test_contextvar_dispatch_overrides_bound_dispatcher(tmp_path, monkeypa
     assert captured["dispatch"] is recorder_b
 
 
-def test_agent_runtime_info_declares_harness_exclusive_tool_surface():
+def test_agent_runtime_info_declares_provider_controlled_native_tools():
     provider = ClaudeCodeProvider(binary="claude")
     info = provider.agent_runtime_info(ModelId("claude-code/default"))
-    assert info == AgentRuntimeInfo(runtime="claude-code", native_tools="none")
-    # Every strict-mcp-config/disallowedTools adapter shares these regardless
-    # of model suffix: the descriptor never varies by which model is asked.
+    assert info == AgentRuntimeInfo(runtime="claude-code", native_tools="provider-controlled")
+    # Changing the requested model does not qualify the CLI's native tools.
     assert provider.agent_runtime_info(ModelId("claude-code/opus")) == info
     assert info.qualification == "unverified"
     assert info.resume is False
