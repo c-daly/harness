@@ -1,0 +1,696 @@
+{
+  "schema": 1,
+  "status": "supervised_native_binding_with_partial_task_candidate",
+  "queue_task": "9-session-integrity-authorized-repair-and-lifecycle-cli",
+  "queue_owner_policy": "installed agent-swarm ParallelOrchestrator; no replacement queue",
+  "execution_host": "Harness build_kernel/run_once/dispatch_agent and native tools",
+  "runs": [
+    {
+      "version": "v1",
+      "result": {
+        "task": "9-session-integrity-authorized-repair-and-lifecycle-cli",
+        "workspace": "/home/fearsidhe/projects/harness/.worktrees/harness-remaining-roadmap/9-session-integrity-authorized-repair-and-lifecycle-cli",
+        "branch": "task/9-session-integrity-authorized-repair-and-lifecycle-cli",
+        "head_before": "4c09803950d16a2ab86e58774524ad3e4cfd15ec",
+        "root_session_id": "b5ae710b698c43b1b60e6fa689844d23",
+        "pid": 86634,
+        "model_alias": "gpt",
+        "model_route": "openai/gpt-5",
+        "declared_usage_accounting": "unknown",
+        "max_model_calls": 48,
+        "response_output_token_cap": 8192,
+        "manifest_sha256": "3849d2da588aeccde871dc66b4d802ee26e4dd300bffb12f563f1ed0e3a1e203",
+        "prompt_sha256": "b2be5f914212b9b42b2f1783a7c9ad856b0524df7b8a7ff1455f5ab9b4f5182e",
+        "queue_policy": "installed agent-swarm ParallelOrchestrator.get_pending_tasks",
+        "binding": "native manifest runner; Claude router hooks and memory not loaded",
+        "error": null,
+        "queue_completion_recorded": false,
+        "review_state": "requires_independent_verification",
+        "children": [
+          "d0aacc4d99b34c1da40ee5ed11f56a6f"
+        ],
+        "parent_terminals": [
+          {
+            "type": "subagent_finished",
+            "child_session_id": "d0aacc4d99b34c1da40ee5ed11f56a6f",
+            "status": "incomplete",
+            "run_id": "1031a2ea781b4efab5889326ad30a436",
+            "output": {
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "size": 0
+            },
+            "reason": "max_tokens",
+            "truncated": false
+          },
+          {
+            "type": "agent_run_finished",
+            "result": {
+              "task_id": "01cf3582f6974c5ba7dcc0c4848730b0",
+              "run_id": "6194df2cf03f4eaca86973d9a30785c4",
+              "status": "completed",
+              "reason": "",
+              "output": {
+                "sha256": "3cbe11615147739c088759d1813d07b68f2f9365080581f6f73bf5887fbfd39d",
+                "size": 712
+              },
+              "response": null,
+              "usage": {
+                "input_tokens": 3517,
+                "output_tokens": 3686,
+                "cache_read_tokens": 0,
+                "cache_write_tokens": null
+              },
+              "acceptance": "unverified",
+              "remaining_criteria": []
+            },
+            "purpose": "task"
+          }
+        ],
+        "usage": {
+          "input_tokens": 329569,
+          "output_tokens": 12640,
+          "cost_usd": "0.53836125",
+          "unknown_input": 0,
+          "unknown_output": 0,
+          "unknown_cost": 0
+        },
+        "git_status": ""
+      },
+      "sessions": [
+        {
+          "id": "b5ae710b698c43b1b60e6fa689844d23",
+          "journal": ".worktrees/tmp/harness-swarm-native-v1/journal/sessions/b5ae710b698c43b1b60e6fa689844d23.jsonl",
+          "sha256": "b3e753ebd87c0ead3ca67130b200bf7ad9683723d56c2daa412f96610771890c",
+          "event_counts": {
+            "agent_run_finished": 1,
+            "agent_run_started": 1,
+            "context_policy_configured": 1,
+            "context_prepared": 4,
+            "custom": 1,
+            "dispatch_resolved": 6,
+            "execution_configured": 1,
+            "execution_counts_recorded": 44,
+            "hook_decided": 25,
+            "model_call_completed": 4,
+            "model_call_proposed": 4,
+            "model_call_started": 4,
+            "model_selected": 1,
+            "session_ended": 1,
+            "session_started": 1,
+            "subagent_finished": 1,
+            "subagent_spawned": 1,
+            "tool_call_completed": 3,
+            "tool_call_proposed": 3,
+            "usage_attempt_finished": 22,
+            "usage_attempt_started": 22,
+            "usage_budget_configured": 1,
+            "user_message": 1
+          },
+          "effective_task_limits": [
+            {
+              "max_iterations": 20,
+              "timeout_seconds": 1800.0,
+              "max_input_bytes": 262144,
+              "max_response_bytes": 1048576,
+              "max_output_tokens": 4096,
+              "max_stream_chunks": 65536
+            }
+          ],
+          "terminals": [
+            {
+              "type": "agent_run_finished",
+              "result": {
+                "task_id": "01cf3582f6974c5ba7dcc0c4848730b0",
+                "run_id": "6194df2cf03f4eaca86973d9a30785c4",
+                "status": "completed",
+                "reason": "",
+                "output": {
+                  "sha256": "3cbe11615147739c088759d1813d07b68f2f9365080581f6f73bf5887fbfd39d",
+                  "size": 712
+                },
+                "response": null,
+                "usage": {
+                  "input_tokens": 3517,
+                  "output_tokens": 3686,
+                  "cache_read_tokens": 0,
+                  "cache_write_tokens": null
+                },
+                "acceptance": "unverified",
+                "remaining_criteria": []
+              },
+              "purpose": "task"
+            }
+          ],
+          "elapsed_seconds": 193.407
+        },
+        {
+          "id": "d0aacc4d99b34c1da40ee5ed11f56a6f",
+          "journal": ".worktrees/tmp/harness-swarm-native-v1/journal/sessions/d0aacc4d99b34c1da40ee5ed11f56a6f.jsonl",
+          "sha256": "eb8281c10eb8598c56dae3ac8478391a3752d89a0dc80f1c77f88a2200b1f747",
+          "event_counts": {
+            "agent_run_finished": 1,
+            "agent_run_started": 1,
+            "context_policy_configured": 1,
+            "context_prepared": 18,
+            "dispatch_resolved": 35,
+            "execution_configured": 1,
+            "execution_counts_linked": 1,
+            "hook_decided": 140,
+            "model_call_completed": 18,
+            "model_call_proposed": 18,
+            "model_call_started": 18,
+            "model_selected": 1,
+            "session_ended": 1,
+            "session_started": 1,
+            "tool_call_completed": 17,
+            "tool_call_proposed": 17,
+            "usage_budget_linked": 1,
+            "user_message": 1
+          },
+          "effective_task_limits": [
+            {
+              "max_iterations": 20,
+              "timeout_seconds": 1800.0,
+              "max_input_bytes": 262144,
+              "max_response_bytes": 1048576,
+              "max_output_tokens": 4096,
+              "max_stream_chunks": 65536
+            }
+          ],
+          "terminals": [
+            {
+              "type": "agent_run_finished",
+              "result": {
+                "task_id": "7f7259bc58944896a943f7a9b8832983",
+                "run_id": "1031a2ea781b4efab5889326ad30a436",
+                "status": "incomplete",
+                "reason": "max_tokens",
+                "output": {
+                  "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                  "size": 0
+                },
+                "response": null,
+                "usage": {
+                  "input_tokens": 326052,
+                  "output_tokens": 8954,
+                  "cache_read_tokens": 289920,
+                  "cache_write_tokens": null
+                },
+                "acceptance": "unverified",
+                "remaining_criteria": []
+              },
+              "purpose": "task"
+            }
+          ],
+          "elapsed_seconds": 133.927
+        }
+      ],
+      "worker_prompt_sha256": "b2be5f914212b9b42b2f1783a7c9ad856b0524df7b8a7ff1455f5ab9b4f5182e"
+    },
+    {
+      "version": "v2",
+      "result": {
+        "task": "9-session-integrity-authorized-repair-and-lifecycle-cli",
+        "workspace": "/home/fearsidhe/projects/harness/.worktrees/harness-remaining-roadmap/9-session-integrity-authorized-repair-and-lifecycle-cli",
+        "branch": "task/9-session-integrity-authorized-repair-and-lifecycle-cli",
+        "head_before": "4c09803950d16a2ab86e58774524ad3e4cfd15ec",
+        "root_session_id": "189158146f2f4ca18511e67ee0704019",
+        "pid": 4718,
+        "model_alias": "gpt",
+        "model_route": "openai/gpt-5",
+        "declared_usage_accounting": "unknown",
+        "max_model_calls": 48,
+        "context_output_token_cap": 16384,
+        "child_task_limits": {
+          "max_iterations": 48,
+          "timeout_seconds": 600,
+          "max_input_bytes": 4194304,
+          "max_response_bytes": 1048576,
+          "max_output_tokens": 16384,
+          "max_stream_chunks": 65536
+        },
+        "runner_sha256": "6bafce29ea648d6b06db2a29640adc3fb4cb0c38f45cc21796bfa92431eb961a",
+        "subagent_runtime_sha256": "873032261de7864f6a21dc96c934c652fefb9a0ea9e40ff2b30df31d4e9166f9",
+        "manifest_sha256": "3849d2da588aeccde871dc66b4d802ee26e4dd300bffb12f563f1ed0e3a1e203",
+        "prompt_sha256": "1c595f121d38387d8501c2caf5bd82c17c8f94fd61a9e65741ca5bd1d023b4f7",
+        "queue_policy": "installed agent-swarm ParallelOrchestrator.get_pending_tasks",
+        "binding": "native manifest runner; Claude router hooks and memory not loaded",
+        "error": null,
+        "queue_completion_recorded": false,
+        "review_state": "requires_independent_verification",
+        "children": [
+          "b1802e2ecadc4df9824a32b81a927bad"
+        ],
+        "parent_terminals": [
+          {
+            "type": "subagent_finished",
+            "child_session_id": "b1802e2ecadc4df9824a32b81a927bad",
+            "status": "ok",
+            "run_id": "7e5eceb540474610aae50bb7696e0b34",
+            "output": {
+              "sha256": "9920e32e46ccf4aba32c22d17039155c48ce6d05a10291590d6504336e66dc5a",
+              "size": 4071
+            },
+            "reason": "",
+            "truncated": false
+          },
+          {
+            "type": "agent_run_finished",
+            "result": {
+              "task_id": "8bf576946f244a9daad551c48cfb6abb",
+              "run_id": "f887e9390fbf454aa95d620c79a725b2",
+              "status": "completed",
+              "reason": "",
+              "output": {
+                "sha256": "0f33b213a53f39377a26a66b8dfd979eb3bd49dbd34dd8785b013aea281776e1",
+                "size": 4149
+              },
+              "response": null,
+              "usage": {
+                "input_tokens": 2365,
+                "output_tokens": 1148,
+                "cache_read_tokens": 0,
+                "cache_write_tokens": null
+              },
+              "acceptance": "unverified",
+              "remaining_criteria": []
+            },
+            "purpose": "task"
+          }
+        ],
+        "usage": {
+          "input_tokens": 747742,
+          "output_tokens": 19140,
+          "cost_usd": "1.12607750",
+          "unknown_input": 0,
+          "unknown_output": 0,
+          "unknown_cost": 0
+        },
+        "git_status": " M src/harness/cli.py\n?? src/harness/session_admin.py\n?? tests/test_session_admin.py\n"
+      },
+      "sessions": [
+        {
+          "id": "189158146f2f4ca18511e67ee0704019",
+          "journal": ".worktrees/tmp/harness-swarm-native-v2/journal/sessions/189158146f2f4ca18511e67ee0704019.jsonl",
+          "sha256": "4524bbcc7b1c369835cd90f490c3871b38e84009f404ea3c310f51de9a6d56dc",
+          "event_counts": {
+            "agent_run_finished": 1,
+            "agent_run_started": 1,
+            "context_policy_configured": 1,
+            "context_prepared": 2,
+            "custom": 1,
+            "dispatch_resolved": 3,
+            "execution_configured": 1,
+            "execution_counts_recorded": 76,
+            "hook_decided": 12,
+            "model_call_completed": 2,
+            "model_call_proposed": 2,
+            "model_call_started": 2,
+            "model_selected": 1,
+            "session_ended": 1,
+            "session_started": 1,
+            "subagent_finished": 1,
+            "subagent_spawned": 1,
+            "tool_call_completed": 1,
+            "tool_call_proposed": 1,
+            "usage_attempt_finished": 38,
+            "usage_attempt_started": 38,
+            "usage_budget_configured": 1,
+            "user_message": 1
+          },
+          "effective_task_limits": [
+            {
+              "max_iterations": 20,
+              "timeout_seconds": 1800.0,
+              "max_input_bytes": 262144,
+              "max_response_bytes": 1048576,
+              "max_output_tokens": 4096,
+              "max_stream_chunks": 65536
+            }
+          ],
+          "terminals": [
+            {
+              "type": "agent_run_finished",
+              "result": {
+                "task_id": "8bf576946f244a9daad551c48cfb6abb",
+                "run_id": "f887e9390fbf454aa95d620c79a725b2",
+                "status": "completed",
+                "reason": "",
+                "output": {
+                  "sha256": "0f33b213a53f39377a26a66b8dfd979eb3bd49dbd34dd8785b013aea281776e1",
+                  "size": 4149
+                },
+                "response": null,
+                "usage": {
+                  "input_tokens": 2365,
+                  "output_tokens": 1148,
+                  "cache_read_tokens": 0,
+                  "cache_write_tokens": null
+                },
+                "acceptance": "unverified",
+                "remaining_criteria": []
+              },
+              "purpose": "task"
+            }
+          ],
+          "elapsed_seconds": 292.995
+        },
+        {
+          "id": "b1802e2ecadc4df9824a32b81a927bad",
+          "journal": ".worktrees/tmp/harness-swarm-native-v2/journal/sessions/b1802e2ecadc4df9824a32b81a927bad.jsonl",
+          "sha256": "8f49c65d3b515d03442a7d2c686723efcf854e2579751ba7e861667a302a79e9",
+          "event_counts": {
+            "agent_run_finished": 1,
+            "agent_run_started": 1,
+            "context_policy_configured": 1,
+            "context_prepared": 36,
+            "dispatch_resolved": 69,
+            "execution_configured": 1,
+            "execution_counts_linked": 1,
+            "hook_decided": 282,
+            "model_call_completed": 36,
+            "model_call_proposed": 36,
+            "model_call_started": 36,
+            "model_selected": 1,
+            "permission_requested": 1,
+            "permission_resolved": 1,
+            "session_ended": 1,
+            "session_started": 1,
+            "tool_call_completed": 35,
+            "tool_call_proposed": 35,
+            "usage_budget_linked": 1,
+            "user_message": 1
+          },
+          "effective_task_limits": [
+            {
+              "max_iterations": 48,
+              "timeout_seconds": 1800.0,
+              "max_input_bytes": 262144,
+              "max_response_bytes": 1048576,
+              "max_output_tokens": 16384,
+              "max_stream_chunks": 65536
+            }
+          ],
+          "terminals": [
+            {
+              "type": "agent_run_finished",
+              "result": {
+                "task_id": "7f39816968d4402da21ff63e22935891",
+                "run_id": "7e5eceb540474610aae50bb7696e0b34",
+                "status": "completed",
+                "reason": "",
+                "output": {
+                  "sha256": "9920e32e46ccf4aba32c22d17039155c48ce6d05a10291590d6504336e66dc5a",
+                  "size": 4071
+                },
+                "response": null,
+                "usage": {
+                  "input_tokens": 745377,
+                  "output_tokens": 17992,
+                  "cache_read_tokens": 705792,
+                  "cache_write_tokens": null
+                },
+                "acceptance": "unverified",
+                "remaining_criteria": []
+              },
+              "purpose": "task"
+            }
+          ],
+          "elapsed_seconds": 279.194
+        }
+      ],
+      "worker_prompt_sha256": "1c595f121d38387d8501c2caf5bd82c17c8f94fd61a9e65741ca5bd1d023b4f7"
+    },
+    {
+      "version": "v3",
+      "result": {
+        "task": "9-session-integrity-authorized-repair-and-lifecycle-cli",
+        "workspace": "/home/fearsidhe/projects/harness/.worktrees/harness-remaining-roadmap/9-session-integrity-authorized-repair-and-lifecycle-cli",
+        "branch": "task/9-session-integrity-authorized-repair-and-lifecycle-cli",
+        "head_before": "73717b577eaeb6329854f4f753c78652267f8956",
+        "root_session_id": "208e78c1af9c49088f40121c2f8baee8",
+        "pid": 25815,
+        "model_alias": "gpt",
+        "model_route": "openai/gpt-5",
+        "declared_usage_accounting": "unknown",
+        "max_model_calls": 48,
+        "context_output_token_cap": 16384,
+        "child_task_limits": {
+          "max_iterations": 48,
+          "timeout_seconds": 600,
+          "max_input_bytes": 4194304,
+          "max_response_bytes": 1048576,
+          "max_output_tokens": 16384,
+          "max_stream_chunks": 65536
+        },
+        "runner_sha256": "6bafce29ea648d6b06db2a29640adc3fb4cb0c38f45cc21796bfa92431eb961a",
+        "subagent_runtime_sha256": "873032261de7864f6a21dc96c934c652fefb9a0ea9e40ff2b30df31d4e9166f9",
+        "manifest_sha256": "3849d2da588aeccde871dc66b4d802ee26e4dd300bffb12f563f1ed0e3a1e203",
+        "prompt_sha256": "aa2b116514edb46f3676818719f86c1c3c2822d9b6a52254cc832ed583acef5c",
+        "queue_policy": "installed agent-swarm ParallelOrchestrator.get_pending_tasks",
+        "binding": "native manifest runner; Claude router hooks and memory not loaded",
+        "error": null,
+        "queue_completion_recorded": false,
+        "review_state": "requires_independent_verification",
+        "children": [
+          "1d890598cbde4fb0af0aeeecfe04c23a"
+        ],
+        "parent_terminals": [
+          {
+            "type": "subagent_finished",
+            "child_session_id": "1d890598cbde4fb0af0aeeecfe04c23a",
+            "status": "ok",
+            "run_id": "ad703562f6b540cf919f5e5fe6fceb9b",
+            "output": {
+              "sha256": "9f508f31fec8366a6fc45d29d9dd563cfb712f3fc0e36116d9b20c13723b4d03",
+              "size": 4916
+            },
+            "reason": "",
+            "truncated": false
+          },
+          {
+            "type": "agent_run_finished",
+            "result": {
+              "task_id": "e9e1cd56344d4cae8c9b58c8c47880aa",
+              "run_id": "58fe6a3ed2c8469a95a75e34c321292d",
+              "status": "completed",
+              "reason": "",
+              "output": {
+                "sha256": "02104cdb8b6de202427b8aada4db2f52f60489234da58f92f80e269c24e5b3d9",
+                "size": 4948
+              },
+              "response": null,
+              "usage": {
+                "input_tokens": 2588,
+                "output_tokens": 2136,
+                "cache_read_tokens": 0,
+                "cache_write_tokens": null
+              },
+              "acceptance": "unverified",
+              "remaining_criteria": []
+            },
+            "purpose": "task"
+          }
+        ],
+        "usage": {
+          "input_tokens": 283941,
+          "output_tokens": 15689,
+          "cost_usd": "0.51181625",
+          "unknown_input": 0,
+          "unknown_output": 0,
+          "unknown_cost": 0
+        },
+        "git_status": " M src/harness/session_admin.py\n M tests/test_session_admin.py\n"
+      },
+      "sessions": [
+        {
+          "id": "1d890598cbde4fb0af0aeeecfe04c23a",
+          "journal": ".worktrees/tmp/harness-swarm-native-v3/journal/sessions/1d890598cbde4fb0af0aeeecfe04c23a.jsonl",
+          "sha256": "6ea8c46146b727645122519a8bb126cb0df235cc569742ec4a4a2745bd8cddb4",
+          "event_counts": {
+            "agent_run_finished": 1,
+            "agent_run_started": 1,
+            "context_policy_configured": 1,
+            "context_prepared": 21,
+            "dispatch_resolved": 40,
+            "execution_configured": 1,
+            "execution_counts_linked": 1,
+            "hook_decided": 164,
+            "model_call_completed": 21,
+            "model_call_proposed": 21,
+            "model_call_started": 21,
+            "model_selected": 1,
+            "permission_requested": 1,
+            "permission_resolved": 1,
+            "session_ended": 1,
+            "session_started": 1,
+            "tool_call_completed": 20,
+            "tool_call_proposed": 20,
+            "usage_budget_linked": 1,
+            "user_message": 1
+          },
+          "effective_task_limits": [
+            {
+              "max_iterations": 48,
+              "timeout_seconds": 1800.0,
+              "max_input_bytes": 262144,
+              "max_response_bytes": 1048576,
+              "max_output_tokens": 16384,
+              "max_stream_chunks": 65536
+            }
+          ],
+          "terminals": [
+            {
+              "type": "agent_run_finished",
+              "result": {
+                "task_id": "f90bf748d4ea43f488cbcc81da98274d",
+                "run_id": "ad703562f6b540cf919f5e5fe6fceb9b",
+                "status": "completed",
+                "reason": "",
+                "output": {
+                  "sha256": "9f508f31fec8366a6fc45d29d9dd563cfb712f3fc0e36116d9b20c13723b4d03",
+                  "size": 4916
+                },
+                "response": null,
+                "usage": {
+                  "input_tokens": 281353,
+                  "output_tokens": 13553,
+                  "cache_read_tokens": 253440,
+                  "cache_write_tokens": null
+                },
+                "acceptance": "unverified",
+                "remaining_criteria": []
+              },
+              "purpose": "task"
+            }
+          ],
+          "elapsed_seconds": 165.358
+        },
+        {
+          "id": "208e78c1af9c49088f40121c2f8baee8",
+          "journal": ".worktrees/tmp/harness-swarm-native-v3/journal/sessions/208e78c1af9c49088f40121c2f8baee8.jsonl",
+          "sha256": "6ba206c67b1cbaf18b3ca4dec58fe7cd9a0d7ea48e2e0e9c68b3a77cd1b66ef3",
+          "event_counts": {
+            "agent_run_finished": 1,
+            "agent_run_started": 1,
+            "context_policy_configured": 1,
+            "context_prepared": 2,
+            "custom": 1,
+            "dispatch_resolved": 3,
+            "execution_configured": 1,
+            "execution_counts_recorded": 46,
+            "hook_decided": 12,
+            "model_call_completed": 2,
+            "model_call_proposed": 2,
+            "model_call_started": 2,
+            "model_selected": 1,
+            "session_ended": 1,
+            "session_started": 1,
+            "subagent_finished": 1,
+            "subagent_spawned": 1,
+            "tool_call_completed": 1,
+            "tool_call_proposed": 1,
+            "usage_attempt_finished": 23,
+            "usage_attempt_started": 23,
+            "usage_budget_configured": 1,
+            "user_message": 1
+          },
+          "effective_task_limits": [
+            {
+              "max_iterations": 20,
+              "timeout_seconds": 1800.0,
+              "max_input_bytes": 262144,
+              "max_response_bytes": 1048576,
+              "max_output_tokens": 4096,
+              "max_stream_chunks": 65536
+            }
+          ],
+          "terminals": [
+            {
+              "type": "agent_run_finished",
+              "result": {
+                "task_id": "e9e1cd56344d4cae8c9b58c8c47880aa",
+                "run_id": "58fe6a3ed2c8469a95a75e34c321292d",
+                "status": "completed",
+                "reason": "",
+                "output": {
+                  "sha256": "02104cdb8b6de202427b8aada4db2f52f60489234da58f92f80e269c24e5b3d9",
+                  "size": 4948
+                },
+                "response": null,
+                "usage": {
+                  "input_tokens": 2588,
+                  "output_tokens": 2136,
+                  "cache_read_tokens": 0,
+                  "cache_write_tokens": null
+                },
+                "acceptance": "unverified",
+                "remaining_criteria": []
+              },
+              "purpose": "task"
+            }
+          ],
+          "elapsed_seconds": 196.348
+        }
+      ],
+      "worker_prompt_sha256": "aa2b116514edb46f3676818719f86c1c3c2822d9b6a52254cc832ed583acef5c"
+    }
+  ],
+  "operator_review": {
+    "sha256": "3a26e1618e8659f6c02b739bcd0d5faf659b2c13ecffbc472c964a8caa6f6e88",
+    "before": "3 failed in 1.32s",
+    "after": "3 passed in 2.92s",
+    "review_rejected_candidate_commit": "73717b577eaeb6329854f4f753c78652267f8956",
+    "corrected_candidate_commit": "4cf28194a7c53100cb0e42e74e45a47a0f535f85"
+  },
+  "source_hashes": {
+    "src/harness/frontmatter.py": "b767143a173eeaad8c60813b82e6f28c18429a56feb00d6cbc46accaadaa57a7",
+    "src/harness/subagent.py": "873032261de7864f6a21dc96c934c652fefb9a0ea9e40ff2b30df31d4e9166f9",
+    "plugins/agent-swarm-runner/run_one.py": "6bafce29ea648d6b06db2a29640adc3fb4cb0c38f45cc21796bfa92431eb961a",
+    "plugins/agent-swarm-runner/bundle/agent-swarm-runner/agents/swarm-implementer.md": "9f0b254c4af94f2634f97b1758338621521ba1820bc7bef0b846e766f09704d2"
+  },
+  "unqualified": [
+    "full agent-swarm router hook compatibility",
+    "memory continuity",
+    "TUI usability",
+    "offline fallback during these GPT runs",
+    "heterogeneous provider execution",
+    "complete task 9",
+    "unattended queue supervision",
+    "resident-driven self-improvement"
+  ],
+  "operator_supervision": [
+    "review checks authored and run independently",
+    "failed attempts reported through installed plugin complete command",
+    "rejected candidate checkpointed locally before retry; no task acceptance"
+  ],
+  "candidate_status": "partial; not accepted; not published; clean local WIP checkpoint",
+  "host_validation": {
+    "pytest313.log": {
+      "path": ".worktrees/tmp/harness-swarm-validation-v1/pytest313.log",
+      "sha256": "61844c99d9ee11d98e1a5bc36b8680100f27b9e6fd91cb21329dad0c4f09c2fd",
+      "result": "2415 passed, 7 skipped, 6 warnings in 618.17s (0:10:18)"
+    },
+    "pytest312.log": {
+      "path": ".worktrees/tmp/harness-swarm-validation-v1/pytest312.log",
+      "sha256": "ec51f4922d292dd9b31981edb357f67a51d08857e248a3fd6be3c9accd69952d",
+      "result": "2415 passed, 7 skipped, 6 warnings in 616.80s (0:10:16)"
+    },
+    "build.log": {
+      "path": ".worktrees/tmp/harness-swarm-validation-v1/build.log",
+      "sha256": "e73fc5af1550d1b3c234a9c97c6f32db9836743123dc5c6a5ad3da7039dc12aa",
+      "result": "Successfully built /home/fearsidhe/projects/harness/.worktrees/tmp/harness-swarm-validation-v1/dist/harness-0.0.1-py3-none-any.whl"
+    },
+    "smoke.log": {
+      "path": ".worktrees/tmp/harness-swarm-validation-v1/smoke.log",
+      "sha256": "6bff0ebdc926b6663b0c987e148b53440b7211acdbbced8c97c94e0522d408aa",
+      "result": "== wheel smoke OK"
+    }
+  },
+  "installed_plugin_hashes_after_runs": {
+    "lib/orchestrator.py": "30af32206babf4d59104d5deba0edc90de06883519f4d727c752a342ebc2ce97",
+    "lib/manifest.py": "9f23e54fd0c5eaa08eb3f849abc32d40c4af26a4c532276db5a6f9755118c350",
+    "lib/orchestration_state.py": "37b9ca2dc1931b8e77e11d88de1b043b0c4ec3a0b02dd5cfc33a82fe94e40d24",
+    "lib/prompt_builder.py": "373e234f52f6aa63e253694bd0790fb817db764a4a707513c41749fb973f248b"
+  }
+}
