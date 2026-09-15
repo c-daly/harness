@@ -171,25 +171,27 @@ depth and call limits with their workers. Missing aggregate terminals remain
 unconfirmed in inspection and export. Live heterogeneous
 qualification and evidence-based escalation remain open.
 
-## External agent tasks: Codex migration
+## External agent tasks: Codex, Claude Code, and Antigravity bindings
 
 `bind_agent_runtime(provider, model, dispatcher)` returns an `ExternalAgentRuntime`
-for a Codex adapter or catalog alias. Unmigrated adapters return `None`. The bound
-runtime implements the same `run_task(AgentTask, on_progress=...)` contract as
-the native loop. It retains the supplied dispatcher's tools, hooks, permissions,
-and shared budgets. Runtime selection is explicit: routing hooks may select
-another Codex model, but cannot change an already bound task into inference or
+for a Codex, Claude Code, or Antigravity adapter or catalog alias naming one of
+those backends. Unmigrated adapters return `None`. The bound runtime implements
+the same `run_task(AgentTask, on_progress=...)` contract as the native loop. It
+retains the supplied dispatcher's tools, hooks, permissions, and shared
+budgets. Runtime selection is explicit: routing hooks may select another model
+on the same backend, but cannot change an already bound task into inference or
 another agent runtime. Internal inference still rejects agent aliases.
 
-`AgentLoop` selects this binding automatically for Codex, so CLI, TUI, and child
-sessions use it through their existing entry points. The continuing Harness task
-owns a nested Codex run with distinct task/run IDs, a capability snapshot, an
-`execution` progress phase, and its own result. Supplied context and acceptance
-criteria reach the child without duplicating the user's prompt or persisting
-ephemeral input. The TUI reports `agent running` and retains normal queue,
-draft, and interruption behavior. Standalone runtime callers pass context through
-`AgentTask`; the loop's internal `prepared_messages` bridge accepts context that
-it has already assembled and recorded.
+`AgentLoop` selects this binding automatically for all three backends, so CLI,
+TUI, and child sessions use it through their existing entry points for every
+external agent alias. The continuing Harness task owns a nested child run with
+distinct task/run IDs, a capability snapshot, an `execution` progress phase,
+and its own result. Supplied context and acceptance criteria reach the child
+without duplicating the user's prompt or persisting ephemeral input. The TUI
+reports `agent running` and retains normal queue, draft, and interruption
+behavior. Standalone runtime callers pass context through `AgentTask`; the
+loop's internal `prepared_messages` bridge accepts context that it has already
+assembled and recorded.
 
 The transport still uses the adapter's `complete` stream and one compatibility
 `ModelCallCompleted` for usage/pricing, with `execution_kind="agent"` and
@@ -201,22 +203,32 @@ MCP tool proposals carry task/run lineage and `purpose="agent-task"`; their
 results remain audited, including on recovery, without inserting orphan tool
 replies into conversation history. Old events retain their existing defaults.
 
-Codex executes its own MCP tools. Returned, unexecuted tool proposals are a
-protocol failure, never instructions to start a second native tool loop. A
+Each adapter executes its own MCP tools. Returned, unexecuted tool proposals are
+a protocol failure, never instructions to start a second native tool loop. A
 non-`end_turn` stop returns `incomplete`; acceptance always stays `unverified`.
 Failures are never retried automatically. Task cancellation closes the transport,
 reaps its child process, and tears down its scratch resources before terminal
 publication. Resume aborts interrupted runs without relaunching the CLI.
 
-The capability snapshot is an **adapter declaration, not live qualification**.
-It explicitly reports unsupported native resume and internal iteration caps,
-provider-controlled native tools, response bounds over adapter chunks, and token
-overrun checks based on reported usage. Zero iterations prevents launch; a
-positive iteration limit does not cap the CLI's internal steps. The task deadline
-and Harness-dispatched call budgets still apply. Raw stdout/stderr bounds,
-scratch-file containment, CLI-version probes, portable continuation, and the
-remaining external adapters are outstanding. These changes advance M2 without
-claiming its complete capability or live-provider gate.
+The capability snapshot is an **adapter declaration, not live qualification**,
+and it now covers all three bindings, each marked `qualification="unverified"`.
+Every adapter reports unsupported native resume and internal iteration caps,
+response bounds over adapter chunks, and token overrun checks based on reported
+usage. Native tool exposure differs by adapter: Codex keeps its own shell
+active but sandboxed read-only (`native_tools="provider-controlled"`); Claude
+Code supplies Harness MCP tools and a finite built-in denylist, but has no
+verified exclusive tool inventory across supported CLI versions
+(`native_tools="provider-controlled"`). Harness permissions and tool events
+cover calls through its dispatcher; they do not establish control or auditing
+of remaining native tools.
+Antigravity leaves its built-ins active and unsandboxed, additive to the
+harness tools rather than confined the way Codex's shell is
+(`native_tools="unconfined"`). Zero iterations prevents launch; a positive
+iteration limit does not cap the CLI's internal steps. The task deadline and
+Harness-dispatched call budgets still apply. Raw stdout/stderr bounds,
+scratch-file containment, CLI-version probes, and portable continuation are
+outstanding. These changes advance M2 without claiming its complete capability
+or live-provider gate.
 
 ## Improvement records and fixed evaluation gates
 

@@ -8,6 +8,7 @@ import stat
 
 import pytest
 
+from harness.agent_runtime import AgentRuntimeInfo
 from harness.dispatcher import ToolOutcome, current_dispatch_tool
 from harness.errors import MalformedStreamError, ProviderError
 from harness.messages import Message, Role, TextBlock
@@ -335,3 +336,14 @@ async def test_contextvar_dispatch_overrides_bound_dispatcher(tmp_path, monkeypa
         current_dispatch_tool.reset(token)
 
     assert captured["dispatch"] is recorder_b
+
+
+def test_agent_runtime_info_declares_provider_controlled_native_tools():
+    provider = ClaudeCodeProvider(binary="claude")
+    info = provider.agent_runtime_info(ModelId("claude-code/default"))
+    assert info == AgentRuntimeInfo(runtime="claude-code", native_tools="provider-controlled")
+    # Changing the requested model does not qualify the CLI's native tools.
+    assert provider.agent_runtime_info(ModelId("claude-code/opus")) == info
+    assert info.qualification == "unverified"
+    assert info.resume is False
+    assert info.internal_iteration_limit is False

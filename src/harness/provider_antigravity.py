@@ -200,6 +200,13 @@ def _scratch_home() -> str:
 class AntigravityProvider:
     execution_kind = "agent"
 
+    def agent_runtime_info(self, model: ModelId):
+        from harness.agent_runtime import AgentRuntimeInfo
+        # agy built-in tools are not disabled here (tool parity is additive,
+        # per the trust-model note above), and v1 ships without --sandbox or
+        # --mode plan, so they are unconfined, unlike codex read-only shell.
+        return AgentRuntimeInfo(runtime="antigravity", native_tools="unconfined")
+
     def __init__(self, *, binary: str = "agy", timeout_s: float | None = None) -> None:
         self.binary = binary
         self.timeout_s = timeout_s

@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 
+from harness.agent_runtime import AgentRuntimeInfo
 from harness.dispatcher import ToolOutcome, current_dispatch_tool
 from harness.errors import MalformedStreamError, ProviderError
 from harness.messages import Message, Role, TextBlock
@@ -759,6 +760,15 @@ async def test_unbound_dispatcher_is_loud(tmp_path):
         await collect(
             provider.complete(model=ModelId("antigravity/default"), messages=USER, tools=())
         )
+
+
+def test_agent_runtime_info_declares_unconfined_native_tools():
+    provider = AntigravityProvider(binary="agy")
+    info = provider.agent_runtime_info(ModelId("antigravity/default"))
+    assert info == AgentRuntimeInfo(runtime="antigravity", native_tools="unconfined")
+    assert info.qualification == "unverified"
+    assert info.resume is False
+    assert info.internal_iteration_limit is False
 
 
 async def test_contextvar_dispatch_overrides_bound_dispatcher(tmp_path, monkeypatch):
