@@ -60,6 +60,7 @@ class ReconciliationReport:
     non_resumable: tuple[str, ...]
     memory_contributions: int
     accepted_records: int
+    live_checks: tuple[str, ...] = ()
 
 
 def _ref_key(server: str, workflow_id: str) -> str:
@@ -105,7 +106,7 @@ def project_plugin_workflows(envelopes) -> tuple[PluginWorkflowRef, ...]:
             proposed[str(event.call_id)] = (str(event.tool), dict(event.args))
         elif isinstance(event, DispatchResolved) and event.kind == "tool" and event.tool is not None:
             proposed[str(event.call_id)] = (str(event.tool), dict(event.args or {}))
-        elif isinstance(event, ToolCallCompleted):
+        elif isinstance(event, ToolCallCompleted) and not event.is_error:
             entry = proposed.get(str(event.call_id))
             if entry is None:
                 continue
@@ -120,6 +121,8 @@ def project_plugin_workflows(envelopes) -> tuple[PluginWorkflowRef, ...]:
                     data = json.loads(event.result_text)
                 except (json.JSONDecodeError, TypeError, ValueError):
                     data = None
+            if isinstance(data, dict) and "error" in data:
+                continue
             workflow_id = _text_field(data, "workflow_id") or _text_field(args, "workflow_id")
             if workflow_id is None:
                 continue
@@ -143,6 +146,10 @@ def count_memory_contributions(envelopes) -> int:
         event = env.event
         if isinstance(event, ToolCallProposed):
             proposed[str(event.call_id)] = (str(event.tool), event.purpose)
+        elif isinstance(event, DispatchResolved) and event.kind == "tool" and event.tool is not None:
+            entry = proposed.get(str(event.call_id))
+            if entry is not None:
+                proposed[str(event.call_id)] = (str(event.tool), entry[1])
         elif isinstance(event, ToolCallCompleted) and not event.is_error:
             entry = proposed.get(str(event.call_id))
             if entry is None:
@@ -160,6 +167,9 @@ def count_accepted_records(envelopes) -> int:
         event = env.event
         if isinstance(event, ToolCallProposed):
             proposed[str(event.call_id)] = str(event.tool)
+        elif isinstance(event, DispatchResolved) and event.kind == "tool" and event.tool is not None:
+            if str(event.call_id) in proposed:
+                proposed[str(event.call_id)] = str(event.tool)
         elif isinstance(event, ToolCallCompleted) and not event.is_error:
             tool = proposed.get(str(event.call_id))
             if tool is None or _memory_tool(tool) != _MEMORY_WRITE_TOOL:
@@ -195,9 +205,22 @@ async def reconcile(kernel) -> ReconciliationReport:
             args={"workflow_id": ref.workflow_id},
         )
         outcome = await kernel.loop.dispatcher.dispatch_tool(call, purpose="context")
+        resolved = outcome.resolved
+        if resolved is not None and (
+            resolved.kind != "tool"
+            or resolved.call_id != call.call_id
+            or resolved.tool != call.tool
+            or (resolved.args or {}).get("workflow_id") != ref.workflow_id
+        ):
+            # A hook redirected this call; its result says nothing about this ref.
+            statuses[key] = "unknown"
+            continue
         if outcome.is_error:
             statuses[key] = "unavailable"
             non_resumable.append(key)
+            continue
+        if resolved is None:
+            statuses[key] = "unknown"
             continue
         try:
             text = outcome.read_text()
@@ -208,19 +231,21 @@ async def reconcile(kernel) -> ReconciliationReport:
             data = json.loads(text)
         except (json.JSONDecodeError, TypeError, ValueError):
             data = None
-        if isinstance(data, dict) and isinstance(data.get("error"), str):
+        if isinstance(data, dict) and "error" in data:
             statuses[key] = "unavailable"
             non_resumable.append(key)
         elif isinstance(data, dict) and data.get("status") in ("active", "finished"):
             statuses[key] = data["status"]
         else:
             statuses[key] = "unknown"
+    current = reconcile_from_log(read_session(kernel.session.base, kernel.session.id, repair=False))
     return ReconciliationReport(
-        refs=base.refs,
-        statuses=statuses,
+        refs=current.refs,
+        statuses={**current.statuses, **statuses},
         non_resumable=tuple(non_resumable),
-        memory_contributions=base.memory_contributions,
-        accepted_records=base.accepted_records,
+        memory_contributions=current.memory_contributions,
+        accepted_records=current.accepted_records,
+        live_checks=tuple(statuses),
     )
 
 
@@ -232,7 +257,14 @@ def render_reconciliation(report: ReconciliationReport) -> str:
         key = _ref_key(ref.server, ref.workflow_id)
         status = report.statuses.get(key, "unknown")
         phase = ref.last_phase if ref.last_phase is not None else "(unknown)"
-        note = "not resumable" if key in report.non_resumable else "no live check performed"
+        if key in report.non_resumable:
+            note = "not resumable"
+        elif status in ("active", "finished"):
+            note = "live check performed"
+        elif key in report.live_checks:
+            note = "live check inconclusive"
+        else:
+            note = "no live check performed"
         lines.append(
             f"  {ref.server}/{ref.workflow_id}: phase={phase}; status={status}; {note}"
             f" (event {ref.observed_seq})"

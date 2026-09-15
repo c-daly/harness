@@ -591,9 +591,12 @@ model and last observed call cannot reliably reconstruct `/model` choices or pin
 
 Entries with `backend = "claude-code"` run turns through your locally
 installed, logged-in Claude Code CLI (headless `claude -p`) instead of an
-API. The harness serves its own tools to Claude over MCP and disables
-Claude Code's built-ins, so permissions and the event log behave exactly as
-with API models. The harness never handles claude.ai credentials — log in
+API. The harness serves its own tools to Claude over MCP and requests that
+a finite list of built-ins be disabled. Native tools remain
+`provider-controlled`: the adapter has not verified an exclusive tool surface
+across supported CLI versions. Harness permissions and tool events apply to
+calls through its dispatcher; remaining native tools may operate outside them.
+The harness never handles claude.ai credentials — log in
 with `claude` once and the backend uses that.
 
 ```toml
@@ -651,12 +654,9 @@ output_cost_per_token = 0.0
 tags = ["openai", "subscription", "tool-calling"]
 ```
 
-**Additive, not exclusive.** Unlike the claude-code backend, which disables
-Claude Code's own built-in tools so the harness registry is the only tool
-surface, the codex backend does *not* disable Codex's built-in shell. A
-codex-backed turn gets the harness's tools in addition to whatever Codex can
-already do on its own — tool parity here is additive, not a drop-in match
-for the claude-code backend's exclusivity.
+**Tool exposure.** The codex backend keeps Codex's built-in shell active.
+A codex-backed turn gets the harness's tools in addition to Codex's native
+capabilities. Its declared native tool exposure is `provider-controlled`.
 
 **Trust model.** Writes go through harness tools and the harness permission
 engine — a deny-rule there binds. Reads by codex's own built-in shell do
@@ -715,11 +715,9 @@ output_cost_per_token = 0.0
 tags = ["google", "subscription", "tool-calling"]
 ```
 
-**Additive, not exclusive.** Like the codex backend and unlike the
-claude-code backend, the antigravity backend does *not* disable `agy`'s own
-built-in tools. An antigravity-backed turn gets the harness's tools in
-addition to whatever `agy` can already do on its own — tool parity here is
-additive, not a drop-in match for the claude-code backend's exclusivity.
+**Tool exposure.** The antigravity backend keeps `agy`'s built-in tools
+active. An antigravity-backed turn gets the harness's tools in addition to
+`agy`'s native capabilities. Its declared native tool exposure is `unconfined`.
 
 **Trust model (read this before relying on it).** `agy`'s ~57 built-in tools
 (`run_command`, `write_to_file`, `browser_*`, `view_file`, …) are not

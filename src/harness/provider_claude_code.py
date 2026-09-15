@@ -2,8 +2,9 @@
 
 The harness never touches claude.ai credentials — it invokes the user's own
 installed, logged-in Claude Code binary (the documented headless mode). Tools
-are served to CC over McpToolServer; CC's built-ins and user-scope settings
-are disabled so the harness's registry is the only tool surface. One
+are served to CC over McpToolServer, with a finite denylist of CC built-ins
+and isolated settings. Native tool exposure remains provider-controlled;
+the adapter does not establish an exclusive harness tool surface. One
 complete() call == one CC agent turn (stateless v1: full history re-rendered;
 --resume is a follow-up)."""
 
@@ -99,10 +100,10 @@ class ClaudeCodeProvider:
 
     def agent_runtime_info(self, model: ModelId):
         from harness.agent_runtime import AgentRuntimeInfo
-        # --strict-mcp-config plus --disallowedTools naming every CC built-in
-        # (see DISALLOWED_BUILTINS) makes the harness registry the exclusive
-        # tool surface: no native tool runs outside it.
-        return AgentRuntimeInfo(runtime="claude-code", native_tools="none")
+        # The finite DISALLOWED_BUILTINS list is not a verified inventory for
+        # every supported CLI version. MCP configuration alone cannot establish
+        # that native tools are absent or subject to Harness permissions.
+        return AgentRuntimeInfo(runtime="claude-code", native_tools="provider-controlled")
 
     def __init__(self, *, binary: str = "claude", timeout_s: float | None = None) -> None:
         self.binary = binary
