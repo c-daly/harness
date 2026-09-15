@@ -18,13 +18,16 @@ belongs to agent-swarm, memory, or any other plugin. `plugin_reconciliation.py`
 never imports a plugin. It only reads those facts back out of the session
 log.
 
-- `project_plugin_workflows(envelopes)` folds completed calls to
+- `project_plugin_workflows(envelopes)` folds successful completed calls to
   `mcp__SERVER__workflow__workflow_*` into a `PluginWorkflowRef` per
   (server, workflow_id): the last known phase, and the log position (seq
-  and call id) that produced it. It is pure and total: an unexpected or
+  and call id) that produced it. Dispatcher errors and plugin JSON `error`
+  results neither create refs nor update existing ones. For successful calls,
+  it is pure and total: an unexpected or
   unparsable result still yields a ref, with `last_phase=None` the first
   time and left unchanged on a later call that carries no phase. It never
-  raises.
+  raises. The effective tool and arguments from `DispatchResolved` take
+  precedence over the original proposal, including after hook rewrites.
 - `count_memory_contributions(envelopes)` counts completed
   `mcp__memory__memory_get`, `memory_list`, and `memory_brief` calls
   dispatched with `purpose=context` -- reads the agent made to gather
@@ -34,6 +37,9 @@ log.
   `error: ...` value. The reference memory plugin reports rejections as
   values, never as an MCP tool error, so counting `is_error` alone would
   overcount.
+  Both memory counters use the effective tool from `DispatchResolved`, with
+  the original dispatch purpose retained for context reads. Older logs without
+  a resolution fact fall back to the proposed tool.
 - `reconcile_from_log(envelopes)` builds a `ReconciliationReport` from the
   log alone. Every ref is classified `unknown`: with no live check, core
   never invents a status.
@@ -43,9 +49,13 @@ log.
   agent tool call. A tool the registry does not know (the server was never
   connected, was disabled, or has since been removed) or a call that
   completes as an error is classified `unavailable` and listed in
-  `non_resumable`. Because the reconciliation check itself is an ordinary
-  dispatch, it is a durable log fact: a later log-only report can read the
-  outcome back without contacting the plugin again.
+  `non_resumable`. A hook redirecting the check to another tool or workflow
+  leaves the original ref's status `unknown`. The returned report includes
+  the phases and counters projected after the live dispatches, with live
+  check attempts distinguished from log-only observations.
+  The tool calls remain durable, auditable log facts, including successful
+  phase observations. A later log-only report still classifies every status
+  as `unknown`; current status requires another live reconciliation.
 - `harness plugins reconcile SESSION_ID --base-dir DIR` prints a
   `reconcile_from_log` report. It never starts, connects to, or otherwise
   contacts an MCP server. `harness status` joins one summary line built
@@ -74,8 +84,9 @@ Verified in `tests/test_plugin_reconciliation.py`:
    stub, and the live `workflow__workflow_get_state` dispatch reports
    `active`.
 2. **Restart reconciliation reports the truth, not the last known good
-   state.** When the stub is stopped before the restart, reconciliation
-   reports `unavailable` and lists the workflow as non-resumable, while
+   state.** Both a removed stub and a restarted, reachable stub with empty
+   in-memory state yield `unavailable` and a non-resumable workflow. In the
+   latter case, the new stub returns a domain-level not-found result while
    the core task and its requirements, tracked by `TaskService` and never
    touched by this module, remain fully inspectable and continuable.
 3. **Removing either plugin leaves the core task inspectable and
