@@ -14,11 +14,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import anyio
+import pytest
 from mcp.shared.memory import create_client_server_memory_streams
 
 from harness.dispatcher import Dispatcher
 from harness.events import DispatchResolved, Envelope, ToolCallCompleted, ToolCallProposed
-from harness.hooks import HookBus, ProposedToolCall
+from harness.hooks import HookBus, ProposedToolCall, Rewrite
 from harness.interaction import HeadlessResolver
 from harness.log import read_session
 from harness.mcp_config import McpServerSpec
@@ -31,6 +32,7 @@ from harness.plugin_reconciliation import (
     project_plugin_workflows,
     reconcile,
     reconcile_from_log,
+    render_reconciliation,
 )
 from harness.resume import resume_session
 from harness.session import Session
@@ -119,14 +121,145 @@ async def _dispatch(dispatcher, tool, args, *, purpose=None):
     return await dispatcher.dispatch_tool(call, purpose=purpose)
 
 
-def _append_workflow_call(session, call_id, tool, args, result):
+def _append_workflow_call(session, call_id, tool, args, result, *, is_error=False):
     session.append(ToolCallProposed(call_id=CallId(call_id), tool=ToolName(tool), args=args))
     session.append(
         DispatchResolved(call_id=CallId(call_id), kind="tool", tool=ToolName(tool), args=args)
     )
     session.append(
-        ToolCallCompleted(call_id=CallId(call_id), result_text=json.dumps(result), is_error=False)
+        ToolCallCompleted(call_id=CallId(call_id), result_text=json.dumps(result), is_error=is_error)
     )
+
+
+@pytest.mark.parametrize("is_error,result", [
+    (True, {"workflow_id": "missing", "phase": "failed"}),
+    (False, {"error": "workflow not found"}),
+    (False, {"error": {"code": "not_found"}}),
+])
+def test_failed_workflow_calls_neither_create_refs_nor_replace_observations(tmp_path, is_error, result):
+    with Session(tmp_path, SessionId("failed-workflows")) as session:
+        session.start()
+        _append_workflow_call(
+            session, "started", "mcp__stub__workflow__workflow_start",
+            {"workflow_id": "known"}, {"workflow_id": "known", "phase": "start"},
+        )
+        before = project_plugin_workflows(read_session(tmp_path, session.id))
+        for workflow_id in ("known", "missing"):
+            _append_workflow_call(
+                session, workflow_id, "mcp__stub__workflow__workflow_get_state",
+                {"workflow_id": workflow_id}, result, is_error=is_error,
+            )
+        assert project_plugin_workflows(read_session(tmp_path, session.id)) == before
+
+
+@pytest.mark.parametrize("proposed,effective,purpose,reads,writes", [
+    ("read", "workflow", "context", 0, 0),
+    ("workflow", "read", "context", 1, 0),
+    ("workflow", "read", "conversation", 0, 0),
+    ("write", "workflow", "context", 0, 0),
+    ("workflow", "write", "context", 0, 1),
+    ("read", "write", "context", 0, 1),
+    ("write", "read", "context", 1, 0),
+])
+async def test_memory_counters_follow_dispatched_rewrites(
+    tmp_path, monkeypatch, proposed, effective, purpose, reads, writes,
+):
+    calls = {
+        "read": ("mcp__memory__memory_list", {}),
+        "write": ("mcp__memory__memory_write", {
+            "entry_type": "project", "name": "note", "subject": "wf1",
+            "description": "progress", "body": "started",
+        }),
+        "workflow": ("mcp__stub__workflow__workflow_get_state", {"workflow_id": "wf1"}),
+    }
+    with Session(tmp_path, SessionId("rewritten-memory")) as session:
+        session.start()
+        host, registry, hooks = await _build_host(session, monkeypatch, tmp_path)
+        dispatcher = Dispatcher(
+            session=session, registry=registry, hooks=hooks, resolver=HeadlessResolver(),
+        )
+        try:
+            await _dispatch(dispatcher, "mcp__stub__workflow__workflow_start", {"workflow_id": "wf1"})
+            tool, args = calls[effective]
+            hooks.register_dispatch("redirect", lambda call: Rewrite(action=ProposedToolCall(
+                call_id=call.call_id, tool=ToolName(tool), args=args,
+            )))
+            result = await _dispatch(dispatcher, *calls[proposed], purpose=purpose)
+            assert not result.is_error and not result.read_text().startswith("error:")
+            envelopes = read_session(tmp_path, session.id)
+            assert count_memory_contributions(envelopes) == reads
+            assert count_accepted_records(envelopes) == writes
+        finally:
+            await host.stop()
+
+
+@pytest.mark.parametrize("tool,args", [
+    ("mcp__stub__workflow__workflow_get_state", {"workflow_id": "wf2"}),
+    ("mcp__stub__workflow__workflow_start", {"workflow_id": "wf3"}),
+    ("mcp__memory__memory_list", {}),
+])
+async def test_live_reconciliation_does_not_attribute_redirected_results_to_original_ref(
+    tmp_path, monkeypatch, tool, args,
+):
+    with Session(tmp_path, SessionId("redirected-check")) as session:
+        session.start()
+        host, registry, hooks = await _build_host(session, monkeypatch, tmp_path)
+        dispatcher = Dispatcher(
+            session=session, registry=registry, hooks=hooks, resolver=HeadlessResolver(),
+        )
+        try:
+            await _dispatch(dispatcher, "mcp__stub__workflow__workflow_start", {"workflow_id": "wf1"})
+            # Another operator created wf2; it is not yet a ref in this session.
+            await host.connections["stub"].call_tool("workflow__workflow_start", {"workflow_id": "wf2"})
+            hooks.register_dispatch("redirect", lambda call: Rewrite(action=ProposedToolCall(
+                call_id=call.call_id, tool=ToolName(tool), args=args,
+            )))
+            report = await reconcile(_FakeKernel(session, host, _FakeLoop(dispatcher)))
+            assert report.statuses["stub:wf1"] == "unknown"
+            assert report.non_resumable == ()
+            assert report.live_checks == ("stub:wf1",)
+            assert "live check inconclusive" in render_reconciliation(report)
+            if tool == "mcp__memory__memory_list":
+                assert report.memory_contributions == 1
+            else:
+                assert report.statuses[f"stub:{args['workflow_id']}"] == "unknown"
+                assert len(report.refs) == 2
+        finally:
+            await host.stop()
+
+
+@pytest.mark.parametrize("status,verb,phase", [
+    ("active", "workflow_advance_phase", "implementing"),
+    ("finished", "workflow_stop", "stopped"),
+])
+async def test_live_report_includes_new_phase_and_log_only_status_stays_unknown(
+    tmp_path, monkeypatch, status, verb, phase,
+):
+    with Session(tmp_path, SessionId("fresh-phase")) as session:
+        session.start()
+        host, registry, hooks = await _build_host(session, monkeypatch, tmp_path)
+        dispatcher = Dispatcher(
+            session=session, registry=registry, hooks=hooks, resolver=HeadlessResolver(),
+        )
+        try:
+            await _dispatch(dispatcher, "mcp__stub__workflow__workflow_start", {"workflow_id": "wf1"})
+            args = {"workflow_id": "wf1"}
+            if verb == "workflow_advance_phase":
+                args["phase"] = phase
+            await host.connections["stub"].call_tool(f"workflow__{verb}", args)
+            report = await reconcile(_FakeKernel(session, host, _FakeLoop(dispatcher)))
+            assert report.statuses == {"stub:wf1": status}
+            assert report.refs[0].last_phase == phase
+            rendered = render_reconciliation(report)
+            assert f"phase={phase}; status={status}; live check performed" in rendered
+            assert "no live check performed" not in rendered
+            replay = reconcile_from_log(read_session(tmp_path, session.id))
+            assert replay.refs == report.refs
+            assert replay.statuses == {"stub:wf1": "unknown"}
+            assert replay.live_checks == ()
+            assert "no live check performed" in render_reconciliation(replay)
+        finally:
+            await host.stop()
 
 
 def test_project_plugin_workflows_folds_the_latest_completed_call_by_seq():
@@ -326,8 +459,9 @@ async def test_reconcile_reports_active_after_restart_with_memory_contribution_a
     assert report.accepted_records == 1
 
 
-async def test_reconcile_marks_unavailable_and_non_resumable_when_stub_dies_before_restart(
-    tmp_path, monkeypatch
+@pytest.mark.parametrize("restart_plugin", [False, True], ids=["removed", "restarted-empty"])
+async def test_reconcile_marks_lost_plugin_state_unavailable_and_non_resumable_after_restart(
+    tmp_path, monkeypatch, restart_plugin,
 ):
     base_dir = tmp_path / "base"
     session_id = new_session_id()
@@ -349,26 +483,36 @@ async def test_reconcile_marks_unavailable_and_non_resumable_when_stub_dies_befo
     finally:
         session1.close()
 
-    await host.connections["stub"].stop()
-    del host.connections["stub"]
+    await host.stop()
 
     session2, _transcript = resume_session(base_dir, session_id)
-    registry2 = ToolRegistry()
-    _register_connected_tools(registry2, host)
+    # A new module instance has fresh in-memory state. Its tools remain reachable
+    # in the restarted case, so get_state returns a domain error, not unknown tool.
+    host, registry2, hooks2 = await _build_host(
+        session2, monkeypatch, tmp_path, include_stub=restart_plugin,
+    )
     dispatcher2 = Dispatcher(
-        session=session2, registry=registry2, hooks=HookBus(), resolver=HeadlessResolver()
+        session=session2, registry=registry2, hooks=hooks2, resolver=HeadlessResolver()
     )
     kernel = _FakeKernel(session=session2, mcp=host, loop=_FakeLoop(dispatcher=dispatcher2))
 
     try:
         report = await reconcile(kernel)
         tracked = TaskService(session2).selected()
+        completions = [env.event for env in read_session(base_dir, session_id)
+                       if isinstance(env.event, ToolCallCompleted)]
+        if restart_plugin:
+            assert not completions[-1].is_error
+            assert "not found" in json.loads(completions[-1].result_text)["error"]
+        else:
+            assert completions[-1].is_error
     finally:
         session2.close()
         await host.stop()
 
     key = "stub:wf1"
     assert len(report.refs) == 1
+    assert report.refs[0].last_phase == "start"
     assert report.statuses[key] == "unavailable"
     assert report.non_resumable == (key,)
     assert tracked is not None
