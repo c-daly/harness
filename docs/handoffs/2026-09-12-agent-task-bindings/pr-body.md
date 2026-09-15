@@ -18,10 +18,11 @@ through CatalogProvider.
   name all three adapters instead of just Codex.
 - src/harness/provider_claude_code.py: added
   ClaudeCodeProvider.agent_runtime_info returning
-  AgentRuntimeInfo(runtime=claude-code, native_tools=none). The
-  strict-mcp-config flag plus disallowedTools naming every built-in
-  (DISALLOWED_BUILTINS) makes the harness registry the exclusive tool
-  surface, so native_tools=none.
+  AgentRuntimeInfo(runtime=claude-code, native_tools=provider-controlled).
+  The adapter supplies Harness MCP tools and a finite built-in denylist;
+  it has no verified exclusive tool inventory across supported CLI versions.
+  Harness permissions and tool events cover its dispatched calls, without
+  establishing control or auditing of remaining native tools.
 - src/harness/provider_antigravity.py: added
   AntigravityProvider.agent_runtime_info returning
   AgentRuntimeInfo(runtime=antigravity, native_tools=unconfined). The agy
@@ -61,7 +62,7 @@ change for Codex.
 
 ## Tests added
 
-- tests/test_provider_claude_code.py::test_agent_runtime_info_declares_harness_exclusive_tool_surface
+- tests/test_provider_claude_code.py::test_agent_runtime_info_declares_provider_controlled_native_tools
 - tests/test_provider_antigravity.py::test_agent_runtime_info_declares_unconfined_native_tools
 - tests/test_external_agent_runtime.py:
   - Added ScriptedClaudeCode and ScriptedAntigravity (the same
@@ -97,7 +98,19 @@ All new tests use fake CLI subprocess fixtures only (a throwaway Python
 script standing in for claude or agy); no real claude, codex, or agy binary
 or subscription credential is ever invoked.
 
-## Validation
+## Review-fix validation (2026-09-15)
+
+The provider/runtime/backend/MCP regression selection passed on Python 3.12
+and 3.13: 116 passed, one opt-in live probe skipped, six MCP deprecation
+warnings on each. Repository-wide Ruff and `git diff --check` passed.
+Capability recording is covered through catalog routing and fake CLI/MCP
+execution; this does not qualify a live CLI or its native-tool confinement.
+
+The first 3.13 attempt failed because fake CLI subprocesses found system
+Python without MCP. Its result is retained separately; the passing runs put
+the matching virtual environment on PATH.
+
+## Initial implementation validation (before review fixes)
 
 uv run ruff check src/harness/agent_runtime.py src/harness/provider_claude_code.py src/harness/provider_antigravity.py src/harness/provider_litellm.py tests/test_external_agent_runtime.py tests/test_provider_claude_code.py tests/test_provider_antigravity.py
 All checks passed.

@@ -75,6 +75,9 @@ async def test_interface_uses_typed_runtime_and_replays_one_response(tmp_path, m
         assert parent.runtime == "harness" and child.runtime == _RUNTIME_FOR_KIND[kind]
         assert child.parent_run_id == parent.run_id
         assert child.capabilities["qualification"] == "unverified"
+        assert child.capabilities["native_tools"] == (
+            "unconfined" if kind == "antigravity" else "provider-controlled"
+        )
         assert child.capabilities["resume"] is False
         assert child.capabilities["internal_iteration_limit"] is False
         state = fold(events)
@@ -411,6 +414,7 @@ asyncio.run(run())
         events = read_session(tmp_path / "sessions", kernel.session.id)
         child = next(e.event for e in events
                     if e.event.type == "agent_run_started" and e.event.runtime == "claude-code")
+        assert child.capabilities["native_tools"] == "provider-controlled"
         tool = next(e.event for e in events if e.event.type == "tool_call_proposed")
         assert tool.purpose == "agent-task" and tool.agent_run_id == child.run_id
         assert tool.task_id == child.task_id
