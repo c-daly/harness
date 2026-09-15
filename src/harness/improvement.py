@@ -41,6 +41,19 @@ class Candidate(_Record):
     evidence_ids: tuple[Identifier, ...] = Field(min_length=1)
     hypothesis: str = Field(min_length=1, max_length=4096)
     expected_benefit: str = Field(min_length=1, max_length=4096)
+    source_authoring_id: Identifier | None = None
+
+
+class SourceAuthoring(_Record):
+    """Operator-owned scope and checks, frozen before a bounded author task."""
+    kind: Literal["source_authoring"] = "source_authoring"
+    model: ModelId
+    author_version: Digest
+    incumbent: BlobRef
+    specification: BlobRef
+    suite: BlobRef
+    evaluator_version: Digest
+    evidence_ids: tuple[Identifier, ...] = Field(min_length=1)
 
 
 class EvaluationCase(BaseModel):
@@ -150,7 +163,7 @@ class SourceChange(_Record):
 
 
 ImprovementRecord = Annotated[
-    Union[Evidence, Candidate, EvaluationPlan, ExperimentResult, PromptChange, SourceChange], Field(discriminator="kind"),
+    Union[Evidence, Candidate, EvaluationPlan, ExperimentResult, PromptChange, SourceChange, SourceAuthoring], Field(discriminator="kind"),
 ]
 
 
@@ -230,6 +243,9 @@ class ImprovementState:
     active_assessment_prompts: dict[tuple[ModelId, str], str] = field(default_factory=dict)
     source_changes: dict[str, SourceChange] = field(default_factory=dict)
     active_sources: dict[str, str] = field(default_factory=dict)
+    source_authorings: dict[str, SourceAuthoring] = field(default_factory=dict)
+    source_author_runs: dict[str, str] = field(default_factory=dict)
+    source_author_results: dict[str, dict] = field(default_factory=dict)
 
     def selected_prompt(self, model, function="message_kind"):
         identity = (self.active_prompts.get(model) if function == "message_kind"
@@ -241,19 +257,35 @@ class ImprovementState:
         from pydantic import TypeAdapter
         record = TypeAdapter(ImprovementRecord).validate_python(record.model_dump())
         if any(record.id in values for values in (
-                self.evidence, self.candidates, self.plans, self.results, self.prompt_changes, self.source_changes)):
+                self.evidence, self.candidates, self.plans, self.results, self.prompt_changes,
+                self.source_changes, self.source_authorings)):
             raise ValueError("improvement record IDs are immutable and unique")
         if isinstance(record, Evidence):
             self.evidence[record.id] = record
+        elif isinstance(record, SourceAuthoring):
+            if any(key not in self.evidence for key in record.evidence_ids):
+                raise ValueError("source authoring references missing evidence")
+            self.source_authorings[record.id] = record
         elif isinstance(record, Candidate):
             if any(key not in self.evidence for key in record.evidence_ids):
                 raise ValueError("candidate references missing evidence")
+            if record.source_authoring_id is not None:
+                author = self.source_authorings.get(record.source_authoring_id)
+                if (author is None or record.target != "code"
+                        or record.incumbent_version != author.incumbent.sha256
+                        or record.evidence_ids != author.evidence_ids
+                        or any(c.source_authoring_id == author.id for c in self.candidates.values())):
+                    raise ValueError("source candidate must follow its exact, unused authoring intent")
             self.candidates[record.id] = record
         elif isinstance(record, EvaluationPlan):
             candidate = self.candidates.get(record.candidate_id)
             if (candidate is None or candidate.artifact.sha256 != record.candidate_version
                     or candidate.incumbent_version != record.incumbent_version):
                 raise ValueError("plan must bind the recorded candidate and incumbent versions")
+            if candidate.source_authoring_id is not None:
+                author = self.source_authorings[candidate.source_authoring_id]
+                if record.suite != author.suite or record.evaluator_version != author.evaluator_version:
+                    raise ValueError("authored source plan must retain its frozen checks and evaluator")
             self.plans[record.id] = record
         elif isinstance(record, ExperimentResult):
             plan = self.plans.get(record.plan_id)

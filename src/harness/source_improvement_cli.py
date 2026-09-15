@@ -10,7 +10,32 @@ from harness.improvement import verdict
 from harness.source_improvement import SourceProposal, prepare_source, run_source_evaluation
 
 
+def read_spec(filename):
+    path = Path(filename).absolute()
+    if any(p.is_symlink() for p in (path, *path.parents)):
+        raise ValueError("source proposal paths must not follow symlinks")
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(fd, "rb") as source:
+        if not stat.S_ISREG(os.fstat(source.fileno()).st_mode):
+            raise ValueError("source proposal must be a regular JSON file")
+        data = source.read(1024 * 1024 + 1)
+    if len(data) > 1024 * 1024:
+        raise ValueError("source proposal exceeds 1 MiB")
+    return data
+
+
+def prepared(plan):
+    return (f"Source candidate {plan.candidate_id}; fixed plan {plan.id}.\n"
+            f"Review: /improvements show {plan.candidate_id} and /improvements show {plan.id}.\n"
+            f"Run: /improvements source-evaluate {plan.id} "
+            f"(CLI: harness improve-source SESSION evaluate {plan.id}).\n"
+            "Checks execute with your OS authority in fresh directories. No code is activated.")
+
+
 async def perform(journal, words):
+    if len(words) == 2 and words[0] == "finalize":
+        from harness.source_authorship import finalize_source
+        return prepared(finalize_source(journal, words[1]))
     if len(words) == 5 and words[0] == "adopt":
         from harness.improvement import SourceEntrypoint
         from harness.source_promotion import adopt_source
@@ -28,23 +53,9 @@ async def perform(journal, words):
         return (f"Restored source {change.slot}: {change.source.sha256[:12]}; change {change.id}.\n"
                 "Applies to the next process; running processes keep their existing source.")
     if len(words) == 2 and words[0] == "prepare":
-        path = Path(words[1]).absolute()
-        if any(p.is_symlink() for p in (path, *path.parents)):
-            raise ValueError("source proposal paths must not follow symlinks")
-        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
-        with os.fdopen(fd, "rb") as source:
-            if not stat.S_ISREG(os.fstat(source.fileno()).st_mode):
-                raise ValueError("source proposal must be a regular JSON file")
-            data = source.read(1024 * 1024 + 1)
-        if len(data) > 1024 * 1024:
-            raise ValueError("source proposal exceeds 1 MiB")
-        proposal = SourceProposal.model_validate_json(data)
+        proposal = SourceProposal.model_validate_json(read_spec(words[1]))
         plan = await prepare_source(journal, proposal)
-        return (f"Source candidate {plan.candidate_id}; fixed plan {plan.id}.\n"
-                f"Review: /improvements show {plan.candidate_id} and /improvements show {plan.id}.\n"
-                f"Run: /improvements source-evaluate {plan.id} "
-                f"(CLI: harness improve-source SESSION evaluate {plan.id}).\n"
-                "Checks execute with your OS authority in fresh directories. No code is activated.")
+        return prepared(plan)
     if len(words) == 2 and words[0] == "evaluate":
         result = await run_source_evaluation(journal, words[1])
         decision = verdict(journal.state.plans[result.plan_id], result)
@@ -52,7 +63,7 @@ async def perform(journal, words):
                 "Recorded checks do not qualify code activation. Review the retained patch and results. "
                 + ("Explicit source-adopt RESULT SLOT MODULE:FUNCTION IMPORT_ROOT is available."
                    if decision == "passed" else "Candidate held."))
-    raise ValueError("use source-prepare SPEC.json, source-evaluate PLAN_ID, "
+    raise ValueError("use source-prepare SPEC.json, source-finalize AUTHOR_ID, source-evaluate PLAN_ID, "
                      "source-adopt RESULT SLOT MODULE:FUNCTION IMPORT_ROOT, or source-rollback SLOT")
 
 
@@ -68,6 +79,7 @@ def main(argv):
     parser.add_argument("session_id")
     actions = parser.add_subparsers(dest="action", required=True)
     actions.add_parser("prepare", help="Freeze two committed revisions and operator-authored checks.").add_argument("spec")
+    actions.add_parser("finalize", help="Recover a completed author response without inference.").add_argument("author_id")
     actions.add_parser("evaluate", help="Execute a recorded plan in fresh source directories.").add_argument("plan_id")
     adopt = actions.add_parser("adopt", help="Select a passing source snapshot for the next process.")
     for name in ("result_id", "slot", "entrypoint", "import_root"):
@@ -78,7 +90,7 @@ def main(argv):
     async def run():
         session, _ = resume_session(args.base_dir, SessionId(args.session_id))
         with session:
-            fields = {"prepare": ("spec",), "evaluate": ("plan_id",),
+            fields = {"prepare": ("spec",), "finalize": ("author_id",), "evaluate": ("plan_id",),
                       "adopt": ("result_id", "slot", "entrypoint", "import_root"), "rollback": ("slot",)}
             print(await perform(ImprovementJournal(session), [args.action,
                         *(getattr(args, field) for field in fields[args.action])]))

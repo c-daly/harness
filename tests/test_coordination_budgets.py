@@ -72,14 +72,21 @@ async def parked(base, *, seconds=10, provider=None, overrides=None):
     kernel.tasks.create("Keep the team's useful work")
     kernel.tasks.add_requirement({"id": "review", "description": "Inspect work", "check": {"kind": "review"}})
     work = asyncio.create_task(kernel.loop.run_task(kernel.tasks.prepare("work")))
+    ready = asyncio.gather(*(e.wait() for e in provider.entered.values()))
     try:
-        await asyncio.wait_for(asyncio.gather(*(e.wait() for e in provider.entered.values())), 3)
+        # Readiness competes with the real bounded task, not an unrelated setup
+        # stopwatch. A slow start must not preempt the behavior under test.
+        done, _ = await asyncio.wait((ready, work), return_when=asyncio.FIRST_COMPLETED)
+        if work in done:
+            raise AssertionError(f"coordinator ended before members were ready: {work.result()}")
+        await ready
         yield SimpleNamespace(kernel=kernel, provider=provider, work=work)
     finally:
+        ready.cancel()
         provider.unblock()
         if not work.done():
             work.cancel()
-        await asyncio.gather(work, return_exceptions=True)
+        await asyncio.gather(ready, work, return_exceptions=True)
         kernel.session.close()
 
 

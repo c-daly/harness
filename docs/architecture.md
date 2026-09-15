@@ -39,6 +39,8 @@ patch import and paired checks in fresh source directories, with fixed artifacts
 and recoverable core results. Passing checks do not activate code. Explicit
 [source promotion](source-promotion.md) selects an exact snapshot and entrypoint
 for a new process, with journaled rollback and a separate source copy per launch.
+[Source authorship](source-authorship.md) adds a bounded native author task with
+operator-owned edit scope and checks, plus durable response finalization.
 
 ---
 

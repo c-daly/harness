@@ -526,7 +526,7 @@ def _run_main() -> None:
     parser = argparse.ArgumentParser(prog="harness", epilog=(
         "Portable continuation: harness export SESSION_ID NEW_FILE.zip [--task ID]. "
         "Use 'harness export --help' for details. "
-        "Supervised source changes: harness improve-source --help; "
+        "Source authorship: harness improve --help. Supervised source changes: harness improve-source --help; "
         "launch a selected snapshot with harness run-source --help."))
     parser.add_argument("-p", "--prompt", default=None)
     parser.add_argument(
