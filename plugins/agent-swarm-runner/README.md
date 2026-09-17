@@ -44,6 +44,11 @@ the shell retains the operator's authority. The role instructs the worker to
 avoid network operations, commits, publication and destructive lifecycle actions;
 these instructions are not shell containment.
 
+Native file writes and edits publish through an exclusively created temporary
+file. An existing `.harness.tmp` sibling, including a symlink or hardlink, is
+left untouched. This closes a file-publication bug; it does not confine shell
+commands or protect against concurrent replacement of parent directories.
+
 The native agent explicitly configures 48 iterations and 16,384 output tokens
 per response. Otherwise the core defaults remain 20 iterations and 4,096 tokens;
 a larger context-profile cap alone cannot raise a smaller agent-task cap.
