@@ -37,7 +37,7 @@ jobs:
         run: uv run ruff check .
 
       - name: Test
-        run: uv run pytest -q
+        run: uv run pytest -v -o faulthandler_timeout=60
 
       - name: Build sdist and wheel
         run: uv build --out-dir dist
