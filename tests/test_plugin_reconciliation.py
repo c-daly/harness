@@ -17,6 +17,7 @@ import anyio
 import pytest
 from mcp.shared.memory import create_client_server_memory_streams
 
+from harness.blobs import BlobIntegrityError, MissingBlobError
 from harness.dispatcher import Dispatcher
 from harness.events import DispatchResolved, Envelope, ToolCallCompleted, ToolCallProposed
 from harness.hooks import HookBus, ProposedToolCall, Rewrite
@@ -131,6 +132,67 @@ def _append_workflow_call(session, call_id, tool, args, result, *, is_error=Fals
     )
 
 
+@pytest.mark.parametrize("result,expected_refs,expected_writes", [
+    ({"workflow_id": "wf1", "phase": "implementing", "details": "x" * 20000}, 1, 1),
+    ({"error": "not found", "details": "x" * 20000}, 0, 0),
+])
+def test_blob_results_reconcile_like_inline_results(
+    tmp_path, capsys, result, expected_refs, expected_writes,
+):
+    with Session(tmp_path, SessionId("blob-results")) as session:
+        session.start()
+        for call_id, tool, text in [
+            ("workflow", "mcp__stub__workflow__workflow_start", json.dumps(result)),
+            ("write", "mcp__memory__memory_write",
+             ("error: " if "error" in result else "saved/") + "x" * 20000),
+        ]:
+            session.append(ToolCallProposed(call_id=call_id, tool=tool, args={"workflow_id": "wf1"}))
+            session.append(ToolCallCompleted(call_id=call_id, result_blob=session.blobs.put(text.encode())))
+        envelopes = read_session(tmp_path, session.id)
+        report = reconcile_from_log(envelopes, blobs=session.blobs)
+        assert len(report.refs) == expected_refs
+        assert report.accepted_records == expected_writes
+        if expected_refs:
+            assert report.refs[0].last_phase == "implementing"
+    plugins_main(["reconcile", "blob-results", "--base-dir", str(tmp_path)])
+    out = capsys.readouterr().out
+    assert f"Plugin workflow refs: {expected_refs}" in out
+    assert f"Accepted memory records (writes): {expected_writes}" in out
+    from harness.status_cli import main as status_main
+    status_main(["blob-results", "--base-dir", str(tmp_path)])
+    assert f"{expected_writes} accepted records" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("broken", ["no-store", "missing", "corrupt"])
+def test_unavailable_blob_evidence_cannot_be_counted_as_success(tmp_path, capsys, broken):
+    with Session(tmp_path, SessionId("broken-blob")) as session:
+        session.start()
+        blob = session.blobs.put(b"error: write rejected")
+        session.append(ToolCallProposed(call_id="write", tool="mcp__memory__memory_write", args={}))
+        session.append(ToolCallCompleted(call_id="write", result_blob=blob))
+        path = tmp_path / "sessions" / str(session.id) / "blobs" / blob.sha256
+        if broken == "missing":
+            path.unlink()
+        elif broken == "corrupt":
+            path.write_bytes(b"x" * blob.size)
+        blobs = None if broken == "no-store" else session.blobs
+        with pytest.raises(BlobIntegrityError if broken == "corrupt" else MissingBlobError):
+            reconcile_from_log(read_session(tmp_path, session.id), blobs=blobs)
+    if broken != "no-store":
+        from harness.status_cli import main as status_main
+
+        for command, argv in [
+            (plugins_main, ["reconcile", "broken-blob", "--base-dir", str(tmp_path)]),
+            (status_main, ["broken-blob", "--base-dir", str(tmp_path)]),
+        ]:
+            with pytest.raises(SystemExit) as exc:
+                command(argv)
+            assert exc.value.code == 2
+            captured = capsys.readouterr()
+            assert not captured.out
+            assert ("BlobIntegrityError" if broken == "corrupt" else "MissingBlobError") in captured.err
+
+
 @pytest.mark.parametrize("is_error,result", [
     (True, {"workflow_id": "missing", "phase": "failed"}),
     (False, {"error": "workflow not found"}),
@@ -232,12 +294,25 @@ async def test_live_reconciliation_does_not_attribute_redirected_results_to_orig
     ("active", "workflow_advance_phase", "implementing"),
     ("finished", "workflow_stop", "stopped"),
 ])
+@pytest.mark.parametrize("large_result", [False, True])
 async def test_live_report_includes_new_phase_and_log_only_status_stays_unknown(
-    tmp_path, monkeypatch, status, verb, phase,
+    tmp_path, monkeypatch, status, verb, phase, large_result,
 ):
     with Session(tmp_path, SessionId("fresh-phase")) as session:
         session.start()
         host, registry, hooks = await _build_host(session, monkeypatch, tmp_path)
+        if large_result:
+            original_call = host.connections["stub"].call_tool
+
+            async def expanded_call(name, args):
+                result = await original_call(name, args)
+                if name == "workflow__workflow_get_state":
+                    data = json.loads(result.content[0].text)
+                    data["details"] = "x" * 20000
+                    result.content[0].text = json.dumps(data)
+                return result
+
+            monkeypatch.setattr(host.connections["stub"], "call_tool", expanded_call)
         dispatcher = Dispatcher(
             session=session, registry=registry, hooks=hooks, resolver=HeadlessResolver(),
         )
@@ -253,11 +328,14 @@ async def test_live_report_includes_new_phase_and_log_only_status_stays_unknown(
             rendered = render_reconciliation(report)
             assert f"phase={phase}; status={status}; live check performed" in rendered
             assert "no live check performed" not in rendered
-            replay = reconcile_from_log(read_session(tmp_path, session.id))
+            replay = reconcile_from_log(read_session(tmp_path, session.id), blobs=session.blobs)
             assert replay.refs == report.refs
             assert replay.statuses == {"stub:wf1": "unknown"}
             assert replay.live_checks == ()
             assert "no live check performed" in render_reconciliation(replay)
+            if large_result:
+                assert any(isinstance(env.event, ToolCallCompleted) and env.event.result_blob
+                           for env in read_session(tmp_path, session.id))
         finally:
             await host.stop()
 

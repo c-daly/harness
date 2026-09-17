@@ -6,10 +6,10 @@ needs about a plugin-managed workflow purely from those facts, without ever
 importing agent-swarm or memory internals.
 
 - project_plugin_workflows folds completed workflow tool calls from a
-  session log into PluginWorkflowRef facts. Pure, total, log-only.
+  session log and verified blob sidecar into PluginWorkflowRef facts.
 - count_memory_contributions and count_accepted_records fold completed
   memory-plugin tool calls from the same log.
-- reconcile_from_log builds a ReconciliationReport from the log alone.
+- reconcile_from_log builds a ReconciliationReport without contacting plugins.
   Every ref is reported unknown: without a live check, core never invents
   a status.
 - reconcile is the live version. It re-dispatches
@@ -30,6 +30,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+from harness.blobs import BlobIntegrityError, BlobStore, MissingBlobError
 from harness.events import DispatchResolved, ToolCallCompleted, ToolCallProposed
 from harness.hooks import ProposedToolCall
 from harness.log import TornLogError, read_session
@@ -97,7 +98,15 @@ def _text_field(data: object, key: str) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
-def project_plugin_workflows(envelopes) -> tuple[PluginWorkflowRef, ...]:
+def _result_text(event: ToolCallCompleted, blobs: BlobStore | None) -> str:
+    if event.result_blob is not None:
+        if blobs is None:
+            raise MissingBlobError("reconciliation requires the session blob store")
+        return blobs.get(event.result_blob).decode("utf-8")
+    return event.result_text or ""
+
+
+def project_plugin_workflows(envelopes, *, blobs: BlobStore | None = None) -> tuple[PluginWorkflowRef, ...]:
     proposed: dict[str, tuple[str, dict]] = {}
     refs: dict[tuple[str, str], PluginWorkflowRef] = {}
     for env in envelopes:
@@ -116,11 +125,11 @@ def project_plugin_workflows(envelopes) -> tuple[PluginWorkflowRef, ...]:
                 continue
             server, _verb = parsed
             data = None
-            if isinstance(event.result_text, str):
-                try:
-                    data = json.loads(event.result_text)
-                except (json.JSONDecodeError, TypeError, ValueError):
-                    data = None
+            text = _result_text(event, blobs)
+            try:
+                data = json.loads(text)
+            except (json.JSONDecodeError, TypeError, ValueError):
+                data = None
             if isinstance(data, dict) and "error" in data:
                 continue
             workflow_id = _text_field(data, "workflow_id") or _text_field(args, "workflow_id")
@@ -160,7 +169,7 @@ def count_memory_contributions(envelopes) -> int:
     return count
 
 
-def count_accepted_records(envelopes) -> int:
+def count_accepted_records(envelopes, *, blobs: BlobStore | None = None) -> int:
     proposed: dict[str, str] = {}
     count = 0
     for env in envelopes:
@@ -174,27 +183,27 @@ def count_accepted_records(envelopes) -> int:
             tool = proposed.get(str(event.call_id))
             if tool is None or _memory_tool(tool) != _MEMORY_WRITE_TOOL:
                 continue
-            text = event.result_text or ""
+            text = _result_text(event, blobs)
             if not text.startswith("error:"):
                 count += 1
     return count
 
 
-def reconcile_from_log(envelopes) -> ReconciliationReport:
-    refs = project_plugin_workflows(envelopes)
+def reconcile_from_log(envelopes, *, blobs: BlobStore | None = None) -> ReconciliationReport:
+    refs = project_plugin_workflows(envelopes, blobs=blobs)
     statuses: dict[str, Status] = {_ref_key(r.server, r.workflow_id): "unknown" for r in refs}
     return ReconciliationReport(
         refs=refs,
         statuses=statuses,
         non_resumable=(),
         memory_contributions=count_memory_contributions(envelopes),
-        accepted_records=count_accepted_records(envelopes),
+        accepted_records=count_accepted_records(envelopes, blobs=blobs),
     )
 
 
 async def reconcile(kernel) -> ReconciliationReport:
     envelopes = read_session(kernel.session.base, kernel.session.id, repair=False)
-    base = reconcile_from_log(envelopes)
+    base = reconcile_from_log(envelopes, blobs=kernel.session.blobs)
     statuses = dict(base.statuses)
     non_resumable: list[str] = []
     for ref in base.refs:
@@ -238,7 +247,10 @@ async def reconcile(kernel) -> ReconciliationReport:
             statuses[key] = data["status"]
         else:
             statuses[key] = "unknown"
-    current = reconcile_from_log(read_session(kernel.session.base, kernel.session.id, repair=False))
+    current = reconcile_from_log(
+        read_session(kernel.session.base, kernel.session.id, repair=False),
+        blobs=kernel.session.blobs,
+    )
     return ReconciliationReport(
         refs=current.refs,
         statuses={**current.statuses, **statuses},
@@ -296,8 +308,9 @@ def main(argv: list[str]) -> None:
     args = parser.parse_args(argv)
     try:
         envelopes = read_session(args.base_dir, SessionId(args.session_id), repair=False)
-    except (OSError, ValueError, TornLogError) as exc:
+        blobs = BlobStore(args.base_dir / "sessions" / args.session_id / "blobs", create=False)
+        report = reconcile_from_log(envelopes, blobs=blobs)
+    except (OSError, ValueError, TornLogError, MissingBlobError, BlobIntegrityError) as exc:
         parser.error(f"plugin reconciliation failed ({type(exc).__name__})")
         return
-    report = reconcile_from_log(envelopes)
     print(render_reconciliation(report))

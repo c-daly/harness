@@ -16,17 +16,22 @@ Core already appends ToolCallProposed, DispatchResolved, and
 ToolCallCompleted facts for every MCP tool dispatch, whether the tool
 belongs to agent-swarm, memory, or any other plugin. `plugin_reconciliation.py`
 never imports a plugin. It only reads those facts back out of the session
-log.
+log and its verified blob sidecar. Calls whose results spill past the dispatcher's
+inline threshold must produce the same report as inline calls. The projection
+helpers accept a `blobs=BlobStore(...)` argument for these results; live checks
+and both CLI consumers supply the session's store automatically. Missing or
+corrupt result blobs refuse the report rather than inventing successful writes
+or workflow references. Inspection never creates missing blob directories.
 
 - `project_plugin_workflows(envelopes)` folds successful completed calls to
   `mcp__SERVER__workflow__workflow_*` into a `PluginWorkflowRef` per
   (server, workflow_id): the last known phase, and the log position (seq
   and call id) that produced it. Dispatcher errors and plugin JSON `error`
   results neither create refs nor update existing ones. For successful calls,
-  it is pure and total: an unexpected or
-  unparsable result still yields a ref, with `last_phase=None` the first
+  an unexpected or unparsable result still yields a ref, with `last_phase=None` the first
   time and left unchanged on a later call that carries no phase. It never
-  raises. The effective tool and arguments from `DispatchResolved` take
+  invents a phase. Blob-integrity failures remain explicit errors.
+  The effective tool and arguments from `DispatchResolved` take
   precedence over the original proposal, including after hook rewrites.
 - `count_memory_contributions(envelopes)` counts completed
   `mcp__memory__memory_get`, `memory_list`, and `memory_brief` calls
