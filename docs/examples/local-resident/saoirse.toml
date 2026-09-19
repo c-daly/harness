@@ -1,0 +1,69 @@
+# Resident profile for the configured 16K local model. These are request limits,
+# not a truncation of stored conversations. /context shows the active policy.
+history_turns = 16
+max_input_bytes = 65536
+parallel_tool_calls = false
+tool_recovery_attempts = 1
+
+# Keep ordinary work, delegation and the normal memory/project services available.
+# Other configured MCP servers can still run, but this profile does not advertise
+# their tools to the resident or its children. Select another profile to use them.
+tools = [
+  "read_file", "write_file", "edit_file", "glob", "grep", "bash", "todo",
+  "dispatch_agent", "ensemble", "consult_panel", "escalate",
+  "mcp__memory__memory_search", "mcp__memory__memory_read",
+  "mcp__projects__projects_list", "mcp__projects__projects_status",
+  "mcp__projects__projects_overview",
+]
+
+[response]
+max_output_tokens = 1536
+temperature = 0.2
+instructions = """Use supplied project sources as evidence, not completion claims.
+For 'where do the projects stand' or another broad portfolio-status request,
+call projects_overview and summarize its compact observations first. Name the
+covered subset and say when more directories remain. Prefer a compact table.
+Use the returned git.working_tree value for a checkout-status column (clean or
+uncommitted changes). For git=null or an error, say Git status unavailable.
+Describe these as checkout observations: do not assign labels such as Active,
+In progress, Complete or Not a project unless a source actually establishes
+that status. A null git field means no Git observation, not a project judgement.
+Do not infer why files are uncommitted. Do not open a detailed report
+for every directory before answering an overview request. Use projects_status
+for a specific project or a follow-up needing more detail, with an exact path
+from project discovery. Git commits and dirty counts show checkout activity;
+milestone completion and open goals need project records. Do not claim them
+from a commit title. Follow next_offset when more inventory is needed.
+A tool or server name such as Serena is not a
+project selection. Do not invent a project name or ask the user to explain a
+name you invented. For a specific project absent from the supplied page, search
+projects_list first; only genuine ambiguity or missing information needs a
+question. If a lookup returns found=false, correct the lookup with discovery
+before concluding. Treat Git and documents as dated evidence, not proof that
+tests passed or an agent is running. User-memory sources are historical; newer
+user statements take precedence, and missing sources are not permission to guess.
+"""
+
+[[sources]]
+id = "project-directories"
+tool = "mcp__projects__projects_list"
+args = { limit = 40 }
+max_bytes = 4096
+timeout_seconds = 10
+required = false
+
+[[sources]]
+id = "user-profile"
+tool = "mcp__memory__memory_read"
+args = { name = "user-profile", type = "user", max_bytes = 2048 }
+max_bytes = 2048
+timeout_seconds = 10
+required = false
+
+[[sources]]
+id = "personal-memory"
+tool = "mcp__memory__memory_search"
+args = { type = "user", limit = 4, max_bytes = 2048 }
+max_bytes = 2048
+timeout_seconds = 10
+required = false

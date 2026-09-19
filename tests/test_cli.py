@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 import pytest
 
@@ -7,6 +8,14 @@ from harness.mcp_config import load_mcp_file
 from harness.provider import FakeProvider, text_turn
 from harness.types import ModelId
 from tests.conftest import fixture_stdio_spec
+
+
+@pytest.fixture(autouse=True)
+def isolated_cli_home(tmp_path, monkeypatch):
+    """CLI tests must not start the user's real MCP servers or load defaults."""
+    home = tmp_path / "user-home"
+    home.mkdir()
+    monkeypatch.setattr(Path, "home", lambda: home)
 
 
 async def test_build_kernel_wires_dispatch_agent_tool(tmp_path):
@@ -90,7 +99,7 @@ def test_continue_flag_resolves_to_newest_session_id(tmp_path, monkeypatch, caps
     import harness.cli as cli_mod
 
     monkeypatch.setattr(cli_mod, "default_engine", lambda project_dir=None: None)
-    monkeypatch.setattr("sys.argv", ["harness", "-p", "first", "--base-dir", str(tmp_path)])
+    monkeypatch.setattr("sys.argv", ["harness", "--demo", "-p", "first", "--base-dir", str(tmp_path)])
     cli_mod.main()
     capsys.readouterr()
     first_sid = next((tmp_path / "sessions").glob("*.jsonl")).stem
@@ -98,7 +107,7 @@ def test_continue_flag_resolves_to_newest_session_id(tmp_path, monkeypatch, caps
     # otherwise land in the same second and make "newest" ambiguous
     os.utime(tmp_path / "sessions" / f"{first_sid}.jsonl", (1_000_000, 1_000_000))
 
-    monkeypatch.setattr("sys.argv", ["harness", "-p", "second", "--base-dir", str(tmp_path)])
+    monkeypatch.setattr("sys.argv", ["harness", "--demo", "-p", "second", "--base-dir", str(tmp_path)])
     cli_mod.main()
     capsys.readouterr()
     all_sids = {p.stem for p in (tmp_path / "sessions").glob("*.jsonl")}
@@ -114,7 +123,7 @@ def test_continue_flag_resolves_to_newest_session_id(tmp_path, monkeypatch, caps
 
     monkeypatch.setattr(cli_mod, "build_kernel", spy_build_kernel)
     monkeypatch.setattr(
-        "sys.argv", ["harness", "--continue", "-p", "third", "--base-dir", str(tmp_path)]
+        "sys.argv", ["harness", "--demo", "--continue", "-p", "third", "--base-dir", str(tmp_path)]
     )
     cli_mod.main()
     assert captured["resume_session_id"] == second_sid
@@ -126,7 +135,7 @@ def test_continue_flag_with_no_sessions_raises_clear_system_exit(tmp_path, monke
 
     monkeypatch.setattr(cli_mod, "default_engine", lambda project_dir=None: None)
     monkeypatch.setattr(
-        "sys.argv", ["harness", "--continue", "-p", "hi", "--base-dir", str(tmp_path)]
+        "sys.argv", ["harness", "--demo", "--continue", "-p", "hi", "--base-dir", str(tmp_path)]
     )
     with pytest.raises(SystemExit) as exc:
         cli_mod.main()
@@ -278,7 +287,7 @@ def test_main_broken_routing_toml_is_actionable(tmp_path, monkeypatch):
     (tmp_path / ".harness" / "routing.toml").write_text('[[rules]]\ntags = ["docs"]\n')
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
-        "sys.argv", ["harness", "-p", "x", "--base-dir", str(tmp_path)]
+        "sys.argv", ["harness", "--demo", "-p", "x", "--base-dir", str(tmp_path)]
     )
     with pytest.raises(SystemExit) as exc:
         main()
@@ -309,7 +318,7 @@ def test_allow_without_config_controls_real_native_writes(tmp_path, capsys, monk
     monkeypatch.setattr(cli_mod, "FakeProvider", lambda turns: provider)
     monkeypatch.setattr(
         "sys.argv",
-        ["harness", "-p", "write the file", "--no-mcp", "--no-plugins", "--base-dir", str(tmp_path / "sessions"),
+        ["harness", "--demo", "-p", "write the file", "--no-mcp", "--no-plugins", "--base-dir", str(tmp_path / "sessions"),
          "--workspace", str(tmp_path), *(["--allow", "write_file"] if grant else [])],
     )
     cli_mod.main()
@@ -341,7 +350,7 @@ def test_stats_subcommand_prints_summary(tmp_path, capsys, monkeypatch):
 
     # seed one session via the legacy run path
     monkeypatch.setattr(cli_mod, "default_engine", lambda project_dir=None: None)
-    monkeypatch.setattr("sys.argv", ["harness", "-p", "hello", "--base-dir", str(tmp_path)])
+    monkeypatch.setattr("sys.argv", ["harness", "--demo", "-p", "hello", "--base-dir", str(tmp_path)])
     cli_mod.main()
     capsys.readouterr()
     monkeypatch.setattr("sys.argv", ["harness", "stats", "--base-dir", str(tmp_path)])
@@ -356,7 +365,7 @@ def test_outcome_then_compare_subcommands(tmp_path, capsys, monkeypatch):
     monkeypatch.setattr(cli_mod, "default_engine", lambda project_dir=None: None)
     sids = []
     for prompt in ("one", "two"):
-        monkeypatch.setattr("sys.argv", ["harness", "-p", prompt, "--base-dir", str(tmp_path)])
+        monkeypatch.setattr("sys.argv", ["harness", "--demo", "-p", prompt, "--base-dir", str(tmp_path)])
         cli_mod.main()
     capsys.readouterr()
     sids = sorted(p.stem for p in (tmp_path / "sessions").glob("*.jsonl"))
@@ -493,7 +502,7 @@ def test_no_mcp_flag_skips_mcp(tmp_path, capsys, monkeypatch):
     monkeypatch.setattr(cli_mod, "default_engine", lambda project_dir=None: None)
     monkeypatch.setattr(
         "sys.argv",
-        ["harness", "-p", "hi", "--no-mcp", "--base-dir", str(tmp_path)],
+        ["harness", "--demo", "-p", "hi", "--no-mcp", "--base-dir", str(tmp_path)],
     )
     cli_mod.main()
     captured = capsys.readouterr()
@@ -623,7 +632,7 @@ def test_no_prompt_routes_to_tui(tmp_path, monkeypatch):
         launched["routing_rules"] = routing_rules
 
     monkeypatch.setattr("harness.tui.run_tui", fake_run_tui)
-    run_cli("--base-dir", str(tmp_path))  # no -p
+    run_cli("--demo", "--base-dir", str(tmp_path))  # no -p
     kernel = launched["kernel"]
     assert kernel.loop.dispatcher.resolver.name == "tui"
     assert type(kernel.provider).__name__ == "EchoProvider"
@@ -634,8 +643,8 @@ def test_no_prompt_routes_to_tui(tmp_path, monkeypatch):
     kernel.session.close()  # fake_run_tui skipped teardown
 
 
-def test_prompt_mode_unchanged(tmp_path, capsys):
-    run_cli("-p", "hello", "--base-dir", str(tmp_path))
+def test_explicit_demo_prompt_echoes(tmp_path, capsys):
+    run_cli("--demo", "-p", "hello", "--base-dir", str(tmp_path))
     assert "echo: hello" in capsys.readouterr().out
 
 
@@ -647,7 +656,7 @@ def test_prompt_mode_incomplete_result_prints_partial_output_and_exits_nonzero(t
         [TextDelta("partial answer"), StreamStop("max_tokens")],
     ]))
     with pytest.raises(SystemExit, match="task incomplete: max_tokens") as exc:
-        run_cli("-p", "solve", "--base-dir", str(tmp_path), "--no-plugins", "--no-mcp")
+        run_cli("--demo", "-p", "solve", "--base-dir", str(tmp_path), "--no-plugins", "--no-mcp")
     assert exc.value.code != 0
     assert "partial answer" in capsys.readouterr().out
 
@@ -675,7 +684,7 @@ def test_no_plugins_flag_and_plugin_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(cli_mod, "default_engine", lambda project_dir=None: None)
     monkeypatch.setattr(
         "sys.argv",
-        ["harness", "-p", "hi", "--plugin-dir", str(plugin_dir), "--base-dir", str(tmp_path)],
+        ["harness", "--demo", "-p", "hi", "--plugin-dir", str(plugin_dir), "--base-dir", str(tmp_path)],
     )
     captured_kernel = {}
     orig_build = cli_mod.build_kernel
@@ -696,6 +705,7 @@ def test_no_plugins_flag_and_plugin_dir(tmp_path, monkeypatch):
         "sys.argv",
         [
             "harness",
+            "--demo",
             "-p",
             "hi",
             "--plugin-dir",

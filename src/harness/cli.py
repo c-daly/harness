@@ -1,4 +1,4 @@
-"""Headless entrypoint. Phase 1: FakeProvider demo; Phase 2: catalog/--model/--resume/SIGINT."""
+"""Resident entrypoint for interactive and headless Harness sessions."""
 
 import argparse
 import asyncio
@@ -21,6 +21,7 @@ from harness.mcp_config import McpConfigError, McpServerSpec, load_mcp_config, l
 from harness.mcp_host import McpHost
 from harness.permissions import PermissionEngine, default_engine
 from harness.provider import FakeProvider, ModelProvider, text_turn
+from harness.resident import RESIDENT_SYSTEM_PROMPT, ResidentConfig, UnconfiguredResidentProvider
 from harness.session import Session
 from harness.subagent import DispatchAgentTool, SubagentRunner
 from harness.tools import FilteredRegistry, ToolRegistry
@@ -132,7 +133,7 @@ def build_kernel(
     provider: ModelProvider,
     base_dir: Path,
     model: ModelId,
-    system_prompt: str = "You are a helpful agent.",
+    system_prompt: str = RESIDENT_SYSTEM_PROMPT,
     resolver: Resolver | None = None,
     hooks: HookBus | None = None,
     pricing: dict[str, float] | None = None,
@@ -529,6 +530,10 @@ def _run_main() -> None:
         "Source authorship: harness improve --help. Supervised source changes: harness improve-source --help; "
         "launch a selected snapshot with harness run-source --help."))
     parser.add_argument("-p", "--prompt", default=None)
+    parser.add_argument("--resident-config", type=Path,
+                        help="Resident defaults (normally ~/.config/harness/resident.toml).")
+    parser.add_argument("--demo", action="store_true",
+                        help="Explicit echo demo for testing; does not run a model.")
     parser.add_argument(
         "--base-dir", type=Path, default=Path.home() / ".local" / "share" / "harness"
     )
@@ -599,6 +604,12 @@ def _run_main() -> None:
     context_flags.add_argument("--no-context-profile", action="store_true",
                                help="Explicitly clear an inherited context profile when resuming.")
     args = parser.parse_args()
+    if args.demo and args.model is not None:
+        parser.error("--demo cannot be combined with --model")
+    try:
+        resident = ResidentConfig() if args.demo else ResidentConfig.load(args.resident_config)
+    except (OSError, ValueError) as exc:
+        raise SystemExit(f"resident config unavailable or invalid: {exc}") from None
     try:
         execution_overrides = {name: getattr(args, name) for name in asdict(ExecutionLimits())
                                if getattr(args, name) is not None}
@@ -609,9 +620,12 @@ def _run_main() -> None:
     except ValueError as exc:
         parser.error(str(exc))
     context_policy = None
-    if args.context_profile is not None:
+    profile = args.context_profile
+    if profile is None and not args.no_context_profile and not (args.resume_session_id or args.continue_last):
+        profile = resident.context_profile
+    if profile is not None:
         try:
-            context_policy = ContextPolicy.load(args.context_profile)
+            context_policy = ContextPolicy.load(profile)
         except (OSError, ValueError) as exc:
             raise SystemExit(f"context profile unavailable or invalid ({type(exc).__name__})") from None
 
@@ -633,7 +647,7 @@ def _run_main() -> None:
     pricing_for: Callable[[ModelId], dict[str, float]] | None = None
     model_pinned = args.model is not None
     selected_alias = args.model
-    if resume_session_id is not None and args.model is None:
+    if resume_session_id is not None and args.model is None and not args.demo:
         from harness.model_selection import read_model_selection, load_selected_catalog
         from harness.log import SessionLockedError, TornLogError
         try:
@@ -645,7 +659,16 @@ def _run_main() -> None:
         except (OSError, ValueError, SessionLockedError, TornLogError) as exc:
             raise SystemExit(f"cannot resume {resume_session_id}: {exc}") from None
 
-    if selected_alias is not None:
+    if selected_alias is None and not args.demo and not (routing_rules and routing_rules.default):
+        selected_alias = resident.model
+
+    if args.demo:
+        from harness.provider import EchoProvider
+
+        provider = FakeProvider([text_turn(f"echo: {args.prompt}")]) if args.prompt is not None else EchoProvider()
+        model = ModelId("fake:echo" if args.prompt is not None else "echo")
+        pricing = None
+    elif selected_alias is not None:
         from harness.catalog import Catalog, UnknownAliasError
 
         try:
@@ -690,15 +713,9 @@ def _run_main() -> None:
         model = ModelId(routing_rules.default)
         pricing = resolved.pricing_dict() or None
         pricing_for = _make_pricing_for(catalog)
-    elif args.prompt is not None:
-        provider = FakeProvider([text_turn(f"echo: {args.prompt}")])
-        model = ModelId("fake:echo")
-        pricing = None
     else:
-        from harness.provider import EchoProvider
-
-        provider = EchoProvider()
-        model = ModelId("echo")
+        provider = UnconfiguredResidentProvider()
+        model = ModelId("unconfigured")
         pricing = None
 
     # The CLI always installs native tools. Keep one engine for its baseline,
@@ -764,8 +781,8 @@ def _run_main() -> None:
             pricing_for=pricing_for,
             routing_rules=routing_rules,
             model_pinned=model_pinned,
-            inherit_model_selection=args.model is None,
-            explicit_model_selection=args.model is not None,
+            inherit_model_selection=args.model is None and not args.demo,
+            explicit_model_selection=args.model is not None or args.demo,
             catalog_path=args.catalog,
             context_policy=context_policy,
             inherit_context_policy=not args.no_context_profile,
@@ -789,8 +806,8 @@ def _run_main() -> None:
         pricing_for=pricing_for,
         routing_rules=routing_rules,
         model_pinned=model_pinned,
-        inherit_model_selection=args.model is None,
-        explicit_model_selection=args.model is not None,
+        inherit_model_selection=args.model is None and not args.demo,
+        explicit_model_selection=args.model is not None or args.demo,
         catalog_path=args.catalog,
         context_policy=context_policy,
         inherit_context_policy=not args.no_context_profile,
