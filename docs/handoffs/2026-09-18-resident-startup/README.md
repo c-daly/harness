@@ -89,6 +89,34 @@ interrupted. The affected tests and live MCP probes were rerun with local host
 access. One broader test command named a nonexistent test module and collected
 no tests; the corrected test list was then run.
 
+## Feature-branch validation
+
+The source changes were applied to an isolated worktree based on `main` at
+`2dbf279`, with the runtime changes and compaction fixture correction in separate
+commits. Full-suite checks used the locked development environment and host access
+for local subprocess/socket fixtures:
+
+- Python 3.12: **2,480 passed, 7 skipped, 6 warnings** (532.96 seconds).
+- Python 3.13: **2,480 passed, 7 skipped, 6 warnings** (514.40 seconds).
+- Repository-wide Ruff, source/wheel build, clean-install wheel smoke, and diff
+  whitespace checks passed.
+
+An initial Python 3.13 invocation returned **10 failed, 2,470 passed, 7 skipped**.
+Nine failures came from invoking pytest without activating the project environment:
+fake provider executables resolved system Python and could not import MCP. The
+final runs used `uv run`. The remaining failure exposed the compaction fixture's
+catalog capacity leaving only 2,560 request bytes after its existing output and
+protocol reservation. The fixture now advertises that reservation in addition to
+its intended 4,096-byte request guard; the enforced request guard, history size,
+and maximum fragment count remain unchanged. The affected groups passed all
+51 tests before the full reruns.
+
+The initial failure log and successful reruns are retained under
+`/tmp/harness-resident-pr/`. Live model observations above and below came from the
+original checkout before this port; the feature-worktree validation was automated.
+All 23 snapshotted files in the original dirty checkout were preserved. Separate
+workspace-history edits and old model-measurement commits are outside this branch.
+
 ## Scope still open
 
 This is a native startup repair and restoration of an optional legacy MCP bridge.
