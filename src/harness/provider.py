@@ -180,8 +180,7 @@ class FakeProvider:
 
 
 class EchoProvider:
-    """Infinite demo provider: echoes the last user text. Powers the TUI's
-    no-model mode and multi-turn tests (FakeProvider scripts are finite)."""
+    """Infinite provider for explicit demos and tests; never a startup fallback."""
 
     def infer(self, request: "InferenceRequest") -> AsyncIterator[Chunk]:
         return self.complete(model=request.model, messages=request.messages, tools=request.tools)
