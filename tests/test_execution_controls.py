@@ -396,7 +396,7 @@ def test_cli_flags_apply_in_headless_and_interactive_paths(tmp_path, monkeypatch
     monkeypatch.setattr(cli, "_amain", inspect)
     monkeypatch.setattr(tui, "run_tui", inspect)
     for mode in [["-p", "work"], []]:
-        monkeypatch.setattr("sys.argv", ["harness", "--base-dir", str(tmp_path), "--no-plugins",
+        monkeypatch.setattr("sys.argv", ["harness", "--demo", "--base-dir", str(tmp_path), "--no-plugins",
             "--task-timeout-seconds", "1800", "--inference-timeout-seconds", "300",
             "--coordination-timeout-seconds", "2400", "--max-active-children", "2", *mode])
         cli.main()

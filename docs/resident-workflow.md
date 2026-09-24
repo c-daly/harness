@@ -9,9 +9,35 @@ The [M3 local assistant](local-assistant.md) supplies a runnable offline profile
 and the completed CUDA workflow gate. The 4B pilot below remains historical
 failure evidence.
 
+[Saoirse and optional interfaces](saoirse.md) defines the resident ownership
+boundary: knowledge and coordination belong to Harness and its existing plugin
+integrations, and remain usable without the Session Desk voice/desktop adapter.
+This is an architecture direction; the shared resident attachment is not yet implemented.
+
 ## Configure and use
 
-Add sources to a context profile, for example `resident.toml`:
+Harness starts with Saoirse's core resident instructions. Set her initial catalog
+alias in `~/.config/harness/resident.toml` using `model = "local"` (or another
+configured alias). Optional `context_profile = "profiles/personal-local.toml"`
+loads that profile on fresh sessions. Existing sessions retain their saved model
+selection and context profile. Model selection is independent of resident identity;
+there is no resident-mode flag. Without a selected model, Harness reports that
+state rather than supplying echo responses. `--demo` explicitly selects echo.
+
+The [Saoirse local profile](examples/local-resident/saoirse.toml) demonstrates
+automatic normal-memory and project discovery with a focused tool set. The local
+projects integration can register `plugins/projects_overview.py` to provide a
+compact checkout overview; the [repair receipt](handoffs/2026-09-18-resident-startup/README.md)
+records the installed registration, validation and rollback paths. A checkout
+overview does not establish milestone completion or replace project management.
+
+This startup support does not complete the proposed continuity/capture integration
+or shared desktop attachment. MCP connections start the configured server code:
+a path under `.claude/plugins` does not itself launch Claude. Memory's Python
+server can run directly under Harness; the legacy agent-swarm router still needs
+its own daemon and dependencies. Native experiment integration remains separate.
+
+Add sources to a context profile, for example `resident-context.toml`:
 
 ```toml
 history_turns = 2
@@ -37,7 +63,7 @@ timeout_seconds = 5
 Use an existing catalog alias and separately configured memory MCP server:
 
 ```sh
-harness --catalog models.toml --model local-small --context-profile resident.toml
+harness --catalog models.toml --model local-small --context-profile resident-context.toml
 ```
 
 In the interface:
