@@ -21,6 +21,37 @@ def file_tools(root, state=None):
             EditFileTool(workspace_root=root, read_state=state))
 
 
+@pytest.mark.parametrize("kind", ["create", "write", "edit"])
+@pytest.mark.parametrize("obstacle", ["symlink", "hardlink", "existing-file"])
+async def test_preexisting_temporary_name_cannot_redirect_or_lose_file_writes(
+    tmp_path, kind, obstacle,
+):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    outside = tmp_path / "outside.txt"
+    outside.write_text("preserve outside")
+    target = workspace / "target.txt"
+    temporary = workspace / "target.txt.harness.tmp"
+    if obstacle == "symlink":
+        temporary.symlink_to(outside)
+    elif obstacle == "hardlink":
+        os.link(outside, temporary)
+    else:
+        temporary.write_text("preserve unrelated file")
+    original_temporary = temporary.read_bytes()
+    read, write, edit = file_tools(workspace)
+    if kind != "create":
+        target.write_text("old")
+        await read({"file_path": target.name})
+    if kind == "edit":
+        await edit({"file_path": target.name, "old_string": "old", "new_string": "new"})
+    else:
+        await write({"file_path": target.name, "content": "new"})
+    assert target.read_text() == "new" and not target.is_symlink()
+    assert outside.read_text() == "preserve outside"
+    assert temporary.read_bytes() == original_temporary
+
+
 @pytest.mark.parametrize("kind", ["write", "edit"])
 @pytest.mark.parametrize("change", ["bytes", "deleted", "outside-window"])
 async def test_changed_file_requires_reread_before_mutation(tmp_path, kind, change):

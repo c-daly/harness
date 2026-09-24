@@ -1,7 +1,7 @@
 """write_file + edit_file: create/overwrite gate, edit uniqueness, per-path lock."""
 
 import asyncio
-from pathlib import Path
+import os
 
 import pytest
 
@@ -130,23 +130,34 @@ async def test_concurrent_edits_require_a_current_observation(tmp_path):
     assert (tmp_path / "c.txt").read_text() == "v2"
 
 
-async def test_failed_replace_leaves_no_tmp(tmp_path, monkeypatch):
+@pytest.mark.parametrize("kind", ["write", "edit"])
+async def test_failed_replace_leaves_no_tmp(tmp_path, monkeypatch, kind):
     rs = _rs()
-    real_replace = Path.replace
+    real_replace = os.replace
+    path = tmp_path / "doomed.txt"
+    if kind == "edit":
+        path.write_text("original")
+        await ReadFileTool(workspace_root=tmp_path, read_state=rs)({"file_path": path.name})
 
-    def boom(self, target):
+    def boom(source, target):
         # Fail only the atomic rename onto the real target, not unrelated replaces.
-        if str(self).endswith(".harness.tmp"):
+        if target == path:
             raise OSError("simulated rename failure")
-        return real_replace(self, target)
+        return real_replace(source, target)
 
-    monkeypatch.setattr(Path, "replace", boom)
+    monkeypatch.setattr(os, "replace", boom)
     with pytest.raises(ToolError):
-        await WriteFileTool(workspace_root=tmp_path, read_state=rs)(
-            {"file_path": "doomed.txt", "content": "data"}
-        )
-    # the .harness.tmp file the write created must not survive the failed replace
-    assert list(tmp_path.glob("*.harness.tmp")) == []
+        if kind == "write":
+            await WriteFileTool(workspace_root=tmp_path, read_state=rs)(
+                {"file_path": path.name, "content": "data"}
+            )
+        else:
+            await EditFileTool(workspace_root=tmp_path, read_state=rs)(
+                {"file_path": path.name, "old_string": "original", "new_string": "data"}
+            )
+    assert sorted(tmp_path.iterdir()) == ([path] if kind == "edit" else [])
+    if kind == "edit":
+        assert path.read_text() == "original"
 
 
 async def test_edit_returns_snippet(tmp_path):
