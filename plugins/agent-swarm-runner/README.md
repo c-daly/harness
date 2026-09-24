@@ -36,6 +36,10 @@ an unattended multi-host scheduler.
 
 The first eligible request must name a clean worktree on its declared branch.
 Dirty work is refused for explicit reconciliation, never reset or overwritten.
+Direct Git observations discard Git-specific environment overrides so the branch,
+HEAD and status belong to the selected worktree, including when the caller has
+set a different repository, index or object store. Other subprocess environments
+are unchanged.
 The coordinator can dispatch only the pinned request and model; the child has
 native read/write/edit/search/bash tools and cannot delegate. One child and one
 worktree per invocation avoid relying on child-specific workspace support that

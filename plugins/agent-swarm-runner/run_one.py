@@ -31,6 +31,12 @@ from harness.usage_budget import UsageLimits, project_usage
 
 
 def command(argv, *, cwd=None, env=None):
+    """Run local Git observations without caller-supplied Git overrides."""
+    if argv[0] == "git":
+        # Repository, index, object-store and config overrides can all redirect
+        # these observations away from cwd. Leave non-Git child environments intact.
+        env = {key: value for key, value in (os.environ if env is None else env).items()
+               if not key.startswith("GIT_")}
     return subprocess.run(argv, cwd=cwd, env=env, check=True, capture_output=True, text=True).stdout
 
 
