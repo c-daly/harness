@@ -188,3 +188,12 @@ retains the same artifact/answer failures and a probe `AttributeError` that
 prevented cancellation and resume measurement. Correcting that probe method
 allowed the complete journey above; it did not change model settings, prompts
 or artifact checks. Neither run qualifies a model or activates a fallback.
+
+## Native continuity capture
+
+Project profiles can opt into core-managed capture after root turns, using an
+explicit inference model and the installed memory plugin's recorder/writer.
+`/status` reports pending, saved and skipped captures. A saved receipt requires
+read-back; interrupted writes retry the identical prepared record.
+See the [resident-memory adapter](../plugins/resident-memory/README.md) for setup,
+recovery, the real-plugin controls and the first live correction trial.

@@ -1,0 +1,85 @@
+.ss.ss.ss............................................................... [  2%]
+........................................................................ [  5%]
+........................................................................ [  8%]
+........................................................................ [ 11%]
+........................................................................ [ 14%]
+........................................................................ [ 17%]
+........................................................................ [ 19%]
+........................................................................ [ 22%]
+........................................................................ [ 25%]
+........................................................................ [ 28%]
+........................................................................ [ 31%]
+................................................F....................... [ 34%]
+........................................................................ [ 37%]
+........................................................................ [ 39%]
+........................................................................ [ 42%]
+........................................................................ [ 45%]
+........................................................................ [ 48%]
+........................................................................ [ 51%]
+........................................................................ [ 54%]
+........................................................................ [ 57%]
+........................................................................ [ 59%]
+........................................................................ [ 62%]
+...............................s........................................ [ 65%]
+........................................................................ [ 68%]
+...............................................sss...................... [ 71%]
+........................................................................ [ 74%]
+........................................................................ [ 77%]
+........................................................................ [ 79%]
+........................................................................ [ 82%]
+........................................................................ [ 85%]
+........................................................................ [ 88%]
+........................................................................ [ 91%]
+........................................................................ [ 94%]
+........................................................................ [ 97%]
+........................................................................ [ 99%]
+.                                                                        [100%]
+=================================== FAILURES ===================================
+_________ test_destination_fault_and_explicit_recovery[True-interrupt] _________
+
+tmp_path = PosixPath('/tmp/pytest-of-user/pytest-321/test_destination_fault_and_exp5')
+mode = 'interrupt', memory_enabled = True
+destination_socket = (<socket.socket fd=10, family=2, type=1, proto=0, laddr=('127.0.0.1', 54589)>, [])
+
+    @pytest.mark.parametrize("mode", MODES)
+    @pytest.mark.parametrize("memory_enabled", [False, True])
+    async def test_destination_fault_and_explicit_recovery(tmp_path, mode, memory_enabled, destination_socket):
+        listener, launches = destination_socket
+        port = listener.getsockname()[1]
+        memory = None
+        if memory_enabled:
+            server = tmp_path / "memory_fixture.py"
+            server.write_text('''from mcp.server.fastmcp import FastMCP
+    mcp = FastMCP("memory")
+    @mcp.tool()
+    def memory_list(subject: str) -> str:
+        return "- type: public fixture\\n  subject: " + subject
+    mcp.run()
+    ''')
+            memory = McpServerSpec(name="memory", transport="stdio", command=sys.executable,
+                args=("-B", str(server)), tools_allow=("memory_list",), restart="never", tool_timeout_s=10)
+        models = Catalog({"external": {"backend": "codex", "route": "codex/default"}, "local-small": {
+            "route": "openai/local-small", "api_base": f"http://127.0.0.1:{port}/v1",
+            "local": {"auto_start": True, "startup_seconds": 5, "command": [sys.executable,
+                HTTP_FIXTURE, str(tmp_path / "project"), mode, str(listener.fileno())]}}})
+        result = await journey(tmp_path, CatalogProvider(models), mode, memory)
+>       assert result["passed"], {"failed": sorted(expected_checks(mode) - {k for k, v in result["checks"].items() if v}),
+                                  "error_type": result.get("error_type")}
+E       AssertionError: {'error_type': 'TimeoutError', 'failed': ['admission_settled', 'all_artifacts_exact', 'completed_target_refused', 'completed_write_retained', 'completion_visible', 'context_payload_valid', ...]}
+E       assert False
+
+tests/test_handoff_destination.py:65: AssertionError
+=============================== warnings summary ===============================
+tests/test_mcp_serve.py::test_lists_given_specs_only
+tests/test_mcp_serve.py::test_call_routes_through_dispatch_and_returns_text
+tests/test_mcp_serve.py::test_denied_outcome_surfaces_as_mcp_error
+tests/test_mcp_serve.py::test_unknown_tool_is_error_without_dispatch
+tests/test_mcp_serve.py::test_large_blob_result_reaches_mcp_client
+tests/test_mcp_serve.py::test_shutdown_settles_an_active_tool_before_returning
+  ~/.local/share/uv/python/cpython-3.13.15-linux-x86_64-gnu/lib/python3.13/contextlib.py:109: DeprecationWarning: Use `streamable_http_client` instead.
+    self.gen = func(*args, **kwds)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/test_handoff_destination.py::test_destination_fault_and_explicit_recovery[True-interrupt]
+1 failed, 2510 passed, 10 skipped, 6 warnings in 659.40s (0:10:59)

@@ -83,6 +83,8 @@ class AgentLoop:
         self._ended = False
         self._task_active = False
         self._turn_outcomes: dict[CallId, ToolOutcome] = {}
+        from harness.capture import CaptureService
+        self.captures = CaptureService(self)
 
     def set_turn_context(self, messages: list[Message]) -> None:
         """Install extra context for the NEXT run_turn call. Read at the start of
@@ -161,7 +163,10 @@ class AgentLoop:
         self.active_model = self.model
         try:
             from harness.handoff import capture_scope
-            return await execute_task(
+            if policy is not None and policy.capture is not None:
+                self.captures.reconcile()
+                await self.captures.retry()
+            result = await execute_task(
                 self.session, task, runtime="harness", model=self.model,
                 activity=self.dispatcher.scope.budget.activity,
                 run_budgets=self.dispatcher.scope.budget.runs,
@@ -170,10 +175,19 @@ class AgentLoop:
                 capabilities={"handoff_scope": capture_scope(self.dispatcher)},
                 execute=lambda: self._run_task_body(task, on_progress),
             )
+            if policy is not None and policy.capture is not None:
+                self.captures.reconcile()
+                if result.status != "cancelled":
+                    await self.captures.retry(run_id=result.run_id)
+            return result
         finally:
             self._task_active = False
             self.active_model = None
             self.turn_context = []
+            # A failed/cancelled run still has a terminal journal fact. Queue it
+            # without starting more work during cancellation; retry on a later turn.
+            if policy is not None and policy.capture is not None:
+                self.captures.reconcile()
 
     async def _run_task_body(self, task: AgentTask, on_progress) -> AgentOutput:
         user_text = task.prompt
