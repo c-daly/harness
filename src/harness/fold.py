@@ -149,7 +149,7 @@ def fold(envelopes: list[Envelope]) -> FoldedState:
             state.open_model_intents.pop(ev.call_id, None)
         elif isinstance(ev, ToolCallProposed):
             state.open_intents[ev.call_id] = env.seq
-            if ev.purpose in {"agent-task", "context"}:
+            if ev.purpose in {"agent-task", "context", "capture"}:
                 state._agent_tool_calls.add(ev.call_id)
             if str(ev.tool) in ("read_file", "write_file"):
                 fp = ev.args.get("file_path")

@@ -69,3 +69,24 @@ async def test_resuming_another_session_uses_its_own_profile(tmp_path):
         await app._rebuild_kernel(resume_session_id=target.session.id)
         assert app.kernel.context_policy == target_policy
         assert app.kernel.loop.registry.specs() == ()
+
+
+async def test_capture_status_is_visible_without_dumping_internal_tool_payloads(tmp_path):
+    from harness.capture import CaptureObservation
+    from harness.events import CaptureObserved, ToolCallCompleted, ToolCallProposed
+    from harness.types import CallId, ToolName
+
+    app = make_app(tmp_path)
+    async with app.run_test(size=(140, 45)) as pilot:
+        call = CallId("capture-call")
+        app._render_event(ToolCallProposed(call_id=call, tool=ToolName("capture_write"),
+                                          args={}, purpose="capture"))
+        app._render_event(ToolCallCompleted(call_id=call, result_text="internal receipt payload"))
+        app._render_event(CaptureObserved(observation=CaptureObservation(
+            capture_id="capture", status="pending", reason="write remains unconfirmed")))
+        await pilot.pause()
+        assert "Continuity: pending; write remains unconfirmed" in screen_text(app)
+        assert "internal receipt payload" not in screen_text(app)
+        app._render_event(CaptureObserved(observation=CaptureObservation(capture_id="capture", status="saved")))
+        await pilot.pause()
+        assert "Continuity: saved" in screen_text(app)

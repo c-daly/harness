@@ -1,0 +1,13 @@
+{
+  "plugin": "installed memory",
+  "files": {
+    "lib/session_recorder.py": "a4a793a1a2935ee1be4ca2409ddaebe157f36163f184ff6f3d5c9944737c1d26",
+    "lib/memory_writer.py": "f4d698f748bd822afd9cd40e568e795cd8e0c017461204bfa5100111308fcc8e",
+    "lib/memory_reader.py": "cf8d36b98f44bf32226e1d7a1cf169f91fa6c6ad570aa3e257a766c47fd1b2c6",
+    "lib/index.py": "6738ead7ef615252ed627b83fd8bfb9d0142a2fc4eed59bcd2f1da3fba973a6c",
+    "lib/lock.py": "5aabad511e7d9324634b0c8e58b338181e4037279a735ba15dd8b57cb7817695",
+    "lib/bounded_read.py": "676c71d7ef0ec1b15fde152b59ece37a719e144cd23efc93215de6069111ccc6",
+    "lib/providers/vault.py": "1954018c287a7af49084d24307273e82ebbbf9590c87347d6c98078bf0bc037f",
+    "lib/providers/base.py": "6acf1efc004d625ff3e80e35aa7a41a0034bf3750d52d932f858832856de2a73"
+  }
+}

@@ -210,4 +210,6 @@ def render_status(events, *, model=None, resources=None):
             rows.append(f"Context {source.id}: {status}{'; required' if source.required else '; optional'}")
     rows.append("Local runtimes:" if resources is not None else "Local runtimes (saved observations; stale):")
     rows.append(render_resources(resources if resources is not None else saved_resources.values()))
+    from harness.capture import render_captures
+    rows.append(render_captures(events))
     return "\n".join(rows)

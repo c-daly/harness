@@ -2,6 +2,7 @@
 
 import asyncio
 import errno
+import json
 import socket
 import sys
 from pathlib import Path
@@ -62,8 +63,10 @@ mcp.run()
         "local": {"auto_start": True, "startup_seconds": 5, "command": [sys.executable,
             HTTP_FIXTURE, str(tmp_path / "project"), mode, str(listener.fileno())]}}})
     result = await journey(tmp_path, CatalogProvider(models), mode, memory)
+    (tmp_path / "journey-report.json").write_text(json.dumps(result, indent=2) + "\n")
     assert result["passed"], {"failed": sorted(expected_checks(mode) - {k for k, v in result["checks"].items() if v}),
-                              "error_type": result.get("error_type")}
+                              "error_type": result.get("error_type"), "stage": result.get("stage"),
+                              "failure_state": result.get("failure_state")}
     assert len(launches) == 2  # Reservation checked before both initial and resumed startup.
 
 

@@ -15,6 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator, m
 from harness.errors import ContextOverflow
 from harness.inference import input_bytes
 from harness.messages import Message, Role, materialize_tool_results
+from harness.capture import CapturePolicy
 
 
 class ResponsePolicy(BaseModel):
@@ -69,6 +70,7 @@ class ContextPolicy(BaseModel):
     tool_recovery_attempts: int = Field(default=0, ge=0, le=2, strict=True)
     response: ResponsePolicy | None = None
     sources: tuple[ContextSource, ...] = Field(default=(), max_length=4)
+    capture: CapturePolicy | None = None
 
     @field_validator("sources")
     @classmethod
@@ -166,4 +168,6 @@ def render_context_policy(policy, tools):
             + ("Responses: " + ", ".join(response) + ". " if response else "") +
             ("Context sources: " + ", ".join(source.id for source in policy.sources) + ". "
              if policy.sources else "") +
+            (f"Continuity capture: {policy.capture.project} via {policy.capture.model}. "
+             if policy.capture else "") +
             "Full session history is retained; byte limits are not token limits.")

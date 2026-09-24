@@ -43,6 +43,7 @@ from harness.events import (
     ResourceObserved,
     ContextPrepared,
     ContextSourceObserved,
+    CaptureObserved,
     RetryAttempted,
     ToolCallCompleted,
     ToolCallProposed,
@@ -1249,7 +1250,9 @@ class HarnessApp(App[None]):
                 self.controller.phase = (f"local model {status}" if status in ("checking", "loading")
                                          else "waiting for response")
             elif isinstance(event, ToolCallProposed):
-                if event.purpose != "context":
+                if event.purpose == "capture":
+                    self.controller.phase = "saving continuity"
+                elif event.purpose != "context":
                     self.controller.phase = f"tool {event.tool}"
             elif isinstance(event, ContextSourceObserved) and event.status == "fetching":
                 self.controller.phase = f"reading context {event.source_id}"
@@ -1257,6 +1260,10 @@ class HarnessApp(App[None]):
                 self.controller.phase = "working"
             self._refresh_queue()
         match event:
+            case CaptureObserved(observation=observation):
+                if observation.reason != "capture in progress; write not yet confirmed":
+                    self.say("", f"Continuity: {observation.status}"
+                             + (f"; {observation.reason}" if observation.reason else ""))
             case LocalRequestObserved(observation=observation):
                 if observation.status == "queued":
                     from harness.scheduling import render_local_request
@@ -1287,6 +1294,8 @@ class HarnessApp(App[None]):
                     self._context_notice = notice
             case ToolCallProposed(purpose="context"):
                 pass
+            case ToolCallProposed(purpose="capture"):
+                self._context_calls.add(event.call_id)
             case ToolCallProposed(tool=tool):
                 self.say("\u2699 ", str(tool))
             case ToolCallCompleted(result_text=text, is_error=is_error):
