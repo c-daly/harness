@@ -101,9 +101,9 @@
     {
       "name": "8b-default",
       "session_id": "545b3b3009a540d681f88ba7b9084556",
-      "journal": "/home/fearsidhe/projects/harness/.worktrees/tmp/harness-swarm-execution-v1/sessions/sessions/545b3b3009a540d681f88ba7b9084556.jsonl",
+      "journal": "~/projects/harness/.worktrees/tmp/harness-swarm-execution-v1/sessions/sessions/545b3b3009a540d681f88ba7b9084556.jsonl",
       "journal_sha256": "09abef2417ec54c34a878215797b82af885a66c7faea0bb7f18f426614884d93",
-      "log": "/home/fearsidhe/projects/harness/.worktrees/tmp/harness-swarm-execution-v1/local-probe.log",
+      "log": "~/projects/harness/.worktrees/tmp/harness-swarm-execution-v1/local-probe.log",
       "log_sha256": "4bce009ff7d431766af0c03d68900393a26b8438d846ac9a5188a6fb5297d049",
       "counts": {
         "session_started": 1,
@@ -161,9 +161,9 @@
     {
       "name": "4b-default",
       "session_id": "9fe335a0e9454ae78a745d80007a33ae",
-      "journal": "/home/fearsidhe/projects/harness/.worktrees/tmp/harness-swarm-execution-v1/sessions-4b/sessions/9fe335a0e9454ae78a745d80007a33ae.jsonl",
+      "journal": "~/projects/harness/.worktrees/tmp/harness-swarm-execution-v1/sessions-4b/sessions/9fe335a0e9454ae78a745d80007a33ae.jsonl",
       "journal_sha256": "8b59889c0bba46c2646ea5f8c52e4817b2436be1763b44a337eb882de71a8bc3",
-      "log": "/home/fearsidhe/projects/harness/.worktrees/tmp/harness-swarm-execution-v1/local-4b-probe.log",
+      "log": "~/projects/harness/.worktrees/tmp/harness-swarm-execution-v1/local-4b-probe.log",
       "log_sha256": "59533e071aea70ffdf213f161353f8e764164e89fbaf2758828c4038c0c9e101",
       "counts": {
         "session_started": 1,
@@ -221,9 +221,9 @@
     {
       "name": "4b-bounded-correction",
       "session_id": "6911f5b341d64f9583ea1dbcd94594b7",
-      "journal": "/home/fearsidhe/projects/harness/.worktrees/tmp/harness-swarm-execution-v1/sessions-recovery/sessions/6911f5b341d64f9583ea1dbcd94594b7.jsonl",
+      "journal": "~/projects/harness/.worktrees/tmp/harness-swarm-execution-v1/sessions-recovery/sessions/6911f5b341d64f9583ea1dbcd94594b7.jsonl",
       "journal_sha256": "3ec8c008cdd1103922399e8a42c10645a15c704fa3b6463c15b036104dd8affe",
-      "log": "/home/fearsidhe/projects/harness/.worktrees/tmp/harness-swarm-execution-v1/local-recovery-probe.log",
+      "log": "~/projects/harness/.worktrees/tmp/harness-swarm-execution-v1/local-recovery-probe.log",
       "log_sha256": "6268b8d437664fef1b8d2975108692db04324d7b6b8fd766a8b9c53f5818648d",
       "counts": {
         "session_started": 1,

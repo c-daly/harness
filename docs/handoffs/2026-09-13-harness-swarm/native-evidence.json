@@ -9,7 +9,7 @@
       "version": "v1",
       "result": {
         "task": "9-session-integrity-authorized-repair-and-lifecycle-cli",
-        "workspace": "/home/fearsidhe/projects/harness/.worktrees/harness-remaining-roadmap/9-session-integrity-authorized-repair-and-lifecycle-cli",
+        "workspace": "~/projects/harness/.worktrees/harness-remaining-roadmap/9-session-integrity-authorized-repair-and-lifecycle-cli",
         "branch": "task/9-session-integrity-authorized-repair-and-lifecycle-cli",
         "head_before": "4c09803950d16a2ab86e58774524ad3e4cfd15ec",
         "root_session_id": "b5ae710b698c43b1b60e6fa689844d23",
@@ -211,7 +211,7 @@
       "version": "v2",
       "result": {
         "task": "9-session-integrity-authorized-repair-and-lifecycle-cli",
-        "workspace": "/home/fearsidhe/projects/harness/.worktrees/harness-remaining-roadmap/9-session-integrity-authorized-repair-and-lifecycle-cli",
+        "workspace": "~/projects/harness/.worktrees/harness-remaining-roadmap/9-session-integrity-authorized-repair-and-lifecycle-cli",
         "branch": "task/9-session-integrity-authorized-repair-and-lifecycle-cli",
         "head_before": "4c09803950d16a2ab86e58774524ad3e4cfd15ec",
         "root_session_id": "189158146f2f4ca18511e67ee0704019",
@@ -425,7 +425,7 @@
       "version": "v3",
       "result": {
         "task": "9-session-integrity-authorized-repair-and-lifecycle-cli",
-        "workspace": "/home/fearsidhe/projects/harness/.worktrees/harness-remaining-roadmap/9-session-integrity-authorized-repair-and-lifecycle-cli",
+        "workspace": "~/projects/harness/.worktrees/harness-remaining-roadmap/9-session-integrity-authorized-repair-and-lifecycle-cli",
         "branch": "task/9-session-integrity-authorized-repair-and-lifecycle-cli",
         "head_before": "73717b577eaeb6329854f4f753c78652267f8956",
         "root_session_id": "208e78c1af9c49088f40121c2f8baee8",
@@ -679,7 +679,7 @@
     "build.log": {
       "path": ".worktrees/tmp/harness-swarm-validation-v1/build.log",
       "sha256": "e73fc5af1550d1b3c234a9c97c6f32db9836743123dc5c6a5ad3da7039dc12aa",
-      "result": "Successfully built /home/fearsidhe/projects/harness/.worktrees/tmp/harness-swarm-validation-v1/dist/harness-0.0.1-py3-none-any.whl"
+      "result": "Successfully built ~/projects/harness/.worktrees/tmp/harness-swarm-validation-v1/dist/harness-0.0.1-py3-none-any.whl"
     },
     "smoke.log": {
       "path": ".worktrees/tmp/harness-swarm-validation-v1/smoke.log",

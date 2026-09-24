@@ -17,11 +17,16 @@ The [report](report.json) retains source hashes, journal/log paths and hashes,
 terminal results, actual tool calls and explicit unqualified claims. Complete
 journals remain in `.worktrees/tmp/harness-swarm-execution-v1`.
 
+Published evidence uses `~` for the original operator's home directory. The
+remaining path suffixes still identify the preserved artifacts; session IDs,
+commit IDs, outcomes and hashes are unchanged. Hashes refer to the original
+captured artifacts, not these path-normalized publication copies.
+
 ## Findings
 
 - The user's ordinary Harness MCP configuration has agent-swarm disabled by
   default and points to a removed cache executable. The installed executable
-  exists at `/home/fearsidhe/.claude/plugins/agent-swarm/bin/mcp-router`.
+  exists at `~/.claude/plugins/agent-swarm/bin/mcp-router`.
   The probes use an explicit local configuration; user configuration is unchanged.
 - `harness import` loads the actual installed plugin's skills and agent
   definitions, but reports eight degraded tool mappings and six hooks requiring
@@ -56,8 +61,10 @@ normal memory was not exercised, and the actual queue has not moved into Harness
 
 ## Retained configuration and connection check
 
-`mcp.toml`, `context.toml`, and `context-recovery.toml` are the exact probe
-configuration files. `connection_probe.py` uses a provider that makes no model
+`context.toml` and `context-recovery.toml` are the exact probe configuration
+files. The published `mcp.toml` replaces the personal executable path with
+`/path/to/agent-swarm/bin/mcp-router`; set it to the installed executable's
+absolute path before repeating the probe. `connection_probe.py` uses a provider that makes no model
 calls, but the real Harness MCP host and dispatcher with the installed server.
 It is only a connection check. The local-model results were produced by the
 ordinary Harness CLI, not that helper.
