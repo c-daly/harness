@@ -607,10 +607,6 @@ def _run_main() -> None:
     if args.demo and args.model is not None:
         parser.error("--demo cannot be combined with --model")
     try:
-        resident = ResidentConfig() if args.demo else ResidentConfig.load(args.resident_config)
-    except (OSError, ValueError) as exc:
-        raise SystemExit(f"resident config unavailable or invalid: {exc}") from None
-    try:
         execution_overrides = {name: getattr(args, name) for name in asdict(ExecutionLimits())
                                if getattr(args, name) is not None}
         ExecutionLimits(**execution_overrides)
@@ -619,16 +615,6 @@ def _run_main() -> None:
                                   max_cost_usd=args.budget_cost_usd)
     except ValueError as exc:
         parser.error(str(exc))
-    context_policy = None
-    profile = args.context_profile
-    if profile is None and not args.no_context_profile and not (args.resume_session_id or args.continue_last):
-        profile = resident.context_profile
-    if profile is not None:
-        try:
-            context_policy = ContextPolicy.load(profile)
-        except (OSError, ValueError) as exc:
-            raise SystemExit(f"context profile unavailable or invalid ({type(exc).__name__})") from None
-
     resume_session_id = SessionId(args.resume_session_id) if args.resume_session_id else None
     if args.continue_last:
         from harness.sessions import list_sessions
@@ -659,7 +645,28 @@ def _run_main() -> None:
         except (OSError, ValueError, SessionLockedError, TornLogError) as exc:
             raise SystemExit(f"cannot resume {resume_session_id}: {exc}") from None
 
-    if selected_alias is None and not args.demo and not (routing_rules and routing_rules.default):
+    needs_default_model = selected_alias is None and not (routing_rules and routing_rules.default)
+    needs_default_profile = (
+        resume_session_id is None and args.context_profile is None and not args.no_context_profile
+    )
+    resident = ResidentConfig()
+    # Saved/explicit choices must remain usable when unrelated startup defaults
+    # are broken. An explicitly requested resident config is still validated.
+    if not args.demo and (args.resident_config is not None or needs_default_model or needs_default_profile):
+        try:
+            resident = ResidentConfig.load(args.resident_config)
+        except (OSError, ValueError) as exc:
+            raise SystemExit(f"resident config unavailable or invalid: {exc}") from None
+
+    context_policy = None
+    profile = resident.context_profile if needs_default_profile else args.context_profile
+    if profile is not None:
+        try:
+            context_policy = ContextPolicy.load(profile)
+        except (OSError, ValueError) as exc:
+            raise SystemExit(f"context profile unavailable or invalid ({type(exc).__name__})") from None
+
+    if needs_default_model and not args.demo:
         selected_alias = resident.model
 
     if args.demo:

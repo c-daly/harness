@@ -97,16 +97,14 @@ def test_bad_default_alias_does_not_fall_back_to_echo(startup):
         launch()
 
 
-def test_resume_preserves_model_and_context_over_new_resident_defaults(startup, monkeypatch):
-    from harness.catalog import Catalog
+@pytest.fixture
+def saved_resident(startup):
     from harness.events import ContextPolicyConfigured, ModelSelected, SessionEnded
     from harness.context import ContextPolicy
-    from harness.model_selection import read_model_selection
     from harness.session import Session
     from harness.types import ModelId, new_session_id
 
     config, launch = startup
-    (config / "resident.toml").write_text('model = "local"\ncontext_profile = "missing.toml"\n')
     base = config.parents[2] / "state"
     with Session(base, new_session_id(), default_model=ModelId("alternate")) as session:
         session.start()
@@ -114,12 +112,60 @@ def test_resume_preserves_model_and_context_over_new_resident_defaults(startup, 
         session.append(ContextPolicyConfigured(policy=ContextPolicy(history_turns=9)))
         session.append(SessionEnded())
         sid = session.id
-    assert read_model_selection(base, sid).model == "alternate"
-    assert Catalog.load(config / "models.toml").resolve("alternate")
+    return config, launch, sid
+
+
+def test_resume_preserves_model_and_context_over_new_resident_defaults(saved_resident):
+    config, launch, sid = saved_resident
+    (config / "resident.toml").write_text('model = "local"\ncontext_profile = "missing.toml"\n')
     kernel = launch("--resume", str(sid))
     assert kernel.loop.model == "alternate"
     assert kernel.loop.model_pinned
     assert kernel.context_policy.history_turns == 9
+
+
+@pytest.mark.parametrize("resume_flag", ["--resume", "--continue"])
+@pytest.mark.parametrize("content", ['model = [', 'model = 7'])
+def test_resume_ignores_broken_implicit_defaults(saved_resident, resume_flag, content):
+    config, launch, sid = saved_resident
+    (config / "resident.toml").write_text(content)
+    args = [resume_flag, str(sid)] if resume_flag == "--resume" else [resume_flag]
+    kernel = launch(*args)
+    assert kernel.session.id == sid
+    assert kernel.loop.model == "alternate" and kernel.loop.model_pinned
+    assert kernel.context_policy.history_turns == 9
+
+
+@pytest.mark.parametrize("resume_flag", ["--resume", "--continue"])
+@pytest.mark.parametrize("missing", [False, True])
+def test_resume_still_validates_explicit_resident_config(saved_resident, resume_flag, missing):
+    config, launch, sid = saved_resident
+    path = config / "explicit.toml"
+    if not missing:
+        path.write_text('model = [')
+    args = [resume_flag, str(sid)] if resume_flag == "--resume" else [resume_flag]
+    with pytest.raises(SystemExit, match="resident config unavailable or invalid"):
+        launch(*args, "--resident-config", str(path))
+
+
+@pytest.mark.parametrize("args", [(), ("--model", "alternate")])
+def test_fresh_session_still_validates_applicable_defaults(startup, args):
+    config, launch = startup
+    (config / "resident.toml").write_text('model = [')
+    with pytest.raises(SystemExit, match="resident config unavailable or invalid"):
+        launch(*args)
+
+
+@pytest.mark.parametrize("routed", [False, True])
+def test_fully_selected_startup_ignores_unused_implicit_defaults(startup, routed):
+    config, launch = startup
+    (config / "resident.toml").write_text('model = [')
+    if routed:
+        (config / "routing.toml").write_text('default = "alternate"\n')
+    args = () if routed else ("--model", "alternate")
+    kernel = launch(*args, "--no-context-profile")
+    assert kernel.loop.model == "alternate"
+    assert kernel.context_policy is None
 
 
 @pytest.mark.parametrize("content", ['model = 7', 'unknown = "x"', 'model = " "'])

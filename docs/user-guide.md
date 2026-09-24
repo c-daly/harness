@@ -317,6 +317,8 @@ model = "local"
 `--resident-config PATH` selects an alternate defaults file. A resumed session's
 saved model and context take precedence over these startup defaults; explicit
 `--model`, `--context-profile` and `--no-context-profile` still override them.
+Unused implicit resident defaults are not loaded when resuming saved selections;
+an explicitly supplied `--resident-config` file is still validated.
 With no model configured, the interface explains how to select one with
 `/model alias`; a headless turn fails clearly. It never silently echoes input.
 An unknown alias or missing catalog remains a configuration error. The old echo
