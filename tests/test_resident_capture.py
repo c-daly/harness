@@ -271,6 +271,66 @@ async def test_journal_failure_propagates_and_clears_loop_busy_state(tmp_path, m
         kernel.session.close()
 
 
+@pytest.mark.parametrize("boundary", ["turn", "compaction", "shutdown"])
+async def test_failed_background_capture_does_not_fail_foreground_boundary(tmp_path, monkeypatch, boundary):
+    kernel, _ = await kernel_at(tmp_path, provider=FakeProvider([
+        text_turn("answer"), text_turn("record"), text_turn("next answer")]))
+    append = kernel.session.append
+
+    def fail_record(event):
+        if event.type == "capture_prepared":
+            raise OSError("record journal failed")
+        return append(event)
+
+    monkeypatch.setattr(kernel.session, "append", fail_record)
+    try:
+        original = await kernel.loop.run_task(AgentTask(prompt="first"))
+        worker = kernel.loop.captures._worker
+        done, _ = await asyncio.wait([worker], timeout=3)
+        assert worker in done
+        if boundary == "turn":
+            following = await kernel.loop.run_task(AgentTask(prompt="second"))
+            assert following.status == "completed"
+        elif boundary == "compaction":
+            assert (await kernel.compaction.compact()).parts >= 1
+        else:
+            await kernel.loop.end()
+            assert facts(kernel)[-1].event.type == "session_ended"
+        requests, _, observed = state(kernel)
+        first = next(r for r in requests.values() if r.run_id == original.run_id)
+        assert observed[first.id].status == "pending"
+        errors = [e.event for e in facts(kernel) if e.event.type == "error_raised"
+                  and e.event.where == "resident-capture"]
+        assert len(errors) == 1 and "OSError" in errors[0].message
+        assert not kernel.loop._task_active
+    finally:
+        await kernel.loop.captures.close()
+        kernel.session.close()
+
+
+async def test_capture_cleanup_error_does_not_fail_the_interrupting_turn(tmp_path):
+    entered = asyncio.Event()
+
+    async def save(args):
+        entered.set()
+        try:
+            await asyncio.Future()
+        finally:
+            raise RuntimeError("capture cleanup failed")
+
+    kernel, _ = await kernel_at(tmp_path, save_fn=save, provider=FakeProvider([
+        text_turn("answer"), text_turn("record"), text_turn("next answer")]))
+    try:
+        await kernel.loop.run_task(AgentTask(prompt="first"))
+        await asyncio.wait_for(entered.wait(), 3)
+        result = await kernel.loop.run_task(AgentTask(prompt="second"))
+        assert result.status == "completed"
+        assert next(iter(state(kernel)[2].values())).status == "pending"
+    finally:
+        await kernel.loop.captures.close()
+        kernel.session.close()
+
+
 async def test_reenabled_capture_does_not_capture_runs_made_with_profile_cleared(tmp_path):
     first, _ = await kernel_at(tmp_path)
     await complete_turn(first, AgentTask(prompt="recorded"))
@@ -410,6 +470,27 @@ async def test_idle_pass_attempts_later_captures_after_old_failure_without_spinn
         requests, _, observed = state(kernel)
         assert observed[next(r.id for r in requests.values() if r.run_id == old.run_id)].status == "pending"
         assert len(save.calls) == 2
+    finally:
+        await service.close()
+        kernel.session.close()
+
+
+async def test_queued_opportunity_finishes_one_attempt_without_draining_backlog(tmp_path, monkeypatch):
+    kernel, (prep, save) = await kernel_at(tmp_path, provider=FakeProvider([
+        text_turn("one"), text_turn("two"), text_turn("record")]))
+    service = kernel.loop.captures
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(service, "schedule", lambda: None)
+            await kernel.loop.run_task(AgentTask(prompt="first"))
+            await kernel.loop.run_task(AgentTask(prompt="second"))
+        service.schedule()
+        await service.finish_attempt()
+        assert len(prep.calls) == len(save.calls) == 1
+        requests, _, observed = state(kernel)
+        assert len(requests) == 2 and len(observed) == 1
+        assert next(iter(observed.values())).status == "saved"
+        assert service._worker is None
     finally:
         await service.close()
         kernel.session.close()

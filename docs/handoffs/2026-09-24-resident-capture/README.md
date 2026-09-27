@@ -38,8 +38,10 @@ destination controls passed in an isolated follow-up (**34.51 seconds**).
 This does not erase the full-suite failure or establish its exact cause.
 The test now preserves its complete journey report and reports the failed stage
 and state, so another occurrence is diagnosable. Its deadlines and gates were
-not relaxed. A clean full CI run is still required before treating this branch
-as ready to merge.
+not relaxed. This is the original September 24 receipt, not the current CI
+status. Both Python versions subsequently passed full CI at `18b7fac` in
+[run 36346336068](https://github.com/c-daly/harness/actions/runs/36346336068).
+Further changes require their own checks; the original failure remains retained.
 The published test log replaces personal home and pytest-user paths with
 placeholders; test outcomes and the failure text are otherwise retained.
 
@@ -78,11 +80,20 @@ Original journals, blobs, workspace and isolated vault remain at
 directory. No production memory was written. None of the live behavior gates
 is claimed as passed.
 
+## Scheduling update, September 27
+
+Routine capture now runs in an owned idle worker after the completed turn
+returns. Fresh input preempts it. Between already queued TUI turns, one capture
+attempt gets an interruptible opportunity to finish, within the configured
+per-request deadline. A failed background attempt is reported independently
+and leaves its intent pending; it does not fail the next foreground turn.
+Shutdown settles the worker and preserves unfinished captures for later retry.
+The live behavioral trial remains outstanding despite these scheduling
+changes.
+
 ## Remaining work
 
-Move routine capture off the foreground turn path; it currently waits within
-its configured deadline despite using background local admission priority.
-Then rerun the unchanged behavioral gates when the selected runtime has usable
+Rerun the unchanged behavioral gates when the selected runtime has usable
 capacity. Bind the actual continuity resume-brief composer and PM/experiment
 interfaces, add stale/conflicting record and model-switch controls, and run the
 planned longer outing with one agent-swarm worker through Harness.

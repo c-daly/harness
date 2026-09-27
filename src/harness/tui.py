@@ -34,6 +34,7 @@ from harness.events import (
     AgentRunStarted,
     AgentRunFinished,
     CustomEvent,
+    ErrorRaised,
     ModelCallStarted,
     ModelCorrectionRequested,
     FallbackDecided,
@@ -706,6 +707,7 @@ class HarnessApp(App[None]):
         self._panel_pump_worker = None
         if ask is not None:
             ask.app = self
+        self._capture_waiting = False
         # Build plugin command lookup: name -> CommandDef (from all loaded plugins).
         self._plugin_commands: dict[str, CommandDef] = {}
         if kernel.plugins is not None:
@@ -1262,6 +1264,8 @@ class HarnessApp(App[None]):
                 self.controller.phase = "working"
             self._refresh_queue()
         match event:
+            case ErrorRaised(where="resident-capture", message=message):
+                self.say("! ", f"Continuity: {message}; unfinished captures remain pending")
             case CaptureObserved(observation=observation):
                 if observation.reason != "capture in progress; write not yet confirmed":
                     self.say("", f"Continuity: {observation.status}"
@@ -1382,6 +1386,8 @@ class HarnessApp(App[None]):
                 not self.controller.paused_by_user):
             self.controller.resume()
         self.say("", f"queued #{prompt.id}: {prompt.text}")
+        if self._capture_waiting:
+            self.kernel.loop.captures.interrupt()
         self._refresh_queue()
         self._start_queue()
         return True
@@ -1407,6 +1413,8 @@ class HarnessApp(App[None]):
         lines = []
         if controller.active:
             lines.append(f"{controller.phase} #{controller.active.id}: {controller.active.text[:120]}")
+        elif self._capture_waiting:
+            lines.append("Saving continuity before queued work; new input or Esc interrupts")
         if controller.pending:
             state = "paused" if controller.paused else "waiting"
             lines.append(f"Queue {state} ({len(controller.pending)}, memory only): " +
@@ -1449,7 +1457,16 @@ class HarnessApp(App[None]):
             while await self.controller.run_next(self._execute_prompt):
                 await self._apply_pending_model()
                 self._refresh_queue()
+                if self.controller.pending and not self.controller.paused:
+                    self._capture_waiting = True
+                    self._refresh_queue()
+                    try:
+                        await self.kernel.loop.captures.finish_attempt()
+                    finally:
+                        self._capture_waiting = False
+                        self._refresh_queue()
         except asyncio.CancelledError:
+            self.controller.pause(user_requested=False)
             raise
         except Exception as exc:
             self.controller.pause(user_requested=False)
@@ -2279,6 +2296,8 @@ class HarnessApp(App[None]):
                 raise ValueError("use /queue [list|pause|resume|clear|edit ID [text]|remove ID]")
         except (ValueError, KeyError) as exc:
             self.say("! ", f"queue command failed: {exc}")
+        if self._capture_waiting and (self.controller.paused or not self.controller.pending):
+            self.kernel.loop.captures.interrupt()
         self._refresh_queue()
 
     def _set_thought_mode(self, arg: str) -> None:
@@ -2375,6 +2394,8 @@ class HarnessApp(App[None]):
         ):
             self._pending_model = alias
             self.say("", f"model {alias} selected for after this turn")
+            if self._capture_waiting:
+                self.kernel.loop.captures.interrupt()
             self._refresh_queue()
             return
         from harness.cli import _make_pricing_for

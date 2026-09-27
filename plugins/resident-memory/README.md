@@ -104,7 +104,17 @@ Core reconstructs missing intents from terminal journal facts and schedules an
 idle capture pass after a root turn returns. Each pending request gets at most
 one attempt in that pass, ordered by least recent attempt so an unavailable
 older request cannot starve newer ones. A new foreground turn cancels the idle
-pass and waits for cancellation cleanup before starting its own work.
+pass and waits for cancellation cleanup before starting its own work. Between
+already queued TUI turns, the queue gives one capture attempt an opportunity to
+finish within its configured deadline before advancing to the next prompt.
+The completed reply is already visible; new input, model selection, queue
+pause/clear or Esc can interrupt this opportunity. A continuously replenished
+queue therefore makes capture progress instead of cancelling every idle worker
+before it runs.
+Unexpected background errors are journaled and shown separately in the TUI;
+they leave capture pending without failing or pausing subsequent foreground
+work. Explicit `captures.wait()` still raises a worker error to qualification
+drivers that require a successful capture.
 A prepared record is reused without another model call. Changes to recorder
 model, timeouts or size limits apply to subsequent work without stranding
 prepared bytes. Project, workspace, writer and the prepared destination remain

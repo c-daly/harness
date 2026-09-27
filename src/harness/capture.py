@@ -111,13 +111,19 @@ class CaptureService:
         self._lock = asyncio.Lock()
         self._worker: asyncio.Task | None = None
         self._closed = False
+        self._attempted = 0
+        self._yield_after_attempt = False
+        self._interrupted = False
 
     def schedule(self):
-        """Start one idle pass; a failure never spins or starves later requests."""
+        """Start one idle pass without an automatic retry loop."""
         if self._closed or self.loop.dispatcher.scope.depth or self.loop._task_active:
             return
         if self._worker is not None and not self._worker.done():
             return
+        self._attempted = 0
+        self._yield_after_attempt = False
+        self._interrupted = False
         self._worker = asyncio.create_task(self._idle_pass(), name="resident-capture")
         self._worker.add_done_callback(self._finished)
 
@@ -128,7 +134,7 @@ class CaptureService:
                 self.session.append(ErrorRaised(where="resident-capture",
                     message=f"capture worker failed: {type(task.exception()).__name__}"))
             except Exception:
-                pass  # wait/pause still propagates the original persistence error.
+                pass  # Explicit wait() still propagates the original error.
 
     async def wait(self):
         """Explicitly wait for the idle pass (qualification and embedding API)."""
@@ -140,21 +146,50 @@ class CaptureService:
                 if task.done() and self._worker is task:
                     self._worker = None
 
+    def interrupt(self):
+        """Request preemption; pause/finish_attempt owns cancellation cleanup."""
+        if self._worker is not None and not self._worker.done():
+            self._interrupted = True
+            self._worker.cancel()
+
+    async def finish_attempt(self):
+        """Give capture one opportunity between already queued foreground turns.
+
+        The normal per-request deadline bounds this attempt. Fresh input can
+        interrupt it; a failed attempt never fails the next queued prompt.
+        """
+        task = self._worker
+        if task is None or self._attempted:
+            return
+        self._yield_after_attempt = True
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            if asyncio.current_task().cancelling():
+                await self.pause()
+                raise
+        except Exception:
+            pass  # _finished records the failure; this is a scheduling boundary.
+        finally:
+            if task.done() and self._worker is task:
+                self._worker = None
+
     async def pause(self):
         """Yield to foreground work, settling an owned call before proceeding."""
         task = self._worker
         if task is None:
             return
-        if not task.done():
-            task.cancel()
+        self.interrupt()
         try:
             await task
         except asyncio.CancelledError:
             # Do not consume cancellation of the foreground caller itself.
             if asyncio.current_task().cancelling():
                 raise
+        except Exception:
+            pass  # _finished reports capture failure independently of foreground work.
         finally:
-            if task.done():
+            if task.done() and self._worker is task:
                 self._worker = None
 
     async def close(self):
@@ -173,9 +208,14 @@ class CaptureService:
         # Freeze a fair pass. No request is attempted twice without another
         # foreground boundary or explicit retry, even when the adapter is down.
         for request in self._pending(self.events()):
-            if self._closed or self.loop._task_active:
+            if self._closed or self._interrupted or self.loop._task_active:
                 return
-            await self.retry(run_id=request.run_id)
+            try:
+                await self.retry(run_id=request.run_id)
+            finally:
+                self._attempted += 1
+            if self._yield_after_attempt:
+                return
 
     @property
     def session(self):
