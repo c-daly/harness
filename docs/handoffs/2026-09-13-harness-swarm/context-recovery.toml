@@ -1,0 +1,8 @@
+history_turns = 2
+max_input_bytes = 24576
+tools = ["invoke_skill", "mcp__router__workflow__workflow_get_state"]
+parallel_tool_calls = false
+tool_recovery_attempts = 1
+[response]
+max_output_tokens = 2048
+instructions = "Use available tools as requested. Report their actual results concisely."

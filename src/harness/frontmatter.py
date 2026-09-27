@@ -12,6 +12,8 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
+from harness.agent import TaskLimits
+
 _NAME_RE = re.compile(r"[A-Za-z0-9_-]+")
 _VALID_STRATEGIES = frozenset({"ensemble", "panel", "draft_refine", "escalate"})
 
@@ -64,6 +66,7 @@ class CommandDef(_Def):
 class AgentDef(_Def):
     tools: tuple[str, ...] | None = None  # None = all tools
     model: str | None = None
+    limits: TaskLimits | None = None  # Direct-child task settings; parent authority still applies.
     # Mixture-of-Models coordination def: when `strategy` is set the agent fans
     # out to `experts` (positional aliases) via mixture.run_strategy instead of
     # running a single child loop.
@@ -90,6 +93,8 @@ class AgentDef(_Def):
 
     @model_validator(mode="after")
     def _strategy_requires_valid_name_and_experts(self) -> "AgentDef":
+        if self.limits is not None and self.strategy is not None:
+            raise ValueError("limits are supported only for a direct child agent")
         if "require_checks" in self.model_fields_set and self.strategy not in ("escalate", "ensemble"):
             raise ValueError("require_checks is only supported by the escalate and ensemble strategies")
         if self.strategy is None:

@@ -159,6 +159,23 @@ parent; omit it for no cap. It bounds the *returned* text, not what the child's
 model produced, and truncation is marked. The `dispatch_agent` tool launches the
 named agent.
 
+Direct child agents can set `limits` in frontmatter, for example:
+
+```yaml
+limits:
+  max_iterations: 48
+  max_output_tokens: 16384
+```
+
+These are validated `TaskLimits` and are recorded on the child's run, including
+children with recorded requirements. Omitted fields keep the normal task
+defaults (20 iterations and 4,096 output tokens); an omitted timeout inherits
+the session setting. A context profile can narrow these limits, but cannot
+raise them. Shared parent execution and usage budgets still apply. This also
+means raising a context profile's output cap alone does not raise a child's
+4,096-token default. `limits` is rejected on a coordination definition: configure
+direct workers and the coordination's own controls instead.
+
 The agents primitive is a **filtered registry view, never a dispatch hook** —
 tool restriction happens at registry-construction time, because the shared hook
 bus has no per-session identity to scope against.

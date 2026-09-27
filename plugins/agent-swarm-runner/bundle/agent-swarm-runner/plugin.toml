@@ -1,0 +1,4 @@
+[plugin]
+name = "agent-swarm-runner"
+version = "0.1.0"
+description = "Experimental native Harness binding for agent-swarm's manifest runner"

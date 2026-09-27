@@ -1,0 +1,5 @@
+[servers.router]
+command = "/path/to/agent-swarm/bin/mcp-router"
+tools_allow = ["workflow__workflow_get_state"]
+default_enabled = true
+restart = "never"
