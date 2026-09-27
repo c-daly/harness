@@ -809,6 +809,11 @@ class HarnessApp(App[None]):
 
     async def _session_driver(self) -> None:
         kernel = self.kernel
+        from harness.resident import UnconfiguredResidentProvider
+
+        self.say("", f"Saoirse · model {kernel.loop.model}")
+        if isinstance(kernel.provider, UnconfiguredResidentProvider):
+            self.say("! ", kernel.provider.message)
         # Subscribe the stats queue BEFORE loop.start() so SessionStarted is captured;
         # run_rollup KeyErrors on unknown session ids. On resumed sessions SessionStarted
         # is past -- refresh_stats guards with try/except KeyError (v1: stats blank);

@@ -35,7 +35,12 @@ async def test_long_history_compacts_within_small_model_window(tmp_path, monkeyp
         yield StreamStop("end_turn")
 
     monkeypatch.setattr(CatalogProvider, "infer", infer)
-    provider = CatalogProvider(Catalog({"small": {"route": "openai/small", "max_input_tokens": 4096}}))
+    # Include compaction's 1024 output + 512 protocol reservation in the catalog
+    # capacity. The simulated request guard stays at 4096 bytes (enforced above),
+    # including the resident prompt, instead of inadvertently testing 2560 bytes.
+    provider = CatalogProvider(Catalog({"small": {
+        "route": "openai/small", "max_input_tokens": 4096 + 1024 + 512,
+    }}))
     app = make_app(tmp_path, provider=provider, model=ModelId("small"), model_pinned=True)
     async with app.run_test() as pilot:
         await pilot.pause(0.1)

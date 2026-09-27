@@ -496,7 +496,7 @@ def test_catalog_accounting_requires_explicit_valid_declaration():
 def test_cli_budget_stop_is_readable_without_provider_traceback(tmp_path):
     import subprocess
     import sys
-    result = subprocess.run([sys.executable, "-c", "from harness.cli import main; main()", "--base-dir", str(tmp_path),
+    result = subprocess.run([sys.executable, "-c", "from harness.cli import main; main()", "--demo", "--base-dir", str(tmp_path),
         "--catalog", str(tmp_path / "absent.toml"), "--workspace", str(tmp_path),
         "--no-plugins", "--no-mcp", "--budget-output-tokens", "0", "-p", "hello"],
         text=True, capture_output=True, timeout=20)

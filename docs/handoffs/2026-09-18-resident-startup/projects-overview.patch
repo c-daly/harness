@@ -1,0 +1,11 @@
+--- server.py
++++ server.py
+@@ -124,0 +125,8 @@
++# Harness-owned compact overview, using this plugin's existing readers.
++import importlib.util
++_overview_path = Path('/home/fearsidhe/projects/harness/plugins/projects_overview.py')
++_overview_spec = importlib.util.spec_from_file_location('harness_projects_overview', _overview_path)
++_overview = importlib.util.module_from_spec(_overview_spec)
++_overview_spec.loader.exec_module(_overview)
++_overview.register(mcp, inventory=inventory, git_read=git_read, encoded=encoded)
++

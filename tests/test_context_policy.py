@@ -205,7 +205,7 @@ def test_cli_profile_persists_on_resume_and_can_be_explicitly_cleared(tmp_path, 
 
     path = tmp_path / "context.toml"
     path.write_text('history_turns = 1\ntools = []\n')
-    base = ["harness", "--base-dir", str(tmp_path), "--no-mcp", "--no-plugins"]
+    base = ["harness", "--demo", "--base-dir", str(tmp_path), "--no-mcp", "--no-plugins"]
     monkeypatch.setattr(sys, "argv", [*base, "--context-profile", str(path), "-p", "first"])
     main()
     sid = list_sessions(tmp_path)[0].session_id

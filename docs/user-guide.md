@@ -303,10 +303,26 @@ unverified until a conformance suite has passed against recorded real streams.
 You can run an unverified model; the flag just records what's been checked.
 
 For a new session, `--model <alias>` selects and pins a catalog entry. Without
-it, a configured routing default supplies the unpinned baseline; otherwise
-Harness uses the built-in **echo provider** for demos and tests. `/model alias`
-can select a real model from the interface. An unknown alias or missing catalog
-fails with a message telling you how to fix it.
+it, a configured routing default supplies the unpinned baseline, followed by
+`model` in `~/.config/harness/resident.toml`. Harness starts as **Saoirse**, its
+resident agent; model selection changes her inference resource. For example:
+
+```toml
+# ~/.config/harness/resident.toml
+model = "local"
+# Optional; relative paths resolve beside this file:
+# context_profile = "profiles/personal-local.toml"
+```
+
+`--resident-config PATH` selects an alternate defaults file. A resumed session's
+saved model and context take precedence over these startup defaults; explicit
+`--model`, `--context-profile` and `--no-context-profile` still override them.
+Unused implicit resident defaults are not loaded when resuming saved selections;
+an explicitly supplied `--resident-config` file is still validated.
+With no model configured, the interface explains how to select one with
+`/model alias`; a headless turn fails clearly. It never silently echoes input.
+An unknown alias or missing catalog remains a configuration error. The old echo
+provider is available only through explicit `--demo` for testing.
 
 > Switching providers is a first-class operation, not a workaround. The same
 > applies inside plugins and subagents — model choice is data, not code.

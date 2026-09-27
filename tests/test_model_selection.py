@@ -1,6 +1,7 @@
 """Ordinary restart and session switching must retain the user's catalog choice."""
 
 import asyncio
+from pathlib import Path
 
 import pytest
 from textual.widgets import Input
@@ -15,6 +16,13 @@ from harness.provider_litellm import CatalogProvider
 from harness.types import CallId, ModelId, new_session_id
 from tests.test_tui import MODELS_TOML_TWO_ALIASES, make_app
 from tests.test_tui_queue import screen_text
+
+
+@pytest.fixture(autouse=True)
+def isolated_resident_defaults(tmp_path, monkeypatch):
+    home = tmp_path / "user-home"
+    home.mkdir()
+    monkeypatch.setattr(Path, "home", lambda: home)
 
 
 @pytest.fixture
