@@ -1435,6 +1435,7 @@ class HarnessApp(App[None]):
     async def _execute_prompt(self, prompt: PendingPrompt) -> AgentResult:
         self._refresh_queue()
         self.say("> ", prompt.text)
+        await self.kernel.loop.captures.pause()
         context = await self._inject_mentions(prompt.text) if prompt.expand_mentions else []
         self.kernel.loop.set_turn_context(context)
         self.controller.phase = "working"
@@ -2379,6 +2380,7 @@ class HarnessApp(App[None]):
         from harness.cli import _make_pricing_for
         from harness.provider_litellm import CatalogProvider
 
+        await self.kernel.loop.captures.pause()
         await self._cancel_semantic_check()
         from harness.events import ModelSelected
         from harness.cli import _catalog_provider

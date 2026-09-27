@@ -321,7 +321,8 @@ def test_capture_local_admission_has_background_priority():
 
 
 @pytest.mark.parametrize("phase", ["prepare", "model", "write"])
-async def test_completed_turn_returns_and_new_turn_preempts_capture(tmp_path, phase):
+@pytest.mark.parametrize("foreground", ["turn", "compaction"])
+async def test_completed_turn_returns_and_foreground_preempts_capture(tmp_path, phase, foreground):
     entered, settled = asyncio.Event(), asyncio.Event()
 
     async def hang():
@@ -365,12 +366,17 @@ async def test_completed_turn_returns_and_new_turn_preempts_capture(tmp_path, ph
         await asyncio.wait_for(entered.wait(), 3)
         assert not kernel.loop._task_active
         assert not settled.is_set()
-        second = await asyncio.wait_for(kernel.loop.run_task(AgentTask(prompt="second")), 3)
-        assert second.status == "completed" and settled.is_set()
+        if foreground == "turn":
+            second = await asyncio.wait_for(kernel.loop.run_task(AgentTask(prompt="second")), 3)
+            assert second.status == "completed"
+        else:
+            compacted = await asyncio.wait_for(kernel.compaction.compact(), 3)
+            assert compacted.parts >= 1
+        assert settled.is_set()
         requests, _, observed = state(kernel)
         original = next(r for r in requests.values() if r.run_id == first.run_id)
         assert observed[original.id].status == "pending"
-        assert len(requests) == 2
+        assert len(requests) == (2 if foreground == "turn" else 1)
     finally:
         await kernel.loop.end()
         assert kernel.loop.captures._worker is None
