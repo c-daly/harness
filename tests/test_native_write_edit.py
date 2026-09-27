@@ -1,6 +1,8 @@
 """write_file + edit_file: create/overwrite gate, edit uniqueness, per-path lock."""
 
 import asyncio
+import errno
+import hashlib
 import os
 import stat
 import subprocess
@@ -47,6 +49,42 @@ atomic_write(root/'private', b'state')
     subprocess.run([sys.executable, "-c", script, str(tmp_path), str(mask)], check=True)
     assert stat.S_IMODE((tmp_path / "workspace").stat().st_mode) == expected
     assert stat.S_IMODE((tmp_path / "private").stat().st_mode) == 0o600
+
+
+@pytest.mark.parametrize("kind", ["create", "write", "edit"])
+@pytest.mark.parametrize("error", [errno.EINVAL, errno.ENOTSUP, errno.EIO])
+async def test_directory_sync_failure_reports_published_bytes_and_updates_read_state(tmp_path, monkeypatch, kind, error):
+    from harness import persistence
+
+    def fail(_):
+        raise OSError(error, "directory sync unavailable")
+
+    path = tmp_path / "target"
+    rs = _rs()
+    if kind != "create":
+        path.write_text("old")
+        path.chmod(0o750)
+        await ReadFileTool(workspace_root=tmp_path, read_state=rs)({"file_path": path.name})
+    monkeypatch.setattr(persistence, "sync_directory", fail)
+    if kind == "edit":
+        result = await EditFileTool(workspace_root=tmp_path, read_state=rs)(
+            {"file_path": path.name, "old_string": "old", "new_string": "new"})
+    else:
+        result = await WriteFileTool(workspace_root=tmp_path, read_state=rs)(
+            {"file_path": path.name, "content": "new"})
+    assert path.read_text() == "new"
+    assert "bytes were published" in result and "Durability" in result
+    assert rs.version(str(path)) == hashlib.sha256(b"new").hexdigest()
+    # The next legitimate edit uses the new observation without a forced read.
+    await EditFileTool(workspace_root=tmp_path, read_state=rs)(
+        {"file_path": path.name, "old_string": "new", "new_string": "final"})
+    assert path.read_text() == "final"
+    if kind != "create":
+        assert stat.S_IMODE(path.stat().st_mode) == 0o750
+    # Private state still treats loss of durability as an error.
+    with pytest.raises(persistence.PublishedWriteError) as raised:
+        persistence.atomic_write(tmp_path / "private", b"state")
+    assert raised.value.errno == error
 
 
 async def test_create_new_file_round_trips(tmp_path):

@@ -19,7 +19,7 @@ from typing import Any
 
 from harness.hooks import Allow, Ask, DispatchDecision, ProposedAction, ProposedToolCall
 from harness.permissions import PermissionRule, RuleSet
-from harness.persistence import atomic_write
+from harness.persistence import PublishedWriteError, atomic_write
 from harness.tools import ToolSpec
 from harness.types import ToolName
 from harness.workspace import PATH_ARG, WorkspaceError, resolve_in_workspace
@@ -35,6 +35,18 @@ _EDIT_SNIPPET_CONTEXT = 4  # lines before/after the edited region in the returne
 class ToolError(Exception):
     """A native-tool failure. The message is model-facing teaching text (L1):
     what failed / why / what to do instead."""
+
+
+def _publish_workspace_file(path: Path, data: bytes) -> str:
+    try:
+        atomic_write(path, data, mode=0o666, preserve_mode=True)
+    except PublishedWriteError as exc:
+        # Publication succeeded: deliver its digest to ReadState as usual.
+        # Keep the durability limitation visible instead of encouraging a
+        # second application of an edit that has already happened.
+        return (f"\nWarning: bytes were published, but directory sync failed: {exc.strerror}. "
+                "Durability across a system crash is not confirmed.")
+    return ""
 
 
 class ReadState:
@@ -306,7 +318,7 @@ class WriteFileTool:
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
             updated = content.encode("utf-8")
-            atomic_write(path, updated, mode=0o666, preserve_mode=True)
+            warning = _publish_workspace_file(path, updated)
         except OSError as exc:
             raise ToolError(
                 f"could not write {path}: {exc.strerror or exc}. Check that the path is writable "
@@ -315,8 +327,8 @@ class WriteFileTool:
         n = len(content.splitlines())
         digest = hashlib.sha256(updated).hexdigest()
         if data is not None:
-            return f"Overwrote {path} ({n} lines, was {prev_lines}).", digest
-        return f"Created {path} ({n} lines).", digest
+            return f"Overwrote {path} ({n} lines, was {prev_lines})." + warning, digest
+        return f"Created {path} ({n} lines)." + warning, digest
 
 
 class EditFileTool:
@@ -383,12 +395,13 @@ class EditFileTool:
         updated = text.replace(old, new) if replace_all else text.replace(old, new, 1)
         try:
             encoded = updated.encode("utf-8")
-            atomic_write(path, encoded, mode=0o666, preserve_mode=True)
+            warning = _publish_workspace_file(path, encoded)
         except OSError as exc:
             raise ToolError(
                 f"could not write {path}: {exc.strerror or exc}. Check that the path is writable."
             ) from exc
-        return f"Edited {path}. Snippet of the result:\n{self._snippet(updated, new)}", hashlib.sha256(encoded).hexdigest()
+        return (f"Edited {path}. Snippet of the result:\n{self._snippet(updated, new)}" + warning,
+                hashlib.sha256(encoded).hexdigest())
 
     def _snippet(self, text: str, needle: str) -> str:
         lines = text.split("\n")

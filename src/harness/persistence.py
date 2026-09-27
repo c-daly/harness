@@ -11,6 +11,10 @@ _AT_FDCWD = -100
 _RENAME_EXCHANGE = 2
 
 
+class PublishedWriteError(OSError):
+    """The destination changed, but syncing its directory did not succeed."""
+
+
 def sync_directory(path: Path) -> None:
     fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
     try:
@@ -68,6 +72,9 @@ def atomic_write(path: Path, data: bytes, *, replace: bool = True,
             os.replace(temporary, path)
         else:
             os.link(temporary, path, follow_symlinks=False)
-        sync_directory(path.parent)
+        try:
+            sync_directory(path.parent)
+        except OSError as exc:
+            raise PublishedWriteError(exc.errno, exc.strerror or str(exc), str(path)) from exc
     finally:
         temporary.unlink(missing_ok=True)
