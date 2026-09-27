@@ -1465,6 +1465,8 @@ class HarnessApp(App[None]):
                     finally:
                         self._capture_waiting = False
                         self._refresh_queue()
+                    # A selection can arrive while capture owns this boundary.
+                    await self._apply_pending_model()
         except asyncio.CancelledError:
             self.controller.pause(user_requested=False)
             raise
@@ -2483,8 +2485,10 @@ class HarnessApp(App[None]):
         # once per logical interrupt -- an invariant, not a timing bet: a second
         # Esc in the same tick still sees is_finished=False, so the flag guards it.
         self._interrupting = True
+        turn_active = self.controller.active is not None or self.kernel.loop._task_active
         worker.cancel()
-        self.run_worker(self._after_interrupt(worker), group="driver", exit_on_error=False)
+        self.run_worker(self._after_interrupt(worker, turn_active=turn_active),
+                        group="driver", exit_on_error=False)
 
     async def _after_compact_interrupt(self, worker) -> None:
         """Esc-during-/compact's own cancellation path (item 8): cancels the
@@ -2502,17 +2506,18 @@ class HarnessApp(App[None]):
             await self._apply_pending_model()
             self._interrupting = False
 
-    async def _after_interrupt(self, worker) -> None:
+    async def _after_interrupt(self, worker, *, turn_active: bool = True) -> None:
         try:
             try:
                 await worker.wait()
             except (WorkerCancelled, WorkerFailed):
                 pass
-            self.kernel.loop.interrupt_turn()
+            if turn_active:
+                self.kernel.loop.interrupt_turn()
             if self._stream_buffer:
                 self.say("~ ", self._stream_buffer)  # keep the partial visible
             self._clear_live()
-            self.say("! ", "interrupted")
+            self.say("! ", "interrupted" if turn_active else "queue paused between turns")
         finally:
             await self._apply_pending_model()
             self._interrupting = False

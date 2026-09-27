@@ -13,8 +13,8 @@ from tests.test_tui import make_app
 from tests.test_tui_queue import screen_text
 
 
-def capture_app(root, provider, *, save_fn=receipt):
-    app = make_app(root, provider=provider, model=ModelId("resident"),
+def capture_app(root, provider, *, save_fn=receipt, catalog_path=None):
+    app = make_app(root, provider=provider, model=ModelId("resident"), catalog_path=catalog_path,
         native_tools=True, workspace_root=root, context_policy=profile(root, timeout_seconds=120),
         permissions=PermissionEngine([RuleSet(default="allow")]))
     for name, callback in (("prepare", prepare), ("save", save_fn)):
@@ -110,6 +110,49 @@ async def test_queued_capture_opportunity_is_visible_and_interruptible(tmp_path,
             assert [p.text for p in app.controller.pending] == ["already queued"]
         if action == "clear":
             assert not app.controller.pending
+        assert not any(e.event.type == "user_interrupt" for e in facts(app.kernel))
+
+
+async def test_model_selected_during_capture_applies_to_the_next_queued_prompt(tmp_path):
+    from harness.catalog import Catalog
+    from harness.provider_litellm import CatalogProvider
+
+    entered = asyncio.Event()
+    models = []
+    writes = 0
+    catalog = tmp_path / "models.toml"
+    catalog.write_text("\n".join(
+        f"[models.{name}]\nroute = 'fake/{name}'\ninput_cost_per_token = 0.0\noutput_cost_per_token = 0.0\n"
+        for name in ("resident", "replacement", "recorder")))
+
+    class Provider(CatalogProvider):
+        async def infer(self, request):
+            if request.model != "recorder":
+                models.append(str(request.model))
+            for chunk in text_turn("answer" if request.model != "recorder" else "record"):
+                yield chunk
+
+    async def save(args):
+        nonlocal writes
+        writes += 1
+        if writes == 1:
+            entered.set()
+            await asyncio.Future()
+        return receipt(args)
+
+    app = capture_app(tmp_path, Provider(Catalog.load(catalog)), save_fn=save, catalog_path=catalog)
+    async with app.run_test():
+        app._enqueue_prompt("first")
+        app._enqueue_prompt("second")
+        worker = app._turn_worker
+        await asyncio.wait_for(entered.wait(), 3)
+        assert app._capture_waiting and app.controller.last_result.status == "completed"
+        await app._switch_model("replacement")
+        await asyncio.wait_for(worker.wait(), 3)
+        await app.kernel.loop.captures.wait()
+        assert models == ["resident", "replacement"]
+        assert app.kernel.loop.model == "replacement" and app._pending_model is None
+        assert not app.controller.paused
 
 
 async def test_capture_failure_is_visible_but_does_not_pause_the_queue(tmp_path, monkeypatch):
