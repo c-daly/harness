@@ -3,6 +3,7 @@
 import ctypes
 import errno
 import os
+import stat
 import uuid
 from pathlib import Path
 
@@ -37,19 +38,31 @@ def exchange_paths(first: Path, second: Path) -> None:
         raise OSError(code, os.strerror(code), str(second))
 
 
-def atomic_write(path: Path, data: bytes, *, replace: bool = True) -> None:
-    """Publish complete 0600 bytes, durable before their directory entry.
+def atomic_write(path: Path, data: bytes, *, replace: bool = True,
+                 mode: int = 0o600, preserve_mode: bool = False) -> None:
+    """Publish complete bytes, durable before their directory entry.
 
     Exclusive publication uses a hard link to the already-synced temporary
     file. It raises FileExistsError without replacing a prior quarantine.
     Callers own any higher-level transaction or comparison of existing bytes.
+    Private core state defaults to 0600. Workspace callers may preserve the
+    destination mode and use 0666 (filtered by umask) for a new file.
     """
+    existing_mode = None
+    if preserve_mode:
+        try:
+            existing_mode = stat.S_IMODE(path.stat().st_mode)
+        except FileNotFoundError:
+            pass
     temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
-    fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                 mode if existing_mode is None else 0o600)
     try:
         with os.fdopen(fd, "wb") as output:
             output.write(data)
             output.flush()
+            if existing_mode is not None:
+                os.fchmod(output.fileno(), existing_mode)
             os.fsync(output.fileno())
         if replace:
             os.replace(temporary, path)

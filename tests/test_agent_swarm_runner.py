@@ -1,6 +1,7 @@
 """Native runner wiring checks; model capability needs a separate live run."""
 
 import argparse
+import asyncio
 import importlib.util
 import json
 import os
@@ -93,8 +94,10 @@ def test_non_git_commands_keep_their_environment(tmp_path, monkeypatch, explicit
     assert json.loads(result) == [expected["GIT_DIR"], expected["ORCHESTRATION_STATE_DIR"]]
 
 
+@pytest.mark.parametrize("evidence_fault", [None, "journal", "git", "usage", "both"])
+@pytest.mark.parametrize("execution_error", [None, RuntimeError, asyncio.CancelledError])
 async def test_manifest_request_reaches_native_child_and_never_completes_queue(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, evidence_fault, execution_error,
 ):
     runner = load_runner()
     workspace = tmp_path / "worktree"
@@ -153,15 +156,34 @@ async def test_manifest_request_reaches_native_child_and_never_completes_queue(
         timeout=30,
         manifest=manifest,
     )
-    await runner.execute(
-        args,
-        {
-            "task_name": "test",
-            "worktree_dir": str(workspace),
-            "branch_name": "task/test",
-            "prompt": "The actual plugin-selected task",
-        },
-    )
+    request = {
+        "task_name": "test",
+        "worktree_dir": str(workspace),
+        "branch_name": "task/test",
+        "prompt": "The actual plugin-selected task",
+    }
+    execute_once = runner.run_once
+
+    async def finish(*values):
+        result = await execute_once(*values)
+        def broken(*a, **kw):
+            raise OSError("evidence unavailable")
+        if evidence_fault in {"journal", "both"}:
+            monkeypatch.setattr(runner, "read_session", broken)
+        if evidence_fault in {"git", "both"}:
+            monkeypatch.setattr(runner, "command", broken)
+        if evidence_fault == "usage":
+            monkeypatch.setattr(runner, "project_usage", broken)
+        if execution_error is not None:
+            raise execution_error("original execution outcome")
+        return result
+
+    monkeypatch.setattr(runner, "run_once", finish)
+    if execution_error is None:
+        await runner.execute(args, request)
+    else:
+        with pytest.raises(execution_error, match="original execution outcome"):
+            await runner.execute(args, request)
     report = json.loads((output / "result.json").read_text())
     assert (workspace / "result.txt").read_text() == "child effect"
     events = list(read_session(output / "journal", report["root_session_id"]))
@@ -180,6 +202,12 @@ async def test_manifest_request_reaches_native_child_and_never_completes_queue(
     assert not any("substituted task" in m.text() for m in child_messages)
     assert len(queue_calls) == 1 and queue_calls[0][0] == "spawned"
     assert report["queue_completion_recorded"] is False
+    assert report["error"] == (execution_error.__name__ if execution_error else None)
+    expected = {"journal", "git"} if evidence_fault == "both" else {evidence_fault} if evidence_fault else set()
+    assert set(report["evidence_errors"]) == expected
+    assert (report["git_status"] is None) == ("git" in expected)
+    assert (report["usage"] is None) == bool(expected & {"journal", "usage"})
+    assert (report["children"] is None) == ("journal" in expected)
 
 
 async def test_dirty_task_refused_before_queue_mutation_or_inference(tmp_path, monkeypatch):

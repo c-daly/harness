@@ -58,6 +58,34 @@ def save(path, value):
     path.write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
 
 
+def execution_report(args, kernel, launch, error, workspace):
+    """Keep independent evidence failures from erasing the execution outcome."""
+    report = {**launch, "error": error, "queue_completion_recorded": False,
+              "review_state": "requires_independent_verification", "evidence_errors": {},
+              "children": None, "parent_terminals": None, "usage": None, "git_status": None}
+    try:
+        events = list(read_session(args.output / "journal", kernel.session.id, repair=False))
+    except Exception as exc:
+        report["evidence_errors"]["journal"] = type(exc).__name__
+    else:
+        report["children"] = [e.event.child_session_id for e in events
+                              if isinstance(e.event, SubagentSpawned)]
+        report["parent_terminals"] = [e.event.model_dump(mode="json") for e in events
+                                      if isinstance(e.event, (AgentRunFinished, SubagentFinished))]
+        try:
+            usage = project_usage(events)
+            report["usage"] = {"input_tokens": usage.input_tokens, "output_tokens": usage.output_tokens,
+                "cost_usd": str(usage.cost_usd), "unknown_input": usage.unknown_input,
+                "unknown_output": usage.unknown_output, "unknown_cost": usage.unknown_cost}
+        except Exception as exc:
+            report["evidence_errors"]["usage"] = type(exc).__name__
+    try:
+        report["git_status"] = command(["git", "status", "--porcelain"], cwd=workspace)
+    except Exception as exc:
+        report["evidence_errors"]["git"] = type(exc).__name__
+    return report
+
+
 class SingleWorker:
     """Pin the queued request and route; the coordinator cannot substitute work."""
 
@@ -210,32 +238,7 @@ async def execute(args, request):
     finally:
         loop.remove_signal_handler(signal.SIGINT)
         loop.remove_signal_handler(signal.SIGTERM)
-        events = list(read_session(args.output / "journal", kernel.session.id, repair=False))
-        children = [
-            e.event.child_session_id for e in events if isinstance(e.event, SubagentSpawned)
-        ]
-        usage = project_usage(events)
-        report = {
-            **launch,
-            "error": error,
-            "queue_completion_recorded": False,
-            "review_state": "requires_independent_verification",
-            "children": children,
-            "parent_terminals": [
-                e.event.model_dump(mode="json")
-                for e in events
-                if isinstance(e.event, (AgentRunFinished, SubagentFinished))
-            ],
-            "usage": {
-                "input_tokens": usage.input_tokens,
-                "output_tokens": usage.output_tokens,
-                "cost_usd": str(usage.cost_usd),
-                "unknown_input": usage.unknown_input,
-                "unknown_output": usage.unknown_output,
-                "unknown_cost": usage.unknown_cost,
-            },
-            "git_status": command(["git", "status", "--porcelain"], cwd=workspace),
-        }
+        report = execution_report(args, kernel, launch, error, workspace)
         save(args.output / "result.json", report)
         print(json.dumps(report), flush=True)
 

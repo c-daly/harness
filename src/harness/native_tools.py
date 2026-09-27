@@ -306,7 +306,7 @@ class WriteFileTool:
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
             updated = content.encode("utf-8")
-            atomic_write(path, updated)
+            atomic_write(path, updated, mode=0o666, preserve_mode=True)
         except OSError as exc:
             raise ToolError(
                 f"could not write {path}: {exc.strerror or exc}. Check that the path is writable "
@@ -383,7 +383,7 @@ class EditFileTool:
         updated = text.replace(old, new) if replace_all else text.replace(old, new, 1)
         try:
             encoded = updated.encode("utf-8")
-            atomic_write(path, encoded)
+            atomic_write(path, encoded, mode=0o666, preserve_mode=True)
         except OSError as exc:
             raise ToolError(
                 f"could not write {path}: {exc.strerror or exc}. Check that the path is writable."

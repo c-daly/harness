@@ -2,6 +2,9 @@
 
 import asyncio
 import os
+import stat
+import subprocess
+import sys
 
 import pytest
 
@@ -10,6 +13,40 @@ from harness.native_tools import EditFileTool, ReadFileTool, ReadState, ToolErro
 
 def _rs():
     return ReadState()
+
+
+@pytest.mark.parametrize("mode", [0o600, 0o644, 0o750])
+@pytest.mark.parametrize("kind", ["write", "edit"])
+async def test_replacing_workspace_file_preserves_permissions(tmp_path, mode, kind):
+    path = tmp_path / "target"
+    path.write_text("old")
+    path.chmod(mode)
+    rs = _rs()
+    await ReadFileTool(workspace_root=tmp_path, read_state=rs)({"file_path": path.name})
+    if kind == "write":
+        await WriteFileTool(workspace_root=tmp_path, read_state=rs)({"file_path": path.name, "content": "new"})
+    else:
+        await EditFileTool(workspace_root=tmp_path, read_state=rs)(
+            {"file_path": path.name, "old_string": "old", "new_string": "new"})
+    assert path.read_text() == "new"
+    assert stat.S_IMODE(path.stat().st_mode) == mode
+
+
+@pytest.mark.parametrize("mask,expected", [(0o022, 0o644), (0o077, 0o600), (0o002, 0o664)])
+def test_workspace_creation_respects_umask_without_widening_private_state(tmp_path, mask, expected):
+    # umask is process-wide: do not modify it in pytest's threaded event loop.
+    script = '''import os, sys
+from pathlib import Path
+from harness.native_tools import WriteFileTool, ReadState
+from harness.persistence import atomic_write
+root=Path(sys.argv[1])
+os.umask(int(sys.argv[2]))
+WriteFileTool(workspace_root=root, read_state=ReadState())._write(root/'workspace', 'new', None)
+atomic_write(root/'private', b'state')
+'''
+    subprocess.run([sys.executable, "-c", script, str(tmp_path), str(mask)], check=True)
+    assert stat.S_IMODE((tmp_path / "workspace").stat().st_mode) == expected
+    assert stat.S_IMODE((tmp_path / "private").stat().st_mode) == 0o600
 
 
 async def test_create_new_file_round_trips(tmp_path):
