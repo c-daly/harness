@@ -59,6 +59,7 @@ async def launch(setup, *, source=None):
 
 
 async def close(kernel):
+    await kernel.loop.captures.close()
     await kernel.mcp.stop()
     kernel.session.close()
 
@@ -81,6 +82,7 @@ async def test_real_recorder_writer_and_fresh_session_normal_reader(setup):
     first = await launch(setup)
     try:
         await first.loop.run_task(AgentTask(prompt=CORRECTION))
+        await first.loop.captures.wait()
         _, _, receipt = saved(first)
         original_id = first.session.id
     finally:
@@ -88,6 +90,7 @@ async def test_real_recorder_writer_and_fresh_session_normal_reader(setup):
     second = await launch(setup, source=receipt["name"])
     try:
         await second.loop.run_task(AgentTask(prompt="Which environment should I use?"))
+        await second.loop.captures.wait()
         assert second.session.id != original_id
         assert CORRECTION in "\n".join(m.text() for m in second.provider.calls[0])
         assert not any(CORRECTION in m.text() for m in second.loop.history)
@@ -100,6 +103,7 @@ async def test_real_writer_reconciles_repeated_write_and_refuses_changed_content
     kernel = await launch(setup)
     try:
         await kernel.loop.run_task(AgentTask(prompt=CORRECTION))
+        await kernel.loop.captures.wait()
         request, record, original = saved(kernel)
         args = dict(capture_id=request.id, project="outing", record=kernel.session.blobs.get(record).decode(),
                     destination=original["destination"])
@@ -120,6 +124,7 @@ async def test_real_writer_repairs_put_before_index_crash_window(setup):
     kernel = await launch(setup)
     try:
         await kernel.loop.run_task(AgentTask(prompt=CORRECTION))
+        await kernel.loop.captures.wait()
         request, record, original = saved(kernel)
         index = setup[1] / "MEMORY.md"
         # Simulate a process dying after the memory file landed but before its

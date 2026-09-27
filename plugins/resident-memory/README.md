@@ -88,6 +88,8 @@ session's blob store and journals its reference. The plugin writes through its
 normal writer, verifies the body through the provider and normal indexed reader,
 and returns a receipt binding the capture ID, project and content hash. Only a
 matching receipt becomes `saved` in `/status` and the TUI.
+Capture dispatch requires the configured tool and exact arguments; a hook may
+block the call but cannot rewrite it into a different operation.
 The prepared artifact also binds the adapter's destination fingerprint (normal
 vault root and project). Reconfiguring the server to use another vault cannot
 silently redirect a retry, even when the tool names remain unchanged.
@@ -98,18 +100,25 @@ was interrupted, the adapter uses the memory plugin's existing index rebuild.
 It does not replace or edit the record. Corrupt or conflicting records remain
 pending for inspection.
 
-On the next root turn, core reconstructs missing intents from terminal journal
-facts and retries the oldest pending capture once. It then attempts that turn's
-capture after execution. A prepared record is reused without another model
-call. Changed capture policy or workspace cannot redirect an earlier intent.
+Core reconstructs missing intents from terminal journal facts and schedules an
+idle capture pass after a root turn returns. Each pending request gets at most
+one attempt in that pass, ordered by least recent attempt so an unavailable
+older request cannot starve newer ones. A new foreground turn cancels the idle
+pass and waits for cancellation cleanup before starting its own work.
+A prepared record is reused without another model call. Changes to recorder
+model, timeouts or size limits apply to subsequent work without stranding
+prepared bytes. Project, workspace, writer and the prepared destination remain
+bound to the original intent; changing them cannot redirect an earlier write.
 Disabling capture suspends retries; pending records remain inspectable. Restart
 alone performs no write: retry occurs with subsequent work or an explicit
 `kernel.loop.captures.retry()` call. Cancellation records pending status and
-propagates normally.
+propagates normally. Shutdown settles the idle worker before closing tools and
+the session; it leaves unfinished requests pending rather than draining the
+outbox. Headless runs can therefore exit with pending capture. Embedders and
+qualification drivers can explicitly await `kernel.loop.captures.wait()` before
+ending a session when they need a capture result.
 
-This first implementation performs capture before the turn worker returns,
-within `timeout_seconds`; it can add latency. A deferred scheduler, explicit
-retry/discard UI, capture before compaction and at orderly shutdown, richer
+An explicit retry/discard UI, capture before compaction, shutdown draining, richer
 tool evidence, project selection, and conflict/staleness reconciliation remain
 open. The configured byte bounds reject oversized input without dropping text.
 No automatic retention policy or deletion is introduced.

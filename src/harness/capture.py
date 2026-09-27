@@ -5,6 +5,7 @@ survives cancellation and is replayed only to an explicitly idempotent adapter.
 """
 
 import asyncio
+from copy import deepcopy
 import hashlib
 import json
 from pathlib import Path
@@ -108,6 +109,73 @@ class CaptureService:
     def __init__(self, loop):
         self.loop = loop
         self._lock = asyncio.Lock()
+        self._worker: asyncio.Task | None = None
+        self._closed = False
+
+    def schedule(self):
+        """Start one idle pass; a failure never spins or starves later requests."""
+        if self._closed or self.loop.dispatcher.scope.depth or self.loop._task_active:
+            return
+        if self._worker is not None and not self._worker.done():
+            return
+        self._worker = asyncio.create_task(self._idle_pass(), name="resident-capture")
+        self._worker.add_done_callback(self._finished)
+
+    def _finished(self, task):
+        if not task.cancelled() and task.exception() is not None and not self.session.closed:
+            from harness.events import ErrorRaised
+            try:
+                self.session.append(ErrorRaised(where="resident-capture",
+                    message=f"capture worker failed: {type(task.exception()).__name__}"))
+            except Exception:
+                pass  # wait/pause still propagates the original persistence error.
+
+    async def wait(self):
+        """Explicitly wait for the idle pass (qualification and embedding API)."""
+        task = self._worker
+        if task is not None:
+            try:
+                await asyncio.shield(task)
+            finally:
+                if task.done() and self._worker is task:
+                    self._worker = None
+
+    async def pause(self):
+        """Yield to foreground work, settling an owned call before proceeding."""
+        task = self._worker
+        if task is None:
+            return
+        if not task.done():
+            task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            # Do not consume cancellation of the foreground caller itself.
+            if asyncio.current_task().cancelling():
+                raise
+        finally:
+            if task.done():
+                self._worker = None
+
+    async def close(self):
+        self._closed = True
+        await self.pause()
+
+    def _pending(self, events, *, run_id=None):
+        requests, _, observations = capture_state(events)
+        attempted = {e.event.observation.capture_id: e.seq for e in events
+                     if e.event.type == "capture_observed"}
+        pending = [r for r in requests.values() if (run_id is None or r.run_id == run_id)
+                   and (r.id not in observations or observations[r.id].status == "pending")]
+        return sorted(pending, key=lambda r: (attempted.get(r.id, 0), r.source_seq))
+
+    async def _idle_pass(self):
+        # Freeze a fair pass. No request is attempted twice without another
+        # foreground boundary or explicit retry, even when the adapter is down.
+        for request in self._pending(self.events()):
+            if self._closed or self.loop._task_active:
+                return
+            await self.retry(run_id=request.run_id)
 
     @property
     def session(self):
@@ -150,7 +218,7 @@ class CaptureService:
                 self.session.append(CaptureRequested(request=request))
                 known.add(ev.result.run_id)
 
-    def _source(self, request):
+    def _source(self, request, policy):
         """Use recorded text and explicit execution status, never transient prompts."""
         user, result, started = None, None, False
         for env in self.events():
@@ -165,7 +233,7 @@ class CaptureService:
                 result = event.result
         if user is None or result is None:
             raise CaptureUnavailable("source has no recorded exchange")
-        cap = request.policy.max_transcript_bytes
+        cap = policy.max_transcript_bytes
         if len(user.encode()) > cap or (result.output and result.output.size > cap):
             raise CaptureUnavailable("source exceeds capture limit; no text was discarded")
         source = dict(session_id=str(self.session.id), run_id=request.run_id,
@@ -181,9 +249,12 @@ class CaptureService:
         from harness.hooks import ProposedToolCall
         from harness.types import ToolName, new_call_id
         outcome = await self.loop.dispatcher.dispatch_tool(
-            ProposedToolCall(new_call_id(), ToolName(name), args), purpose="capture")
+            ProposedToolCall(new_call_id(), ToolName(name), deepcopy(args)), purpose="capture", exact=True)
         if outcome.is_error:
             raise CaptureUnavailable("capture tool unavailable or denied; inspect its dispatch receipt")
+        if (outcome.resolved is None or outcome.resolved.tool != name
+                or outcome.resolved.args != args):
+            raise CaptureUnavailable("capture dispatch changed the configured tool or arguments")
         size = outcome.blob.size if outcome.blob else len((outcome.text or "").encode())
         if size > max_bytes:
             raise CaptureUnavailable("capture tool response exceeds its limit")
@@ -203,13 +274,13 @@ class CaptureService:
         from harness.types import ModelId
         from harness.workspace import WorkspaceGuard
 
-        requests, prepared, observations = capture_state(self.events())
-        pending = [r for r in requests.values() if (run_id is None or r.run_id == run_id)
-                   and (r.id not in observations or observations[r.id].status == "pending")]
+        events = self.events()
+        _, prepared, _ = capture_state(events)
+        pending = self._pending(events, run_id=run_id)
         if not pending:
             return
         request = pending[0]
-        policy = request.policy
+        original = request.policy
 
         def observe(status, reason="", receipt=None):
             observation = CaptureObservation(capture_id=request.id, status=status,
@@ -218,7 +289,12 @@ class CaptureService:
             return observation
 
         live = self.loop.dispatcher.scope.context_policy
-        if live is None or live.capture != policy:
+        artifact = prepared.get(request.id)
+        policy = live.capture if live else None
+        bindings = ("project", "workspace", "write_tool")
+        if artifact is None:
+            bindings += ("prepare_tool",)
+        if policy is None or any(getattr(policy, key) != getattr(original, key) for key in bindings):
             return observe("pending", "capture policy changed; original destination retained")
         roots = [hook._root.resolve() for _, _, _, hook in self.loop.hooks._dispatch
                  if type(hook) is WorkspaceGuard]
@@ -228,11 +304,10 @@ class CaptureService:
         deadline = asyncio.timeout(policy.timeout_seconds)
         try:
             async with deadline:
-                artifact = prepared.get(request.id)
                 if artifact is None:
                     raw = await self._tool(policy.prepare_tool, {
                         "capture_id": request.id, "project": policy.project,
-                        "transcript": self._source(request)}, policy.max_input_bytes)
+                        "transcript": self._source(request, policy)}, policy.max_input_bytes)
                     preparation = parse_response(Preparation, raw)
                     inference = await self.loop.dispatcher.dispatch_inference(
                         provider=self.loop.provider, pinned=True, exact_model=True,

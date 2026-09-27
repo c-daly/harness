@@ -90,3 +90,20 @@ async def test_capture_status_is_visible_without_dumping_internal_tool_payloads(
         app._render_event(CaptureObserved(observation=CaptureObservation(capture_id="capture", status="saved")))
         await pilot.pause()
         assert "Continuity: saved" in screen_text(app)
+
+
+async def test_cancelled_and_aborted_capture_calls_release_ui_tracking(tmp_path):
+    from harness.events import ToolCallAborted, ToolCallCancelled, ToolCallProposed
+    from harness.types import CallId, ToolName
+
+    app = make_app(tmp_path)
+    async with app.run_test():
+        for index in range(20):
+            call = CallId(f"capture-{index}")
+            app._render_event(ToolCallProposed(call_id=call, tool=ToolName("capture_write"),
+                                              args={}, purpose="capture"))
+            assert call in app._context_calls
+            terminal = (ToolCallCancelled(call_id=call) if index % 2 else
+                        ToolCallAborted(call_id=call, reason="interrupted session"))
+            app._render_event(terminal)
+            assert not app._context_calls

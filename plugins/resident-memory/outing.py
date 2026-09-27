@@ -89,6 +89,9 @@ async def run(args):
             kernel.mcp.flush_events()
             result = await kernel.loop.run_task(AgentTask(prompt=prompt,
                 limits=TaskLimits(timeout_seconds=120, max_iterations=12)))
+            # The experiment explicitly measures persistence. Ordinary turns
+            # return before capture, and shutdown preserves pending work.
+            await kernel.loop.captures.wait()
             entry.update(status=result.status, response=result.read_text(kernel.session.blobs))
         except Exception as exc:
             entry["error"] = f"{type(exc).__name__}: {exc}"
@@ -97,6 +100,7 @@ async def run(args):
             report.update(interrupted=True, passed=False)
             raise
         finally:
+            await kernel.loop.captures.close()
             events = read_session(kernel.session.base, kernel.session.id, repair=False)
             requests, _, captures = capture_state(events)
             entry["captures"] = [captures[key].model_dump(mode="json") if key in captures else

@@ -161,11 +161,12 @@ class AgentLoop:
             raise RuntimeError("an agent task is already running")
         self._task_active = True
         self.active_model = self.model
+        schedule_capture = False
         try:
             from harness.handoff import capture_scope
+            await self.captures.pause()
             if policy is not None and policy.capture is not None:
                 self.captures.reconcile()
-                await self.captures.retry()
             result = await execute_task(
                 self.session, task, runtime="harness", model=self.model,
                 activity=self.dispatcher.scope.budget.activity,
@@ -175,10 +176,7 @@ class AgentLoop:
                 capabilities={"handoff_scope": capture_scope(self.dispatcher)},
                 execute=lambda: self._run_task_body(task, on_progress),
             )
-            if policy is not None and policy.capture is not None:
-                self.captures.reconcile()
-                if result.status != "cancelled":
-                    await self.captures.retry(run_id=result.run_id)
+            schedule_capture = result.status != "cancelled"
             return result
         finally:
             self._task_active = False
@@ -188,6 +186,8 @@ class AgentLoop:
             # without starting more work during cancellation; retry on a later turn.
             if policy is not None and policy.capture is not None:
                 self.captures.reconcile()
+                if schedule_capture:
+                    self.captures.schedule()
 
     async def _run_task_body(self, task: AgentTask, on_progress) -> AgentOutput:
         user_text = task.prompt
@@ -410,5 +410,6 @@ class AgentLoop:
         if self._ended:
             raise RuntimeError("AgentLoop.end() already called")
         self._ended = True
+        await self.captures.close()
         await self._apply_contributions(LifecyclePoint.SESSION_END, {"session_id": self.session.id})
         self.session.append(SessionEnded())

@@ -419,13 +419,16 @@ async def run_once(kernel: Kernel, prompt: str) -> str:
         raise
     finally:
         try:
-            if pump_tasks:
-                for _task in pump_tasks:
-                    _task.cancel()
-                await asyncio.gather(*pump_tasks, return_exceptions=True)
-            if kernel.mcp is not None:
-                await kernel.mcp.stop()
-                kernel.mcp.flush_events()
+            try:
+                await kernel.loop.captures.close()
+            finally:
+                if pump_tasks:
+                    for _task in pump_tasks:
+                        _task.cancel()
+                    await asyncio.gather(*pump_tasks, return_exceptions=True)
+                if kernel.mcp is not None:
+                    await kernel.mcp.stop()
+                    kernel.mcp.flush_events()
         finally:
             try:
                 await kernel.resources.close(emit=kernel.session.append)

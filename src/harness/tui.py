@@ -46,6 +46,8 @@ from harness.events import (
     CaptureObserved,
     RetryAttempted,
     ToolCallCompleted,
+    ToolCallCancelled,
+    ToolCallAborted,
     ToolCallProposed,
 )
 from harness.hooks import ProposedToolCall
@@ -1296,6 +1298,8 @@ class HarnessApp(App[None]):
                 pass
             case ToolCallProposed(purpose="capture"):
                 self._context_calls.add(event.call_id)
+            case ToolCallCancelled() | ToolCallAborted():
+                self._context_calls.discard(event.call_id)
             case ToolCallProposed(tool=tool):
                 self.say("\u2699 ", str(tool))
             case ToolCallCompleted(result_text=text, is_error=is_error):
@@ -2506,7 +2510,10 @@ class HarnessApp(App[None]):
             except (WorkerCancelled, WorkerFailed):
                 pass
         try:
-            await self.kernel.resources.close(emit=self.kernel.session.append)
+            try:
+                await self.kernel.loop.captures.close()
+            finally:
+                await self.kernel.resources.close(emit=self.kernel.session.append)
         except Exception as exc:
             self.say("! ", f"local resource cleanup failed: {exc}")
         finally:
@@ -2552,9 +2559,14 @@ async def run_tui(
         # app.kernel, not the `kernel` param -- /clear may have rebuilt it in
         # place, and the live kernel at exit is the one that needs teardown.
         live = app.kernel
-        if live.mcp is not None:
-            await live.mcp.stop()
-            live.mcp.flush_events()
-        if app._mcp_errlog is not None:
-            app._mcp_errlog.close()
-        live.session.close()
+        try:
+            await live.loop.captures.close()
+        finally:
+            try:
+                if live.mcp is not None:
+                    await live.mcp.stop()
+                    live.mcp.flush_events()
+            finally:
+                if app._mcp_errlog is not None:
+                    app._mcp_errlog.close()
+                live.session.close()
