@@ -2,6 +2,7 @@
 
 import importlib.util
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -61,6 +62,20 @@ def test_pagination_and_non_git_directories(tmp_path):
     assert first["more"] and not second["more"]
     assert first["unavailable_roots"] == ["/missing"]
     assert all(p["git"] is None for p in first["projects"])
+
+
+def test_checkout_activity_between_pages_cannot_duplicate_or_skip_projects(tmp_path):
+    entries = [entry(tmp_path, name, git=False) for name in ("c", "a", "b")]
+    overview = make_overview(entries, lambda *args: "")
+    first = json.loads(overview(limit=1))
+    # Move the first directory across an activity-sorted page boundary.
+    for index, item in enumerate(entries):
+        os.utime(item["path"], (1000 + index, 1000 + index))
+    second = json.loads(overview(offset=first["next_offset"], limit=2))
+    observed = [p["project"]["name"] for page in (first, second) for p in page["projects"]]
+    assert observed == ["a", "b", "c"]
+    assert first["order"] == second["order"] == "path"
+    assert not second["more"]
 
 
 def test_git_failure_is_visible_not_clean_status(tmp_path):
