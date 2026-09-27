@@ -16,7 +16,7 @@ def register(mcp, *, inventory, git_read, encoded):
         """Read a compact portfolio snapshot before answering broad project-status
         questions. Returns exact project paths, latest commit, dirty-file count
         and available status-document paths; no full document excerpts. Paginated,
-        with recently changed directories first (a filesystem activity hint only).
+        in stable path order, so checkout activity does not move page boundaries.
         Summarize the covered projects and state whether more remain. Use
         projects_status for deeper inspection of a particular returned project.
         Read-only: these observations do not prove task completion or test results.
@@ -25,17 +25,7 @@ def register(mcp, *, inventory, git_read, encoded):
             raise ValueError("Invalid page")
         entries, unavailable = inventory()
 
-        def activity(entry):
-            root = Path(entry["path"])
-            times = []
-            for p in (root, root / ".git/index", root / ".git/logs/HEAD"):
-                try:
-                    times.append(p.stat().st_mtime)
-                except OSError:
-                    pass
-            return max(times, default=0)
-
-        entries.sort(key=lambda e: (-activity(e), e["path"]))
+        entries.sort(key=lambda e: e["path"])
 
         def inspect(entry):
             root = Path(entry["path"])
@@ -72,7 +62,7 @@ def register(mcp, *, inventory, git_read, encoded):
             "projects": [], "total_matches": len(entries),
             "next_offset": min(offset, len(entries)), "more": False,
             "unavailable_roots": unavailable,
-            "order": "filesystem_activity_hint",
+            "order": "path",
             "notice": ("Partial live checkout overview of configured directories; state coverage. "
                        "No activity/completion classification is supplied. A null git field is not "
                        "a judgement that a directory is or is not a project. Commit titles and dirty "
