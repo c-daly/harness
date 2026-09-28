@@ -35,7 +35,8 @@ optional normal memory, checked file work, cancellation and task continuation.
   layered user → project, with a safe baseline (reads allowed, writes and shell
   prompt).
 - **Native tools.** `read_file`, `write_file`, `edit_file`, `glob`, `grep`,
-  `bash`, `todo` — workspace-confined, with teaching error messages.
+  `bash`, `todo` — file tools use a primary workspace plus optional read/write
+  roots; shell commands use the permission engine and are not path-confined.
 - **A TUI built for long sessions.** Streamed thinking (`/thoughts`), markdown
   replies with transparent typeset LaTeX math (`/markdown`), in-place `/clear`
   and `/compact`, `/resume` to

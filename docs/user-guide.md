@@ -399,8 +399,20 @@ never writes a permanent allow-all-shell rule).
 ## Native tools
 
 The CLI registers a built-in tool inventory for every run. `--workspace DIR`
-sets the root that file tools are confined to; it defaults to the current
-directory.
+sets the primary root for native file tools; it defaults to the current
+directory. Add `--read-root DIR` to inspect another directory, or
+`--write-root DIR` to permit both reading and editing it. Either option may be
+repeated. For example:
+
+```bash
+harness --workspace ~/projects/harness \
+  --read-root ~/projects/earthsim --write-root ~/projects/scion
+```
+
+This gives the agent file-tool access to those three projects while keeping
+relative paths anchored to Harness.
+The same `workspace_read_roots` and `workspace_write_roots` arguments are
+available to callers of `build_kernel`.
 
 | Tool | What it does |
 |---|---|
@@ -412,10 +424,25 @@ directory.
 | `bash` | Run a shell command with a timeout and output cap |
 | `todo` | Maintain a task list (reconstructed from the event log) |
 
-All file tools are **confined to the workspace root**: a path that resolves
-outside it is rejected, and symlinks are never followed out of the workspace.
+Native file tools accept absolute paths under the primary workspace or an
+explicitly configured extra root. `read_file`, `glob`, and `grep` can use read
+or write roots; `write_file` and `edit_file` require the primary workspace or a
+write root. An unlisted path is rejected, including a symlink that resolves
+outside the configured roots. Extra roots must exist when Harness starts.
+Write/edit calls still go through the permission engine and require a fresh
+read before overwriting an existing file. Searches without an explicit `path`
+still search only the primary workspace.
 `bash` is not path-confined — its guardrails are the permission engine plus a
 prompt on compound commands.
+
+The TUI prompt also has optional Vim-style editing: start with `--vim`, or use
+`/vim on` and `/vim off` while running. Normal mode starts on; `i`, `a`, `I`,
+and `A` enter insert mode, and Esc returns to normal mode when no task is
+running. Normal-mode `h/l`, `w/b`, `0/$`, `x`, `D`, `C`, `dd`, and `j/k`
+provide cursor, edit, and prompt-history actions. Enter submits in either
+mode. Esc still interrupts an active task; the mode indicator above the prompt
+shows the current mode. This is a focused single-line prompt mode, not a full
+Vim editor.
 
 ---
 

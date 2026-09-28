@@ -622,17 +622,20 @@ def test_no_prompt_routes_to_tui(tmp_path, monkeypatch):
 
     async def fake_run_tui(
         kernel, *, catalog_path=None, ask=None, native_tools=False, workspace_root=None,
-        routing_rules=None,
+        workspace_read_roots=(), workspace_write_roots=(), vim=False, routing_rules=None,
     ):
         launched["kernel"] = kernel
         launched["catalog_path"] = catalog_path
         launched["ask"] = ask
         launched["native_tools"] = native_tools
         launched["workspace_root"] = workspace_root
+        launched["vim"] = vim
         launched["routing_rules"] = routing_rules
 
     monkeypatch.setattr("harness.tui.run_tui", fake_run_tui)
-    run_cli("--demo", "--base-dir", str(tmp_path))  # no -p
+    extra = tmp_path / "other-project"
+    extra.mkdir()
+    run_cli("--demo", "--base-dir", str(tmp_path), "--vim", "--read-root", str(extra))  # no -p
     kernel = launched["kernel"]
     assert kernel.loop.dispatcher.resolver.name == "tui"
     assert type(kernel.provider).__name__ == "EchoProvider"
@@ -640,6 +643,8 @@ def test_no_prompt_routes_to_tui(tmp_path, monkeypatch):
     # threaded through so a /clear kernel rebuild can reproduce the same
     # build_kernel(native_tools=..., workspace_root=..., routing_rules=...) call
     assert launched["native_tools"] is True
+    assert launched["vim"] is True
+    assert kernel.registry.get("read_file")._access.read_roots == (extra,)
     kernel.session.close()  # fake_run_tui skipped teardown
 
 

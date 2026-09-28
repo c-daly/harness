@@ -148,6 +148,10 @@ def context_bindings(dispatcher):
         declaration = {"implementation": f"{cls.__module__}.{cls.__qualname__}"}
         if cls.__module__ == "harness.native_tools" and hasattr(tool, "_root"):
             declaration["root"] = str(tool._root.resolve())
+            access = getattr(tool, "_access", None)
+            if access is not None and (access.read_roots or access.write_roots):
+                declaration["read_roots"] = [str(root) for root in access.read_roots]
+                declaration["write_roots"] = [str(root) for root in access.write_roots]
         elif cls is McpTool:
             declaration.update(server=asdict(tool._conn.spec), remote_name=tool._remote_name,
                                schema=tool.spec.parameters)
@@ -169,7 +173,13 @@ def capture_scope(dispatcher):
         if type(hook) is PermissionEngine:
             permissions.append([asdict(layer) for layer in (hook.session_grants, *hook.layers)])
         elif type(hook) is WorkspaceGuard:
-            workspaces.append(str(hook._root.resolve()))
+            access = hook._access
+            if access.read_roots or access.write_roots:
+                workspaces.append(canonical_args({"root": str(access.root),
+                    "read_roots": [str(root) for root in access.read_roots],
+                    "write_roots": [str(root) for root in access.write_roots]}))
+            else:
+                workspaces.append(str(hook._root.resolve()))
         elif type(hook) not in (CompoundCommandGuard, RoutingEngine):
             unsupported.append(name)
     active = current_handoff.get()
@@ -374,9 +384,10 @@ class HandoffGuard:
             validate_arguments(tool.spec, call.args)
             if set(call.args) - set(tool.spec.parameters.get("properties", {})):
                 raise ValueError("handoff calls cannot contain ignored tool arguments")
-            from harness.workspace import PATH_ARG, resolve_in_workspace
+            from harness.workspace import PATH_ARG
             key = PATH_ARG.get(call.tool)
-            if key in call.args and call.args[key] != str(resolve_in_workspace(tool._root, call.args[key])):
+            if key in call.args and call.args[key] != str(tool._access.resolve_path(
+                    call.args[key], write=call.tool in ("write_file", "edit_file"))):
                 raise ValueError("handoff calls must use canonical absolute paths")
         # Retain original limits and reservations. Durable descendant counts do
         # not reconcile child effects or qualify their handoff continuation.
