@@ -113,6 +113,9 @@ def make_app(tmp_path, catalog_path=None, plugins=None, **kernel_kwargs) -> Harn
         resolver = TuiResolver(ask=ask, engine=engine)
     native_tools = kernel_kwargs.pop("native_tools", False)
     workspace_root = kernel_kwargs.pop("workspace_root", None)
+    workspace_read_roots = kernel_kwargs.pop("workspace_read_roots", ())
+    workspace_write_roots = kernel_kwargs.pop("workspace_write_roots", ())
+    vim = kernel_kwargs.pop("vim", False)
     routing_rules = kernel_kwargs.pop("routing_rules", None)
     build_kwargs: dict = dict(
         provider=kernel_kwargs.pop("provider", EchoProvider()),
@@ -129,6 +132,10 @@ def make_app(tmp_path, catalog_path=None, plugins=None, **kernel_kwargs) -> Harn
         build_kwargs["native_tools"] = True
     if workspace_root is not None:
         build_kwargs["workspace_root"] = workspace_root
+    if workspace_read_roots:
+        build_kwargs["workspace_read_roots"] = workspace_read_roots
+    if workspace_write_roots:
+        build_kwargs["workspace_write_roots"] = workspace_write_roots
     if routing_rules is not None:
         build_kwargs["routing_rules"] = routing_rules
     build_kwargs.update(kernel_kwargs)
@@ -139,6 +146,9 @@ def make_app(tmp_path, catalog_path=None, plugins=None, **kernel_kwargs) -> Harn
         ask=ask,
         native_tools=native_tools,
         workspace_root=workspace_root,
+        workspace_read_roots=workspace_read_roots,
+        workspace_write_roots=workspace_write_roots,
+        vim=vim,
         routing_rules=routing_rules,
     )
 

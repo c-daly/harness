@@ -76,6 +76,8 @@ def main(argv):
         action.add_argument("--catalog", type=Path, default=Path.home() / ".config/harness/models.toml")
         action.add_argument("--native-tools", action="store_true")
         action.add_argument("--workspace", type=Path, default=Path.cwd())
+        action.add_argument("--read-root", type=Path, action="append", default=[])
+        action.add_argument("--write-root", type=Path, action="append", default=[])
         action.add_argument("--allow", action="append", default=[])
     args = parser.parse_args(argv)
     session_id = SessionId(args.session_id)
@@ -98,7 +100,8 @@ def main(argv):
         _apply_allow_flags(engine, args.allow)
         kernel = build_kernel(base_dir=args.base_dir, model=ModelId(args.model), provider=CatalogProvider(catalog),
             permissions=engine, resume_session_id=session_id, native_tools=args.native_tools,
-            workspace_root=args.workspace, model_pinned=True)
+            workspace_root=args.workspace, workspace_read_roots=args.read_root,
+            workspace_write_roots=args.write_root, model_pinned=True)
 
         async def execute():
             try:

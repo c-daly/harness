@@ -501,10 +501,14 @@ class HistoryInput(Input):
         Binding("tab", "complete_mention", show=False),
     ]
 
-    def __init__(self, *, workspace_root: "Path | None" = None, **kwargs) -> None:
+    def __init__(self, *, workspace_root: "Path | None" = None, vim: bool = False,
+                 **kwargs) -> None:
         super().__init__(**kwargs)
         self.history = HistoryRing()
         self.workspace_root = workspace_root
+        self.vim_enabled = vim
+        self.vim_mode = "normal" if vim else "insert"
+        self._vim_pending = ""
         # Candidate file list: shelled out to git (or walked) at most once per
         # prompt -- reset_mention_cache() (called on submit) starts the next
         # prompt-session fresh so a file created/removed mid-session is picked up.
@@ -513,6 +517,93 @@ class HistoryInput(Input):
         # "index": which match is currently applied}. Reset whenever Tab is
         # pressed somewhere that isn't a continuation of this same cycle.
         self._mention_cycle: "dict | None" = None
+
+    def set_vim(self, enabled: bool) -> None:
+        self.vim_enabled = enabled
+        self.vim_mode = "normal" if enabled else "insert"
+        self._vim_pending = ""
+        self._show_vim_mode()
+
+    def enter_vim_normal(self) -> None:
+        if not self.vim_enabled:
+            return
+        self.vim_mode = "normal"
+        self._vim_pending = ""
+        self.cursor_position = min(self.cursor_position, max(0, len(self.value) - 1))
+        self._show_vim_mode()
+
+    def _enter_vim_insert(self) -> None:
+        self.vim_mode = "insert"
+        self._vim_pending = ""
+        self._show_vim_mode()
+
+    def _show_vim_mode(self) -> None:
+        if self.is_mounted:
+            label = self.app.query_one("#input-mode", Static)
+            label.display = self.vim_enabled
+            label.update(_plain(f"Vim {self.vim_mode.upper()} — Esc: normal; Enter: send"))
+
+    async def _on_key(self, event) -> None:
+        if not self.vim_enabled or self.vim_mode == "insert" or not event.is_printable:
+            await super()._on_key(event)
+            return
+        event.stop()
+        event.prevent_default()
+        key = event.character or ""
+        if self._vim_pending == "d":
+            self._vim_pending = ""
+            if key == "d":
+                self.value = ""
+                self.cursor_position = 0
+            return
+        if key == "d":
+            self._vim_pending = "d"
+        elif key == "i":
+            self._enter_vim_insert()
+        elif key == "a":
+            self.cursor_position = min(len(self.value), self.cursor_position + 1)
+            self._enter_vim_insert()
+        elif key == "I":
+            self.action_home()
+            self._enter_vim_insert()
+        elif key == "A":
+            self.action_end()
+            self._enter_vim_insert()
+        elif key == "h":
+            self.cursor_position = max(0, self.cursor_position - 1)
+        elif key == "l":
+            self.cursor_position = min(max(0, len(self.value) - 1), self.cursor_position + 1)
+        elif key == "0":
+            self.action_home()
+        elif key == "$":
+            self.cursor_position = max(0, len(self.value) - 1)
+        elif key == "w":
+            self.action_cursor_right_word()
+            self.cursor_position = min(self.cursor_position, max(0, len(self.value) - 1))
+        elif key == "b":
+            self.action_cursor_left_word()
+        elif key == "x":
+            self.delete(self.cursor_position, self.cursor_position + 1)
+            self.cursor_position = min(self.cursor_position, max(0, len(self.value) - 1))
+        elif key == "D":
+            self.delete(self.cursor_position, len(self.value))
+        elif key == "C":
+            self.delete(self.cursor_position, len(self.value))
+            self._enter_vim_insert()
+        elif key == "k":
+            self.action_history_prev()
+            self.cursor_position = min(self.cursor_position, max(0, len(self.value) - 1))
+        elif key == "j":
+            self.action_history_next()
+            self.cursor_position = min(self.cursor_position, max(0, len(self.value) - 1))
+
+    def action_delete_left(self) -> None:
+        if not self.vim_enabled or self.vim_mode == "insert":
+            super().action_delete_left()
+
+    def action_delete_right(self) -> None:
+        if not self.vim_enabled or self.vim_mode == "insert":
+            super().action_delete_right()
 
     def action_history_prev(self) -> None:
         self.value = self.history.prev(self.value)
@@ -605,6 +696,7 @@ class HarnessApp(App[None]):
     #input-area { dock: bottom; height: auto; }
     #stats { height: 1; }
     #statusbar { height: 1; }
+    #input-mode { height: 1; display: none; }
     #queue { height: auto; max-height: 4; }
     #compact-progress { height: auto; max-height: 2; display: none; }
     #model-progress { height: auto; max-height: 2; display: none; }
@@ -630,6 +722,9 @@ class HarnessApp(App[None]):
         ask: "AppBoundAsk | None" = None,
         native_tools: bool = False,
         workspace_root: "Path | None" = None,
+        workspace_read_roots=(),
+        workspace_write_roots=(),
+        vim: bool = False,
         routing_rules=None,
     ) -> None:
         super().__init__()
@@ -641,6 +736,9 @@ class HarnessApp(App[None]):
         # permission engine -- is read back off self.kernel in _rebuild_kernel.
         self._native_tools = native_tools
         self._workspace_root = workspace_root
+        self._workspace_read_roots = tuple(workspace_read_roots)
+        self._workspace_write_roots = tuple(workspace_write_roots)
+        self._vim_enabled = vim
         self._routing_rules = routing_rules
         self._turn_worker = None
         self.controller = kernel.controller
@@ -724,10 +822,12 @@ class HarnessApp(App[None]):
             yield Static(id="task-status")
             yield Static(id="stats")
             yield Static(id="statusbar")
+            yield Static(id="input-mode")
             yield HistoryInput(
                 id="prompt",
                 placeholder="prompt (/help for commands)",
                 workspace_root=self._workspace_root,
+                vim=self._vim_enabled,
             )
 
     def say(self, prefix: str, text: str, *, style: str | None = None) -> None:
@@ -803,7 +903,9 @@ class HarnessApp(App[None]):
                 pass
 
     async def on_mount(self) -> None:
-        self.query_one("#prompt", HistoryInput).focus()
+        prompt = self.query_one("#prompt", HistoryInput)
+        prompt.focus()
+        prompt._show_vim_mode()
         self._refresh_statusbar()
         self.run_worker(self._session_driver(), group="driver", exit_on_error=False)
 
@@ -1047,6 +1149,8 @@ class HarnessApp(App[None]):
             resolver=old_kernel.runner.resolver,
             plugins=old_kernel.plugins,
             workspace_root=self._workspace_root,
+            workspace_read_roots=self._workspace_read_roots,
+            workspace_write_roots=self._workspace_write_roots,
             native_tools=self._native_tools,
             routing_rules=self._routing_rules,
             model_pinned=old_kernel.loop.model_pinned,
@@ -1336,7 +1440,7 @@ class HarnessApp(App[None]):
             return
         command = parse_slash_command(text)
         if command is not None:
-            if command.name in self._plugin_commands and command.name not in {"task", "status", "semantics", "improvements", "handoff", "models", "export", "coordination", "budget", "execution", "activity"}:
+            if command.name in self._plugin_commands and command.name not in {"task", "status", "semantics", "improvements", "handoff", "models", "export", "coordination", "budget", "execution", "activity", "vim"}:
                 expanded = self._plugin_commands[command.name].body.replace("$ARGUMENTS", command.arg)
                 if not self._enqueue_prompt(expanded, expand_mentions=False):
                     return
@@ -1669,7 +1773,7 @@ class HarnessApp(App[None]):
         if command.name == "help":
             self.say(
                 "",
-                "/help  /model [alias]  /thoughts [collapse|full|off]  /markdown [on|off]  "
+                "/help  /model [alias]  /thoughts [collapse|full|off]  /markdown [on|off]  /vim [on|off]  "
                 "/clear  /compact [alias]  /resume  /panel  /tools [name]  /task  /status  /context  /resources  /models  /semantics  /improvements  "
                 "/handoff inspect|record|show|run  /export FILE.zip  /coordination  /budget  /execution  /activity [cancel RUN_ID]  /quit  — @path mentions a file "
                 "(Tab completes), read for the model only; F2 also toggles the activity panel",
@@ -1898,6 +2002,14 @@ class HarnessApp(App[None]):
             self._set_thought_mode(command.arg.strip())
         elif command.name == "markdown":
             self._set_markdown_mode(command.arg.strip())
+        elif command.name == "vim":
+            mode = command.arg.strip().lower()
+            if mode not in {"on", "off"}:
+                self.say("! ", "usage: /vim on|off")
+            else:
+                self._vim_enabled = mode == "on"
+                self.query_one("#prompt", HistoryInput).set_vim(self._vim_enabled)
+                self.say("", f"Vim prompt editing {mode}")
         elif command.name == "clear":
             if self._refuse_if_busy():
                 return
@@ -2425,6 +2537,12 @@ class HarnessApp(App[None]):
             # (loop.end/mcp.stop/mcp.start) is not safe to cancel, so Esc is
             # a no-op here rather than tearing down a half-built kernel.
             return
+        prompt = self.query_one("#prompt", HistoryInput)
+        running = any(worker is not None and worker.is_running for worker in (
+            self._turn_worker, self._compact_worker, self._semantic_worker, self._resource_worker))
+        if self.focused is prompt and prompt.vim_enabled and not running:
+            prompt.enter_vim_normal()
+            return
         # item 8: /compact's own worker takes priority over _turn_worker --
         # it's tracked separately precisely so Esc during a /compact never
         # routes through _after_interrupt's loop.interrupt_turn() (a
@@ -2527,6 +2645,9 @@ async def run_tui(
     ask: "AppBoundAsk | None" = None,
     native_tools: bool = False,
     workspace_root=None,
+    workspace_read_roots=(),
+    workspace_write_roots=(),
+    vim: bool = False,
     routing_rules=None,
 ) -> None:
     app = HarnessApp(
@@ -2535,6 +2656,9 @@ async def run_tui(
         ask=ask,
         native_tools=native_tools,
         workspace_root=workspace_root,
+        workspace_read_roots=workspace_read_roots,
+        workspace_write_roots=workspace_write_roots,
+        vim=vim,
         routing_rules=routing_rules,
     )
     try:
