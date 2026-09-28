@@ -155,15 +155,15 @@ class Dispatcher:
                 return None, "denied by user"
         return outcome.effective, None
 
-    async def dispatch_tool(self, call: ProposedToolCall, *, purpose=None) -> ToolOutcome:
+    async def dispatch_tool(self, call: ProposedToolCall, *, purpose=None, exact=False) -> ToolOutcome:
         with self.scope.budget.activity.track(
             session_id=self.session.id, kind="tool", label=str(call.tool),
             call_id=str(call.call_id),
             phase="reading context" if purpose == "context" else "tool execution",
         ):
-            return await self._dispatch_tool(call, purpose=purpose)
+            return await self._dispatch_tool(call, purpose=purpose, exact=exact)
 
-    async def _dispatch_tool(self, call: ProposedToolCall, *, purpose=None) -> ToolOutcome:
+    async def _dispatch_tool(self, call: ProposedToolCall, *, purpose=None, exact=False) -> ToolOutcome:
         self.scope.budget.attach(self.session)
         active_run = current_agent_run.get()
         lineage = {"task_id": active_run.task.id, "agent_run_id": active_run.run_id,
@@ -183,7 +183,7 @@ class Dispatcher:
                     call_id=call.call_id, result_text=result.text, is_error=True,
                 ))
             else:
-                result = await self._dispatch_tool_body(call, purpose=lineage.get("purpose"))
+                result = await self._dispatch_tool_body(call, purpose=lineage.get("purpose"), exact=exact)
         except asyncio.CancelledError:
             text = "(call cancelled; side effects may have occurred)"
             self.session.append(ToolCallCancelled(call_id=call.call_id, result_text=text))
@@ -197,8 +197,11 @@ class Dispatcher:
         finally:
             current_scope.reset(scope_token)
 
-    async def _dispatch_tool_body(self, call: ProposedToolCall, *, purpose=None) -> ToolOutcome:
+    async def _dispatch_tool_body(self, call: ProposedToolCall, *, purpose=None, exact=False) -> ToolOutcome:
+        expected = deepcopy(call) if exact else None
         effective, denial = await self._run_chain(call, purpose=purpose)
+        if denial is None and exact and effective != expected:
+            denial = "blocked by policy: exact tool dispatch cannot change tool or arguments"
         if denial is not None:
             self.session.append(
                 ToolCallCompleted(call_id=call.call_id, result_text=denial, is_error=True)

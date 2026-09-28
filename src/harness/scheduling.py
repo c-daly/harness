@@ -23,7 +23,7 @@ _held_groups: ContextVar[frozenset] = ContextVar("local_held_groups", default=fr
 
 
 def request_priority(purpose: str, depth: int) -> Priority:
-    if purpose.startswith(("semantic:", "evaluation:")):
+    if purpose == "capture" or purpose.startswith(("semantic:", "evaluation:")):
         return "background"
     return "interactive" if depth == 0 and purpose in ("conversation", "compaction") else "work"
 

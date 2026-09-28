@@ -83,6 +83,8 @@ class AgentLoop:
         self._ended = False
         self._task_active = False
         self._turn_outcomes: dict[CallId, ToolOutcome] = {}
+        from harness.capture import CaptureService
+        self.captures = CaptureService(self)
 
     def set_turn_context(self, messages: list[Message]) -> None:
         """Install extra context for the NEXT run_turn call. Read at the start of
@@ -159,9 +161,13 @@ class AgentLoop:
             raise RuntimeError("an agent task is already running")
         self._task_active = True
         self.active_model = self.model
+        schedule_capture = False
         try:
             from harness.handoff import capture_scope
-            return await execute_task(
+            await self.captures.pause()
+            if policy is not None and policy.capture is not None:
+                self.captures.reconcile()
+            result = await execute_task(
                 self.session, task, runtime="harness", model=self.model,
                 activity=self.dispatcher.scope.budget.activity,
                 run_budgets=self.dispatcher.scope.budget.runs,
@@ -170,10 +176,18 @@ class AgentLoop:
                 capabilities={"handoff_scope": capture_scope(self.dispatcher)},
                 execute=lambda: self._run_task_body(task, on_progress),
             )
+            schedule_capture = result.status != "cancelled"
+            return result
         finally:
             self._task_active = False
             self.active_model = None
             self.turn_context = []
+            # A failed/cancelled run still has a terminal journal fact. Queue it
+            # without starting more work during cancellation; retry on a later turn.
+            if policy is not None and policy.capture is not None:
+                self.captures.reconcile()
+                if schedule_capture:
+                    self.captures.schedule()
 
     async def _run_task_body(self, task: AgentTask, on_progress) -> AgentOutput:
         user_text = task.prompt
@@ -396,5 +410,6 @@ class AgentLoop:
         if self._ended:
             raise RuntimeError("AgentLoop.end() already called")
         self._ended = True
+        await self.captures.close()
         await self._apply_contributions(LifecyclePoint.SESSION_END, {"session_id": self.session.id})
         self.session.append(SessionEnded())

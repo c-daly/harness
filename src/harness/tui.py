@@ -34,6 +34,7 @@ from harness.events import (
     AgentRunStarted,
     AgentRunFinished,
     CustomEvent,
+    ErrorRaised,
     ModelCallStarted,
     ModelCorrectionRequested,
     FallbackDecided,
@@ -43,8 +44,11 @@ from harness.events import (
     ResourceObserved,
     ContextPrepared,
     ContextSourceObserved,
+    CaptureObserved,
     RetryAttempted,
     ToolCallCompleted,
+    ToolCallCancelled,
+    ToolCallAborted,
     ToolCallProposed,
 )
 from harness.hooks import ProposedToolCall
@@ -703,6 +707,7 @@ class HarnessApp(App[None]):
         self._panel_pump_worker = None
         if ask is not None:
             ask.app = self
+        self._capture_waiting = False
         # Build plugin command lookup: name -> CommandDef (from all loaded plugins).
         self._plugin_commands: dict[str, CommandDef] = {}
         if kernel.plugins is not None:
@@ -1249,7 +1254,9 @@ class HarnessApp(App[None]):
                 self.controller.phase = (f"local model {status}" if status in ("checking", "loading")
                                          else "waiting for response")
             elif isinstance(event, ToolCallProposed):
-                if event.purpose != "context":
+                if event.purpose == "capture":
+                    self.controller.phase = "saving continuity"
+                elif event.purpose != "context":
                     self.controller.phase = f"tool {event.tool}"
             elif isinstance(event, ContextSourceObserved) and event.status == "fetching":
                 self.controller.phase = f"reading context {event.source_id}"
@@ -1257,6 +1264,12 @@ class HarnessApp(App[None]):
                 self.controller.phase = "working"
             self._refresh_queue()
         match event:
+            case ErrorRaised(where="resident-capture", message=message):
+                self.say("! ", f"Continuity: {message}; unfinished captures remain pending")
+            case CaptureObserved(observation=observation):
+                if observation.reason != "capture in progress; write not yet confirmed":
+                    self.say("", f"Continuity: {observation.status}"
+                             + (f"; {observation.reason}" if observation.reason else ""))
             case LocalRequestObserved(observation=observation):
                 if observation.status == "queued":
                     from harness.scheduling import render_local_request
@@ -1287,6 +1300,10 @@ class HarnessApp(App[None]):
                     self._context_notice = notice
             case ToolCallProposed(purpose="context"):
                 pass
+            case ToolCallProposed(purpose="capture"):
+                self._context_calls.add(event.call_id)
+            case ToolCallCancelled() | ToolCallAborted():
+                self._context_calls.discard(event.call_id)
             case ToolCallProposed(tool=tool):
                 self.say("\u2699 ", str(tool))
             case ToolCallCompleted(result_text=text, is_error=is_error):
@@ -1369,6 +1386,8 @@ class HarnessApp(App[None]):
                 not self.controller.paused_by_user):
             self.controller.resume()
         self.say("", f"queued #{prompt.id}: {prompt.text}")
+        if self._capture_waiting:
+            self.kernel.loop.captures.interrupt()
         self._refresh_queue()
         self._start_queue()
         return True
@@ -1394,6 +1413,8 @@ class HarnessApp(App[None]):
         lines = []
         if controller.active:
             lines.append(f"{controller.phase} #{controller.active.id}: {controller.active.text[:120]}")
+        elif self._capture_waiting:
+            lines.append("Saving continuity before queued work; new input or Esc interrupts")
         if controller.pending:
             state = "paused" if controller.paused else "waiting"
             lines.append(f"Queue {state} ({len(controller.pending)}, memory only): " +
@@ -1422,6 +1443,7 @@ class HarnessApp(App[None]):
     async def _execute_prompt(self, prompt: PendingPrompt) -> AgentResult:
         self._refresh_queue()
         self.say("> ", prompt.text)
+        await self.kernel.loop.captures.pause()
         context = await self._inject_mentions(prompt.text) if prompt.expand_mentions else []
         self.kernel.loop.set_turn_context(context)
         self.controller.phase = "working"
@@ -1435,7 +1457,18 @@ class HarnessApp(App[None]):
             while await self.controller.run_next(self._execute_prompt):
                 await self._apply_pending_model()
                 self._refresh_queue()
+                if self.controller.pending and not self.controller.paused:
+                    self._capture_waiting = True
+                    self._refresh_queue()
+                    try:
+                        await self.kernel.loop.captures.finish_attempt()
+                    finally:
+                        self._capture_waiting = False
+                        self._refresh_queue()
+                    # A selection can arrive while capture owns this boundary.
+                    await self._apply_pending_model()
         except asyncio.CancelledError:
+            self.controller.pause(user_requested=False)
             raise
         except Exception as exc:
             self.controller.pause(user_requested=False)
@@ -2265,6 +2298,8 @@ class HarnessApp(App[None]):
                 raise ValueError("use /queue [list|pause|resume|clear|edit ID [text]|remove ID]")
         except (ValueError, KeyError) as exc:
             self.say("! ", f"queue command failed: {exc}")
+        if self._capture_waiting and (self.controller.paused or not self.controller.pending):
+            self.kernel.loop.captures.interrupt()
         self._refresh_queue()
 
     def _set_thought_mode(self, arg: str) -> None:
@@ -2361,11 +2396,14 @@ class HarnessApp(App[None]):
         ):
             self._pending_model = alias
             self.say("", f"model {alias} selected for after this turn")
+            if self._capture_waiting:
+                self.kernel.loop.captures.interrupt()
             self._refresh_queue()
             return
         from harness.cli import _make_pricing_for
         from harness.provider_litellm import CatalogProvider
 
+        await self.kernel.loop.captures.pause()
         await self._cancel_semantic_check()
         from harness.events import ModelSelected
         from harness.cli import _catalog_provider
@@ -2447,8 +2485,10 @@ class HarnessApp(App[None]):
         # once per logical interrupt -- an invariant, not a timing bet: a second
         # Esc in the same tick still sees is_finished=False, so the flag guards it.
         self._interrupting = True
+        turn_active = self.controller.active is not None or self.kernel.loop._task_active
         worker.cancel()
-        self.run_worker(self._after_interrupt(worker), group="driver", exit_on_error=False)
+        self.run_worker(self._after_interrupt(worker, turn_active=turn_active),
+                        group="driver", exit_on_error=False)
 
     async def _after_compact_interrupt(self, worker) -> None:
         """Esc-during-/compact's own cancellation path (item 8): cancels the
@@ -2466,17 +2506,18 @@ class HarnessApp(App[None]):
             await self._apply_pending_model()
             self._interrupting = False
 
-    async def _after_interrupt(self, worker) -> None:
+    async def _after_interrupt(self, worker, *, turn_active: bool = True) -> None:
         try:
             try:
                 await worker.wait()
             except (WorkerCancelled, WorkerFailed):
                 pass
-            self.kernel.loop.interrupt_turn()
+            if turn_active:
+                self.kernel.loop.interrupt_turn()
             if self._stream_buffer:
                 self.say("~ ", self._stream_buffer)  # keep the partial visible
             self._clear_live()
-            self.say("! ", "interrupted")
+            self.say("! ", "interrupted" if turn_active else "queue paused between turns")
         finally:
             await self._apply_pending_model()
             self._interrupting = False
@@ -2497,7 +2538,10 @@ class HarnessApp(App[None]):
             except (WorkerCancelled, WorkerFailed):
                 pass
         try:
-            await self.kernel.resources.close(emit=self.kernel.session.append)
+            try:
+                await self.kernel.loop.captures.close()
+            finally:
+                await self.kernel.resources.close(emit=self.kernel.session.append)
         except Exception as exc:
             self.say("! ", f"local resource cleanup failed: {exc}")
         finally:
@@ -2543,9 +2587,14 @@ async def run_tui(
         # app.kernel, not the `kernel` param -- /clear may have rebuilt it in
         # place, and the live kernel at exit is the one that needs teardown.
         live = app.kernel
-        if live.mcp is not None:
-            await live.mcp.stop()
-            live.mcp.flush_events()
-        if app._mcp_errlog is not None:
-            app._mcp_errlog.close()
-        live.session.close()
+        try:
+            await live.loop.captures.close()
+        finally:
+            try:
+                if live.mcp is not None:
+                    await live.mcp.stop()
+                    live.mcp.flush_events()
+            finally:
+                if app._mcp_errlog is not None:
+                    app._mcp_errlog.close()
+                live.session.close()

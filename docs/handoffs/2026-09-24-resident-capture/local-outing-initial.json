@@ -1,0 +1,40 @@
+{
+  "model": "local",
+  "criteria": {
+    "seed_saved": "capture is saved with verified receipt",
+    "seed_no_mutation": "correction session creates no choice.txt",
+    "control": "fresh session without memory writes production",
+    "continuity": "fresh session with normal project-memory source writes staging",
+    "independent_sessions": "all three session IDs differ"
+  },
+  "sessions": [
+    {
+      "label": "correction",
+      "session_id": "28b2cd4a71bd47319a6d5d67f38e9b5b",
+      "error": "TimeoutError: task time budget exhausted (120s)",
+      "captures": [],
+      "tools": [],
+      "seconds": 120.509,
+      "choice": null
+    },
+    {
+      "label": "fresh-without-memory",
+      "session_id": "afe74943f0c24ebfae6264b763c51a7f",
+      "error": "TimeoutError: task time budget exhausted (120s)",
+      "captures": [],
+      "tools": [],
+      "seconds": 120.966,
+      "choice": null
+    },
+    {
+      "label": "fresh-with-memory",
+      "session_id": "ff12501b6f5f4fa0ae12a64f07a2b11d",
+      "captures": [],
+      "tools": [
+        "mcp__resident-memory__memory_search"
+      ],
+      "seconds": 30.035,
+      "choice": null
+    }
+  ]
+}

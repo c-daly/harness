@@ -121,6 +121,7 @@ class CompactionService:
             raise ValueError("work is already running")
         self._active = True
         try:
+            await loop.captures.pause()
             limits = limits or CompactionLimits()
             async with asyncio.timeout(limits.timeout_seconds):
                 return await self._compact(alias.strip(), catalog_path, limits, on_progress)

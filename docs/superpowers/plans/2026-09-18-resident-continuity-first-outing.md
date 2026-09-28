@@ -9,6 +9,15 @@ connection to agent-swarm was also repaired. These changes do not complete C1a o
 the remaining integration/capture work. See the
 [startup validation receipt](../../handoffs/2026-09-18-resident-startup/README.md).
 
+**2026-09-24 implementation addition:** the first C3 slice adds an opt-in native
+capture outbox, bounded Harness inference, saved/pending/skipped status and
+recovery through the actual memory recorder/writer. See the
+[adapter contract and remaining limits](../../../plugins/resident-memory/README.md).
+This also exercises part of C1b/C2 through the normal memory index and reader.
+It does not complete those milestones: continuity's resume-brief composer,
+PM/experiment binding, deferred scheduling, richer evidence, compaction/shutdown
+capture and the C4–C6 controls remain open.
+
 ## Outcome
 
 Harness starts into Saoirse, its resident agent. This is the default entry point

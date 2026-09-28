@@ -10,6 +10,7 @@ from typing import Annotated, Any, ClassVar, Literal, Union
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from harness.blobs import BlobRef
+from harness.capture import CaptureObservation, CaptureRequest
 from harness.agent import AgentResult
 from harness.handoff import HandoffRecord
 from harness.resources import ResourceObservation
@@ -249,13 +250,30 @@ class ContextSourceObserved(_Event):
 # --- dispatch: intents ---
 
 
+class CaptureRequested(_Event):
+    type: Literal["capture_requested"] = "capture_requested"
+    request: CaptureRequest
+
+
+class CapturePrepared(_Event):
+    type: Literal["capture_prepared"] = "capture_prepared"
+    capture_id: str
+    record: BlobRef
+    destination: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class CaptureObserved(_Event):
+    type: Literal["capture_observed"] = "capture_observed"
+    observation: CaptureObservation
+
+
 class ToolCallProposed(_Event):
     type: Literal["tool_call_proposed"] = "tool_call_proposed"
     is_intent: ClassVar[bool] = True
     call_id: CallId
     tool: ToolName
     args: dict[str, Any]
-    purpose: Literal["conversation", "agent-task", "context"] = "conversation"
+    purpose: Literal["conversation", "agent-task", "context", "capture"] = "conversation"
     task_id: str | None = None
     agent_run_id: str | None = None
 
@@ -687,6 +705,9 @@ Event = Annotated[
         FallbackDecided,
         ContextPrepared,
         ContextSourceObserved,
+        CaptureRequested,
+        CapturePrepared,
+        CaptureObserved,
         CompactionApplied,
         TaskCreated,
         TaskSelected,

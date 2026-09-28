@@ -207,8 +207,10 @@ async def test_model_switch_waits_for_all_iterations_of_current_turn(tmp_path):
         assert not any(e.event.type == "model_selected"
                        for e in read_session(tmp_path, app.kernel.session.id))
         assert "Model alias-b will apply after this turn" in screen_text(app)
+        worker = app._turn_worker
+        assert worker is not None
         release.set()
-        await pilot.pause(0.3)
+        await asyncio.wait_for(worker.wait(), 3)
         assert observed == ["alias-a", "alias-a"]
         assert app.kernel.loop.model == "alias-b"
         from harness.fold import fold
