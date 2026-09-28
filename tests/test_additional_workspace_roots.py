@@ -24,6 +24,9 @@ def _roots(tmp_path):
 def test_extra_roots_are_explicit_and_mode_specific(tmp_path):
     primary, read, write, outside = _roots(tmp_path)
     access = WorkspaceAccess(primary, (read,), (write,))
+    reordered = WorkspaceAccess(primary, (write, read, read), (write, write))
+    assert reordered.read_roots == tuple(sorted((read, write), key=str))
+    assert reordered.write_roots == (write,)
     assert access.resolve_path("relative.txt") == primary / "relative.txt"
     assert access.resolve_path(str(read / "file.txt")) == read / "file.txt"
     assert access.resolve_path(str(write / "file.txt"), write=True) == write / "file.txt"
@@ -36,6 +39,24 @@ def test_extra_roots_are_explicit_and_mode_specific(tmp_path):
         access.resolve_path(str(read / "escape" / "file.txt"))
     with pytest.raises(ValueError, match="not an existing directory"):
         WorkspaceAccess(primary, (tmp_path / "missing",))
+
+
+def test_reordered_roots_have_the_same_handoff_scope(tmp_path):
+    from harness.handoff import capture_scope
+
+    primary, read, write, _ = _roots(tmp_path)
+    scopes = []
+    for index, read_roots in enumerate(((read, write), (write, read))):
+        kernel = build_kernel(provider=FakeProvider([text_turn("done")]),
+                              base_dir=tmp_path / f"state-{index}", model=ModelId("fake"),
+                              native_tools=True, workspace_root=primary,
+                              workspace_read_roots=read_roots)
+        try:
+            scopes.append(capture_scope(kernel.loop.dispatcher))
+        finally:
+            kernel.session.close()
+    assert scopes[0]["workspaces"] == scopes[1]["workspaces"]
+    assert scopes[0]["context_bindings"] == scopes[1]["context_bindings"]
 
 
 async def test_direct_file_tools_enforce_extra_roots(tmp_path):

@@ -50,7 +50,7 @@ class WorkspaceAccess:
     def __post_init__(self) -> None:
         object.__setattr__(self, "root", self.root.resolve())
         for name in ("read_roots", "write_roots"):
-            roots = tuple(Path(path).resolve() for path in getattr(self, name))
+            roots = tuple(sorted({Path(path).resolve() for path in getattr(self, name)}, key=str))
             for path in roots:
                 if not path.is_dir():
                     raise ValueError(f"{name} entry is not an existing directory: {path}")

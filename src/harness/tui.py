@@ -544,6 +544,8 @@ class HistoryInput(Input):
             label.update(_plain(f"Vim {self.vim_mode.upper()} — Esc: normal; Enter: send"))
 
     async def _on_key(self, event) -> None:
+        if not event.is_printable:
+            self._vim_pending = ""
         if not self.vim_enabled or self.vim_mode == "insert" or not event.is_printable:
             await super()._on_key(event)
             return
@@ -598,18 +600,50 @@ class HistoryInput(Input):
             self.cursor_position = min(self.cursor_position, max(0, len(self.value) - 1))
 
     def action_delete_left(self) -> None:
+        self._vim_pending = ""
         if not self.vim_enabled or self.vim_mode == "insert":
             super().action_delete_left()
 
     def action_delete_right(self) -> None:
+        self._vim_pending = ""
         if not self.vim_enabled or self.vim_mode == "insert":
             super().action_delete_right()
 
+    def action_cursor_left(self, select: bool = False) -> None:
+        self._vim_pending = ""
+        super().action_cursor_left(select)
+
+    def action_cursor_right(self, select: bool = False) -> None:
+        self._vim_pending = ""
+        super().action_cursor_right(select)
+
+    def action_home(self, select: bool = False) -> None:
+        self._vim_pending = ""
+        super().action_home(select)
+
+    def action_end(self, select: bool = False) -> None:
+        self._vim_pending = ""
+        super().action_end(select)
+
+    def action_cursor_left_word(self, select: bool = False) -> None:
+        self._vim_pending = ""
+        super().action_cursor_left_word(select)
+
+    def action_cursor_right_word(self, select: bool = False) -> None:
+        self._vim_pending = ""
+        super().action_cursor_right_word(select)
+
+    async def action_submit(self) -> None:
+        self._vim_pending = ""
+        await super().action_submit()
+
     def action_history_prev(self) -> None:
+        self._vim_pending = ""
         self.value = self.history.prev(self.value)
         self.cursor_position = len(self.value)
 
     def action_history_next(self) -> None:
+        self._vim_pending = ""
         self.value = self.history.next(self.value)
         self.cursor_position = len(self.value)
 
@@ -644,6 +678,7 @@ class HistoryInput(Input):
         return [f for f in self._mention_files if needle in f.lower()]
 
     async def action_complete_mention(self) -> None:
+        self._vim_pending = ""
         start, end = self._word_bounds()
         word = self.value[start:end]
         cyc = self._mention_cycle

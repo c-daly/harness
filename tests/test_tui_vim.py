@@ -28,7 +28,9 @@ async def test_vim_prompt_modes_motion_edit_and_submit(tmp_path):
         assert [m.text() for m in app.kernel.loop.history if m.role == "user"] == ["ello!"]
         await pilot.press("escape", "k")
         assert prompt.value == "ello!"
-        await pilot.press("d", "d")
+        await pilot.press("d", "up", "d")
+        assert prompt.value == "ello!"  # history navigation cancelled the pending delete
+        await pilot.press("d")
         assert prompt.value == ""
 
 
