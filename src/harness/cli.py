@@ -143,6 +143,8 @@ def build_kernel(
     mcp: Sequence[McpServerSpec] | None = None,
     plugins: "LoadedPlugins | None" = None,
     workspace_root: Path | None = None,
+    workspace_read_roots: Sequence[Path] = (),
+    workspace_write_roots: Sequence[Path] = (),
     native_tools: bool = False,
     pricing_for: "Callable[[ModelId], dict[str, float]] | None" = None,
     routing_rules: "RoutingRuleSet | None" = None,
@@ -175,6 +177,12 @@ def build_kernel(
     registry = ToolRegistry()
     read_state = None  # set below when native tools are on; used by routing signals
     resumed = False
+    from harness.workspace import WorkspaceAccess
+    ws_access = WorkspaceAccess(
+        workspace_root or Path.cwd(),
+        tuple(workspace_read_roots),
+        tuple(workspace_write_roots),
+    )
     if resume_session_id is not None:
         def configure(state):
             nonlocal provider, model, model_pinned, pricing, pricing_for, context_policy, execution_limits
@@ -217,9 +225,9 @@ def build_kernel(
             register_native_tools,
         )
         from harness.permissions import PermissionEngine as _PermissionEngine
-        from harness.workspace import WorkspaceGuard, resolve_in_workspace
+        from harness.workspace import WorkspaceGuard
 
-        ws_root = (workspace_root or Path.cwd()).resolve()
+        ws_root = ws_access.root
         seed: set[str] = set()
         if resume_session_id is not None:
             try:
@@ -230,7 +238,7 @@ def build_kernel(
                 raw_paths = set()
             for p in raw_paths:
                 try:
-                    resolved = resolve_in_workspace(ws_root, p)
+                    resolved = ws_access.resolve_path(p)
                     seed.add(str(resolved))
                 except Exception:
                     pass
@@ -240,6 +248,7 @@ def build_kernel(
         register_native_tools(
             registry,
             workspace_root=ws_root,
+            workspace_access=ws_access,
             read_state=read_state,
             emit=session.append,
         )
@@ -255,7 +264,7 @@ def build_kernel(
             # baseline layer exactly once so it does not accumulate per call
             permissions.layers.append(baseline_ruleset())
             permissions._baseline_installed = True
-        hooks.register_dispatch("workspace-guard", WorkspaceGuard(ws_root), priority=900)
+        hooks.register_dispatch("workspace-guard", WorkspaceGuard(ws_root, ws_access), priority=900)
         hooks.register_dispatch("bash-compound-guard", CompoundCommandGuard(), priority=950)
     agents_sink: dict = {}
     plugin_warnings: list[str] = []
@@ -587,6 +596,11 @@ def _run_main() -> None:
         "--no-plugins", action="store_true", help="Disable plugin discovery entirely."
     )
     parser.add_argument("--workspace", type=Path, default=None)
+    parser.add_argument("--vim", action="store_true", help="Start the TUI prompt with Vim-style editing.")
+    parser.add_argument("--read-root", type=Path, action="append", default=[], metavar="DIR",
+                        help="Allow native file tools to read another directory (repeatable).")
+    parser.add_argument("--write-root", type=Path, action="append", default=[], metavar="DIR",
+                        help="Allow native file tools to read and write another directory (repeatable).")
     from dataclasses import asdict
     for name, default in asdict(ExecutionLimits()).items():
         parser.add_argument("--" + name.replace("_", "-"), default=None,
@@ -606,6 +620,11 @@ def _run_main() -> None:
     args = parser.parse_args()
     if args.demo and args.model is not None:
         parser.error("--demo cannot be combined with --model")
+    try:
+        from harness.workspace import WorkspaceAccess
+        WorkspaceAccess(args.workspace or Path.cwd(), tuple(args.read_root), tuple(args.write_root))
+    except ValueError as exc:
+        parser.error(str(exc))
     try:
         execution_overrides = {name: getattr(args, name) for name in asdict(ExecutionLimits())
                                if getattr(args, name) is not None}
@@ -782,6 +801,8 @@ def _run_main() -> None:
             resolver=resolver,
             plugins=loaded_plugins,
             workspace_root=args.workspace,
+            workspace_read_roots=args.read_root,
+            workspace_write_roots=args.write_root,
             native_tools=True,
             usage_limits=usage_limits,
             execution_overrides=execution_overrides,
@@ -801,6 +822,9 @@ def _run_main() -> None:
                 ask=ask,
                 native_tools=True,
                 workspace_root=args.workspace,
+                workspace_read_roots=args.read_root,
+                workspace_write_roots=args.write_root,
+                vim=args.vim,
                 routing_rules=routing_rules,
             )
         )
@@ -826,6 +850,8 @@ def _run_main() -> None:
         mcp=mcp_specs or None,
         plugins=loaded_plugins,
         workspace_root=args.workspace,
+        workspace_read_roots=args.read_root,
+        workspace_write_roots=args.write_root,
         native_tools=True,
     )
     from harness.errors import ProviderError

@@ -176,7 +176,7 @@ async def test_handoff_refuses_unreconciled_changed_or_ineligible_work(tmp_path,
         kernel.session.close()
 
 
-@pytest.mark.parametrize("reason", ["source-deny", "current-deny", "budget", "workspace", "custom-hook"])
+@pytest.mark.parametrize("reason", ["source-deny", "current-deny", "budget", "workspace", "extra-root", "custom-hook"])
 async def test_continuation_cannot_expand_source_authority_or_reset_budget(tmp_path, reason):
     engine = permissions(PermissionRule("deny", "write_file", {"file_path": "*/B.txt"})) \
         if reason == "source-deny" else permissions()
@@ -189,7 +189,8 @@ async def test_continuation_cannot_expand_source_authority_or_reset_budget(tmp_p
         if reason == "current-deny" else permissions()
     kernel = build_kernel(base_dir=tmp_path / "sessions", provider=provider, model=ModelId("local"),
         resume_session_id=session_id, native_tools=True,
-        workspace_root=tmp_path if reason == "workspace" else provider.root, permissions=current)
+        workspace_root=tmp_path if reason == "workspace" else provider.root,
+        workspace_read_roots=(tmp_path,) if reason == "extra-root" else (), permissions=current)
     try:
         if reason == "custom-hook":
             # A newly installed policy still runs, even though it was not in the source snapshot.

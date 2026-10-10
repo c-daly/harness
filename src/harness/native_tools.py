@@ -22,7 +22,7 @@ from harness.permissions import PermissionRule, RuleSet
 from harness.persistence import PublishedWriteError, atomic_write
 from harness.tools import ToolSpec
 from harness.types import ToolName
-from harness.workspace import PATH_ARG, WorkspaceError, resolve_in_workspace
+from harness.workspace import PATH_ARG, WorkspaceAccess, WorkspaceError, resolve_in_workspace
 
 # Output caps (L3) — module constants, tunable, not contract.
 _READ_DEFAULT_LIMIT = 2000  # lines
@@ -138,9 +138,10 @@ async def _run_mutation(tool, path: Path, operation, *args):
             raise
 
 
-def _resolve(root: Path, raw: object) -> Path:
+def _resolve(root: Path | WorkspaceAccess, raw: object, *, write: bool = False) -> Path:
     try:
-        return resolve_in_workspace(root, raw)
+        return (root.resolve_path(raw, write=write) if isinstance(root, WorkspaceAccess)
+                else resolve_in_workspace(root, raw))
     except WorkspaceError as exc:
         raise ToolError(str(exc)) from exc
 
@@ -174,8 +175,10 @@ def _format_numbered(lines: list[str], start: int) -> str:
 class ReadFileTool:
     """read_file: cat -n style, absolute line numbers, offset/limit windowing."""
 
-    def __init__(self, *, workspace_root: Path, read_state: ReadState | None = None) -> None:
+    def __init__(self, *, workspace_root: Path, read_state: ReadState | None = None,
+                 workspace_access: WorkspaceAccess | None = None) -> None:
         self._root = workspace_root
+        self._access = workspace_access or WorkspaceAccess(workspace_root)
         self._rs = read_state
         self.spec = ToolSpec(
             name=ToolName("read_file"),
@@ -196,7 +199,7 @@ class ReadFileTool:
         )
 
     async def __call__(self, args: dict[str, Any]) -> str:
-        path = _resolve(self._root, args.get("file_path", ""))
+        path = _resolve(self._access, args.get("file_path", ""))
         try:
             # presence-based, not truthiness: 0 must be rejected below, not
             # silently swapped for the default
@@ -275,8 +278,10 @@ class ReadFileTool:
 
 
 class WriteFileTool:
-    def __init__(self, *, workspace_root: Path, read_state: ReadState) -> None:
+    def __init__(self, *, workspace_root: Path, read_state: ReadState,
+                 workspace_access: WorkspaceAccess | None = None) -> None:
         self._root = workspace_root
+        self._access = workspace_access or WorkspaceAccess(workspace_root)
         self._rs = read_state
         self.spec = ToolSpec(
             name=ToolName("write_file"),
@@ -297,7 +302,7 @@ class WriteFileTool:
         )
 
     async def __call__(self, args: dict[str, Any]) -> str:
-        path = _resolve(self._root, args.get("file_path", ""))
+        path = _resolve(self._access, args.get("file_path", ""), write=True)
         content = str(args.get("content", ""))
         expected = self._rs.version(str(path))  # Freeze before waiting for the path lock.
         result, digest = await _run_mutation(self, path, self._write, content, expected)
@@ -332,8 +337,10 @@ class WriteFileTool:
 
 
 class EditFileTool:
-    def __init__(self, *, workspace_root: Path, read_state: ReadState) -> None:
+    def __init__(self, *, workspace_root: Path, read_state: ReadState,
+                 workspace_access: WorkspaceAccess | None = None) -> None:
         self._root = workspace_root
+        self._access = workspace_access or WorkspaceAccess(workspace_root)
         self._rs = read_state
         self.spec = ToolSpec(
             name=ToolName("edit_file"),
@@ -356,7 +363,7 @@ class EditFileTool:
         )
 
     async def __call__(self, args: dict[str, Any]) -> str:
-        path = _resolve(self._root, args.get("file_path", ""))
+        path = _resolve(self._access, args.get("file_path", ""), write=True)
         old = str(args.get("old_string", ""))
         new = str(args.get("new_string", ""))
         replace_all = bool(args.get("replace_all", False))
@@ -454,8 +461,10 @@ def _walk_workspace(base: Path):
 
 
 class GlobTool:
-    def __init__(self, *, workspace_root: Path) -> None:
+    def __init__(self, *, workspace_root: Path,
+                 workspace_access: WorkspaceAccess | None = None) -> None:
         self._root = workspace_root
+        self._access = workspace_access or WorkspaceAccess(workspace_root)
         self.spec = ToolSpec(
             name=ToolName("glob"),
             description=(
@@ -479,7 +488,7 @@ class GlobTool:
         pattern = str(args.get("pattern", ""))
         if not pattern:
             raise ToolError("pattern is required; pass a glob pattern like '*.py'.")
-        base = _resolve(self._root, args["path"]) if args.get("path") else self._root.resolve()
+        base = _resolve(self._access, args["path"]) if args.get("path") else self._root.resolve()
         return await asyncio.to_thread(self._glob, base, pattern)
 
     def _glob(self, base: Path, pattern: str) -> str:
@@ -505,8 +514,10 @@ class GlobTool:
 
 
 class GrepTool:
-    def __init__(self, *, workspace_root: Path) -> None:
+    def __init__(self, *, workspace_root: Path,
+                 workspace_access: WorkspaceAccess | None = None) -> None:
         self._root = workspace_root
+        self._access = workspace_access or WorkspaceAccess(workspace_root)
         self.spec = ToolSpec(
             name=ToolName("grep"),
             description=(
@@ -533,7 +544,7 @@ class GrepTool:
     async def __call__(self, args: dict[str, Any]) -> str:
         if not str(args.get("pattern", "")):
             raise ToolError("pattern is required; pass a Python regular expression.")
-        base = _resolve(self._root, args["path"]) if args.get("path") else self._root.resolve()
+        base = _resolve(self._access, args["path"]) if args.get("path") else self._root.resolve()
         return await asyncio.to_thread(self._grep, base, args)
 
     def _grep(self, base: Path, args: dict[str, Any]) -> str:
@@ -827,16 +838,20 @@ class CompoundCommandGuard:
         return Allow()
 
 
-def register_native_tools(registry, *, workspace_root, read_state, emit) -> None:
+def register_native_tools(registry, *, workspace_root, read_state, emit,
+                          workspace_access: WorkspaceAccess | None = None) -> None:
     """Register the seven Phase-8 natives into registry. Caller registers this BEFORE
     apply_plugins so the plugin loader\u2019s loud collision check protects these names (R-S7):
     natives win, a plugin tool of the same name fails the plugin load loudly."""
     from harness.todo import TodoTool
 
-    registry.register(ReadFileTool(workspace_root=workspace_root, read_state=read_state))
-    registry.register(WriteFileTool(workspace_root=workspace_root, read_state=read_state))
-    registry.register(EditFileTool(workspace_root=workspace_root, read_state=read_state))
-    registry.register(GlobTool(workspace_root=workspace_root))
-    registry.register(GrepTool(workspace_root=workspace_root))
+    registry.register(ReadFileTool(workspace_root=workspace_root, read_state=read_state,
+                                   workspace_access=workspace_access))
+    registry.register(WriteFileTool(workspace_root=workspace_root, read_state=read_state,
+                                    workspace_access=workspace_access))
+    registry.register(EditFileTool(workspace_root=workspace_root, read_state=read_state,
+                                   workspace_access=workspace_access))
+    registry.register(GlobTool(workspace_root=workspace_root, workspace_access=workspace_access))
+    registry.register(GrepTool(workspace_root=workspace_root, workspace_access=workspace_access))
     registry.register(BashTool(workspace_root=workspace_root))
     registry.register(TodoTool(emit=emit))

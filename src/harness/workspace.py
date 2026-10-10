@@ -1,13 +1,16 @@
-"""Workspace confinement: the one path-normalization law all file tools share.
+"""Configured native file roots and the path-normalization law all file tools share.
 
-resolve_in_workspace is the HARD floor, called inside every file tool at exec
-time (defense-in-depth even when the engine is absent). WorkspaceGuard is the
-SOFT layer: a dispatch hook at priority 900 (before the engine at 1000) that
+WorkspaceAccess.resolve_path is the HARD floor, called inside every file tool
+at exec time (defense-in-depth even when the engine is absent).
+resolve_in_workspace keeps the original single-root API. WorkspaceGuard is the
+SOFT layer: a
+dispatch hook at priority 900 (before the engine at 1000) that
 rewrites the path arg to its canonical absolute form so the engine, the resolver
-prompt, DispatchResolved, and the tool all see ONE canonical path. Out-of-root
-from the guard is a Block (fail closed). bash is NOT path-confined.
+prompt, DispatchResolved, and the tool all see ONE canonical path. Paths outside
+the configured roots are blocked. bash is NOT path-confined.
 """
 
+from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
 
@@ -36,21 +39,42 @@ class WorkspaceError(Exception):
     """Raised by resolve_in_workspace; tools let it surface as a ToolError-equivalent."""
 
 
+@dataclass(frozen=True)
+class WorkspaceAccess:
+    """Native file-tool roots. Relative paths always use the primary workspace."""
+
+    root: Path
+    read_roots: tuple[Path, ...] = ()
+    write_roots: tuple[Path, ...] = ()
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "root", self.root.resolve())
+        for name in ("read_roots", "write_roots"):
+            roots = tuple(sorted({Path(path).resolve() for path in getattr(self, name)}, key=str))
+            for path in roots:
+                if not path.is_dir():
+                    raise ValueError(f"{name} entry is not an existing directory: {path}")
+            object.__setattr__(self, name, roots)
+
+    def resolve_path(self, raw: object, *, write: bool = False) -> Path:
+        text = str(raw)
+        if not text.strip():
+            raise WorkspaceError("path is empty; pass a file path relative to the workspace root")
+        if "\x00" in text:
+            raise WorkspaceError("path contains a NUL byte")
+        resolved = (self.root / Path(text)).resolve(strict=False)
+        roots = (self.root, *self.write_roots)
+        if not write:
+            roots += self.read_roots
+        if any(resolved == root or resolved.is_relative_to(root) for root in roots):
+            return resolved
+        scope = "writable workspace roots" if write else "workspace root or configured access roots"
+        raise WorkspaceError(f"path resolves outside the {scope}: {resolved}. Pass an allowed path.")
+
+
 def resolve_in_workspace(root: Path, raw: object) -> Path:
     """Resolve raw against the workspace root, confined to it. See Law L2."""
-    text = str(raw)
-    if not text.strip():
-        raise WorkspaceError("path is empty; pass a file path relative to the workspace root")
-    if "\x00" in text:
-        raise WorkspaceError("path contains a NUL byte")
-    candidate = root / Path(text)  # absolute text wins; relative resolves against root
-    resolved = candidate.resolve(strict=False)
-    root_r = root.resolve()
-    if not (resolved == root_r or resolved.is_relative_to(root_r)):
-        raise WorkspaceError(
-            f"path resolves outside the workspace root: {resolved}. Pass a path inside {root_r}."
-        )
-    return resolved
+    return WorkspaceAccess(root).resolve_path(raw)
 
 
 class WorkspaceGuard:
@@ -59,8 +83,9 @@ class WorkspaceGuard:
     name = "workspace-guard"
     priority = 900  # before the permission engine at 1000
 
-    def __init__(self, root: Path) -> None:
-        self._root = root
+    def __init__(self, root: Path, access: WorkspaceAccess | None = None) -> None:
+        self._access = access or WorkspaceAccess(root)
+        self._root = self._access.root
 
     async def __call__(self, action: ProposedAction) -> DispatchDecision:
         if not isinstance(action, ProposedToolCall):
@@ -72,7 +97,7 @@ class WorkspaceGuard:
         if not isinstance(raw, str):
             return Block(reason=f"path arg {key!r} must be a string, got {type(raw).__name__}")
         try:
-            resolved = resolve_in_workspace(self._root, raw)
+            resolved = self._access.resolve_path(raw, write=str(action.tool) in ("write_file", "edit_file"))
         except WorkspaceError as exc:
             return Block(reason=str(exc))
         new_str = str(resolved)
