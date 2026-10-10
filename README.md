@@ -73,17 +73,17 @@ optional normal memory, checked file work, cancellation and task continuation.
 | **[docs/assessment-improvement.md](docs/assessment-improvement.md)** | Supervised context/progress prompt proposals, shadow adoption and rollback |
 
 The complete working reference plugin is [`plugins/memory/`](plugins/memory/).
-The authoritative design record (design doc + per-phase completion notes) lives
-in the project vault at `vault/10-projects/harness/`.
 
 ## Status
 
 The core is built: event spine and kernel, provider layer, permissions,
 telemetry, MCP, the Textual TUI, the plugin loader, the native tool inventory,
-and the Claude Code importer. The [core agency implementation record](docs/superpowers/plans/2026-09-06-core-agency-progress.md)
-tracks current validation and remaining work. The bounded offline 8B project
-workflow passes; broader model/task reliability and automatic semantic decisions
-remain unqualified.
+and the Claude Code importer. See the [resident workflow](docs/resident-workflow.md)
+and [mixed-runtime qualification](docs/mixed-runtime-qualification.md) for
+implemented behavior, measured results and limits. The
+[bounded offline 8B project workflow](docs/local-assistant.md) passed on the
+provisioned CUDA setup; broader model/task reliability and automatic semantic
+decisions remain unqualified.
 
 > Secondary docs drift from code. Where this README or anything under `docs/`
 > disagrees with the source, the source is right — please fix the doc.

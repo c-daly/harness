@@ -104,12 +104,11 @@ recursive database copy.
 
 ## September 11 measurement
 
-The [final report](handoffs/2026-09-11-mixed-runtime/report.json) measures the
-source committed as `48f4453`, identified by per-file hashes. It predates PR55's
+The final measurement used source committed as `48f4453`. It predates PR55's
 export-ownership review correction and checked ensemble selection. Those changes
 have automated regression coverage, without a repeat live-model measurement.
-The [profile](handoffs/2026-09-11-mixed-runtime/profile.json)
-records the installed Qwen3-8B Q4_K_M weights, llama.cpp 9603, RTX 5070,
+The measured profile used the installed Qwen3-8B Q4_K_M weights, llama.cpp 9603,
+RTX 5070,
 `openai/gpt-5` route and Codex CLI 0.154.0.
 
 **The workflow did not qualify: 23 of 24 checks passed.** The local model wrote
@@ -131,9 +130,8 @@ restart. The fresh Codex attempt reported **64,401 input tokens** for this small
 fixture: external-agent accounting includes work beyond the Harness prompt.
 The report's observed amounts are not a complete token total or bill.
 
-[Development observations](handoffs/2026-09-11-mixed-runtime/development-attempts.json)
-retain all four attempts. The local answer was wrong in all four; no prompt or
-fixture tuning was used to get a passing result. The first driver version also
+There were four development attempts. The local answer was wrong in all four;
+no prompt or fixture tuning was used to get a passing result. The first driver version also
 incorrectly applied an inference-only setting to Codex and called startup on an
 already resumed session. Later attempts exposed and fixed the missing direct
 coordination export, then tightened child-reference ownership. Only the final

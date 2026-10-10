@@ -32,9 +32,8 @@ plugin tool inventory may still need an explicit
 [context profile](context-profiles.md); local setup does not silently discard
 conversation history or tools.
 
-The [normal-session repair evidence](handoffs/2026-09-08-normal-local-session/README.md)
-records the missing-startup configuration found during actual use. The original
-M3 workflow below did not test this installation path.
+Actual use exposed missing startup configuration in this installation path.
+The original M3 workflow below did not test that path.
 
 ## Use the measured profile
 
@@ -110,9 +109,9 @@ host, not a new provider API or a replacement interface.
 
 ## Measured result
 
-The [final matching-source report](handoffs/2026-09-07-local-assistant/m3-qualification-release.json)
-passes all six journeys and all four fault cases: twelve exact file writes and
-six real cancellations/restarts. On the RTX 5070 (12,227 MiB), cold readiness
+The final measured qualification passed all six journeys and all four fault
+cases: twelve exact file writes and six real cancellations/restarts. On the
+RTX 5070 (12,227 MiB), cold readiness
 was 7.36–14.35 seconds, warm resumed writes 2.01–2.75 seconds, cancellation
 0.122–0.126 seconds, and UI mount below 0.83 seconds. This final run overlapped
 the full repository tests. The earlier passing run was faster at cold startup;
@@ -172,8 +171,7 @@ printing JSON instead of changing the file. Both failed profile runs are retaine
 The 8B profile is selected on the broader gate, including warm writes and cold
 restart latency, rather than on inventory health or the narrow diagnostic.
 
-See the [preserved reports](handoffs/2026-09-07-local-assistant/) for the complete
-sequence. The 4B diagnostic used the historical resident pilot's system prompt;
+The 4B diagnostic used the historical resident pilot's system prompt;
 full qualification uses the ordinary CLI prompt and shipped profiles. Version 1
 measured missing assets; version 2 tightens numeric grading, verifies child exit,
 adds startup-exit faults, measures GPU/RAM, and uses only the current process's

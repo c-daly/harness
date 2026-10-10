@@ -50,19 +50,20 @@ activated by this probe. Its report contains source hashes, dependency versions,
 counts and timings; session data is temporary. A passing lifecycle check does
 not establish tool accuracy, fallback quality or successful self-improvement.
 
-The [final real-model report](handoffs/2026-09-06-core-agency/local-client-lifecycle.json)
-passed in **5.90 seconds**: 26 model streams, including one cancellation, left
+The final historical real-model probe passed in **5.90 seconds**: 26 model
+streams, including one cancellation, left
 **zero open observed HTTP clients or aiohttp sessions at every checkpoint**.
 There were 63 observed HTTP clients in total, including readiness probes, and
 26 aiohttp sessions. The SDK cache contained four import-created clients before
 and after the probe, with **zero new cached clients**. The session settled and
 the owned runtime stopped.
 
-The [initial report](handoffs/2026-09-06-core-agency/local-client-lifecycle-initial.json)
-failed its cache-total check despite all observed request resources closing.
+The initial probe failed its cache-total check despite all observed request
+resources closing.
 Inspection reproduced the four entries immediately after importing LiteLLM,
 before making any requests. The corrected observer records the starting cache
 and compares new client identities; it still checks every observed client's
-closed state. The earlier report and its distinct source hashes remain preserved.
+closed state. The [probe implementation](../scripts/check_local_clients.py)
+shows those checks; the timing above describes the historical measured setup.
 The legacy direct-provider path also had a reproduced credential omission;
 `complete()` now resolves its configured key environment variable like `infer()`.

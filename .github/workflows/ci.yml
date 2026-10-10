@@ -22,6 +22,14 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
+      - name: Reject tracked local files
+        run: |
+          tracked_local_files=$(git ls-files --cached --ignored --exclude-standard)
+          if [ -n "$tracked_local_files" ]; then
+            printf '%s\n' 'Ignored local files are still tracked:' "$tracked_local_files"
+            exit 1
+          fi
+
       - name: Install uv
         uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
         with:

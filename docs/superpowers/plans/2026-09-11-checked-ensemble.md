@@ -1,8 +1,11 @@
 # Ensemble selection from recorded task evidence
 
 **Status:** implemented; full Python 3.12/3.13 suites and packaging passed.
-See the [implementation record](2026-09-06-core-agency-progress.md#checked-ensemble-selection)
-for counts, development failures and remaining qualification boundaries.
+See the [checked-ensemble contract](../../coordination-outcomes.md#checked-ensembles),
+[regression tests](../../../tests/test_checked_ensemble.py), and
+[live-workflow qualification limits](../../mixed-runtime-qualification.md).
+The historical live measurement predates checked ensemble selection; the
+regressions do not constitute a new live-model measurement.
 
 PR55's live journey retained an incorrect local result alongside correct remote
 and external results. Its fixture oracle caught the error, but ordinary ensemble

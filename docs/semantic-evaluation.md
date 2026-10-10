@@ -150,9 +150,9 @@ not held-out evidence or an activation gate. The paired evaluator also supports
 [supervised shadow adoption](assessment-improvement.md). Held-out qualification
 remains M4 work.
 
-The [first measured comparison](handoffs/2026-09-07-semantic-assessments/README.md)
-failed both new functions' gates: context 83.3%, progress 42.9% versus a 100%
-progress rules baseline. Validators rejected unsupported suggestions. These
+The first measured comparison failed both new functions' gates: context 83.3%,
+progress 42.9% versus a 100% progress rules baseline. Validators rejected
+unsupported suggestions. These
 results justify retaining deterministic behavior; they do not qualify automatic
 context selection or progress decisions.
 

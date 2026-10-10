@@ -23,8 +23,8 @@ transport cleanup; model-process and MCP checks alone cannot establish it.
 evaluation without changing the current cleanup/task-evidence priority.
 
 **September 6 result: this profile fails the complete smoke gate.** The
-[final three-run report](handoffs/2026-09-06-core-agency/local-qualification.json)
-records 3/3 successful no-plugin file tasks and 3/3 successful terminal journeys,
+final three-run evaluation recorded 3/3 successful no-plugin file tasks and 3/3
+successful terminal journeys,
 but 0/3 successful memory-assisted artifacts: two wrong JSON objects and one
 malformed JSON file. Successful execution never overrode the artifact oracle.
 This report is intentionally retained as a failure; the command exited 1.

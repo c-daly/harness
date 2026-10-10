@@ -135,6 +135,7 @@ and gates before inference, separates completion of the comparison from candidat
 quality, preserves task state, and stops its owned runtime. It uses no plugins
 and does not measure memory integration or new native-agent task behavior.
 
-See the [measured comparisons](handoffs/2026-09-08-assessment-evaluation/README.md).
+The [comparison driver](../scripts/qualify_assessment_evaluation.py) defines
+these public cases and checks.
 Operator-authored prompt comparison and supervised assessment candidate
 generation/adoption are implemented. Genuine held-out qualification remains M4 work.

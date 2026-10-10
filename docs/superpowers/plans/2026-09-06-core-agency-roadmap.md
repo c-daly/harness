@@ -2,9 +2,11 @@
 
 **Date:** 2026-09-06
 
-**Status:** Accepted for implementation on 2026-09-06. See the
-[implementation record](2026-09-06-core-agency-progress.md) for actual progress
-and validation; the roadmap's gates are not claims of completed behavior.
+**Status:** Accepted for implementation on 2026-09-06. The roadmap's gates
+are not claims of completed behavior. The [resident workflow](../../resident-workflow.md),
+[local assistant qualification](../../local-assistant.md), and
+[mixed-runtime qualification](../../mixed-runtime-qualification.md) describe
+implemented behavior, measured results and remaining limits.
 
 **Baseline:** `main` at `ce722b4`.
 
@@ -583,8 +585,8 @@ model's assessment of itself is not its grading authority.
 
 ## Design lineage and source map
 
-- [June 10 architecture](../../../../vault/10-projects/harness/specs/2026-06-10-harness-design.md): anti-lock-in, event spine, per-call models, plugin-level workflows. This file lives outside this checkout; its relative link assumes the current sibling `vault` project layout.
+- [Kernel architecture](../../architecture.md): current kernel contracts and module map.
 - [August native-agent study](../specs/2026-08-31-harness-native-agents-design-study.md): intentionally limited native gaps, not a full workflow port.
 - [September 3 hardening plan](2026-09-03-production-beta-hardening.md): detailed correctness, trust, UI, measurement, and qualification backlog.
 - Core seams: [provider contract](../../../src/harness/provider.py), [catalog dispatch](../../../src/harness/provider_litellm.py), [agent loop](../../../src/harness/loop.py), [dispatcher](../../../src/harness/dispatcher.py), [subagents](../../../src/harness/subagent.py), [mixtures](../../../src/harness/mixture.py), [routing](../../../src/harness/routing.py), [TUI](../../../src/harness/tui.py), and [local serving script](../../../scripts/serve-local.sh).
-- External integrations inspected for this proposal: `/home/fearsidhe/.claude/plugins/memory` (`README.md`, reader/writer/provider contracts) and `/home/fearsidhe/.claude/plugins/agent-swarm` (workflow engine, in-memory workflow server, and persistent datastore). They remain separate repositories and are not modified by this roadmap.
+- External integrations inspected for this proposal: the separately installed memory plugin (reader/writer/provider contracts) and agent-swarm plugin (workflow engine, in-memory workflow server, and persistent datastore). They remain separate repositories and are not modified by this roadmap.

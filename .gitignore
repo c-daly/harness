@@ -10,4 +10,13 @@ dist/
 .claude/
 .context/
 .local-runtime/
-docs/handoffs/
+/docs/handoffs/
+
+# Local agent continuation, review artifacts, and isolated checkouts
+/HANDOFF.md
+/.worktrees/
+/.superpowers/sdd/
+
+# Local implementation diaries; retain design and specification documents
+/docs/superpowers/plans/2026-09-06-core-agency-progress.md
+/plans/plan.md

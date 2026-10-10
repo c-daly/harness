@@ -126,9 +126,10 @@ The embedding API adds `function="context_selection"` or `"progress_assessment"`
 to `improvement_service.propose`, `adopt`, `rollback`, and `status`; `evaluate`
 accepts `AssessmentPromptExperiment`. The default remains message classification.
 
-The [evidence record](handoffs/2026-09-08-assessment-improvement/README.md) separates
-controlled passing lifecycle tests from real local-model quality. The opt-in
-`scripts/qualify_assessment_improvement.py` freezes public cases and gates before
-inference, requests real local responses to deliberately difficult inputs, and
+The [lifecycle tests](../tests/test_assessment_improvement.py) exercise controlled
+passing paths; these are distinct from real local-model quality. The opt-in
+[qualification driver](../scripts/qualify_assessment_improvement.py) freezes public
+cases and gates before inference, requests real local responses to deliberately
+difficult inputs, and
 retains refusals and failed candidates. It exercises no plugins and makes no
 normal-memory, held-out, source-editing or sustained daily-use quality claim.

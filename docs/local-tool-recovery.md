@@ -38,9 +38,8 @@ notice cannot clear new response text that has already arrived.
 
 ## Evaluation and offline journey
 
-**Measured candidate outcome: refused.** The
-[final paired report](handoffs/2026-09-06-core-agency/local-recovery-evaluation.json)
-records **6/8** candidate successes versus **4/8** for rejection alone. All four
+**Measured candidate outcome: refused.** The final paired evaluation
+recorded **6/8** candidate successes versus **4/8** for rejection alone. All four
 candidate memory cases attempted one correction; three wrote correct artifacts
 and one omitted the output file. One no-plugin candidate wrote malformed JSON.
 The core verdict is `failed`, and adoption is `refused`.
@@ -48,22 +47,19 @@ The core verdict is `failed`, and adoption is `refused`.
 An earlier paired run passed 8/8 candidate cases versus 4/8; its gate returned
 `review_required`. Repetition and the broader journey exposed remaining quality
 failures. That initial pass is not qualification, and neither run activated
-anything. The initial report remains at `.local-runtime/reports/recovery-evaluation.json`
-with audit session `9cae3523438f4594b7ee77000b684ca7`; the final report's audit
-session is `6707e3f214804549a2afa6e1e00fd4cf`, both under
-`.local-runtime/reports/recovery-audit` on the measured machine.
+anything.
 
-The [final three-repeat journey report](handoffs/2026-09-06-core-agency/local-recovery-journey.json)
-passed **9/12 journeys**: 3/3 no-plugin file tasks, 3/3 memory-assisted file tasks,
-and 3/3 no-plugin TUI journeys. All three memory-enabled TUI journeys created the
+The final three-repeat evaluation passed **9/12 journeys**: 3/3 no-plugin file
+tasks, 3/3 memory-assisted file tasks, and 3/3 no-plugin TUI journeys. All three
+memory-enabled TUI journeys created the
 exact artifact, cancelled a real stream, preserved drafts, resumed their session,
 retrieved normal memory again, and cleaned up. All three failed the resumed-answer
 check, so the complete offline gate remains failed. No model output was accepted
 as proof of an artifact.
 
-A separate [metadata-only diagnostic](handoffs/2026-09-06-core-agency/local-recovery-resume-diagnostic.json)
-reproduced that failure and distinguished content from visibility: the completed
-resumed answer contained both source facts but was **14,036 bytes**, and the
+A separate metadata-only diagnostic reproduced that failure and distinguished
+content from visibility: the completed resumed answer contained both source facts
+but was **14,036 bytes**, and the
 project name was outside the final visible viewport. This points to response
 verbosity/presentation for that failure, not proof that the facts were absent.
 The diagnostic leaves model requests and returned answers unchanged and records
@@ -81,9 +77,8 @@ the GPU/model/runtime/dependency identities remain explicit in the report.
 An earlier expanded journey exposed real artifact and resume failures as well as
 a driver bug: it called `loop.end()` after TUI unmount had already ended the loop.
 The final driver mirrors TUI teardown, preserves the same checks, and records
-successful cleanup in all 12 cases. The earlier report remains at
-`.local-runtime/reports/recovery-journey.json`; its cleanup failures are not counted
-as model failures. Its other failed checks were not discarded.
+successful cleanup in all 12 cases. The earlier cleanup failures are not
+counted as model failures. Its other failed checks were not discarded.
 
 The existing core improvement evaluator accepts `--recovery` to compare the
 single-tool policy alone with the same policy plus two correction attempts.
@@ -96,10 +91,12 @@ The outcome uses the normal core adoption policy; even a passed candidate requir
 review. No runtime configuration, model alias, or fallback is activated.
 
 Use the isolated Docker recipe from [local qualification](local-model-qualification.md)
-with these final Python arguments:
+with these final Python arguments, supplying the failed planning report
+from your preceding evaluation as `--evidence`:
 
 ```sh
 -B -m scripts.evaluate_local_planning --recovery \
+  --evidence /reports/planning-evaluation.json \
   --memory-root "$qualification_memory_root" \
   --audit-dir /reports/recovery-audit --output /reports/recovery-evaluation.json
 ```

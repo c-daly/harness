@@ -19,10 +19,9 @@ whose template-dependent support still needs runtime verification. An external
 agent is refused under this profile because its internal batches are outside this
 contract. Existing profiles retain their prior behavior.
 
-**Final measured result: candidate rejected.** The
-[eight-case paired report](handoffs/2026-09-06-core-agency/local-planning-evaluation.json)
-records baseline **4/8** and candidate **2/8** passing. All four candidate cases
-with normal memory returned multiple proposals despite the provider option;
+**Final measured result: candidate rejected.** The eight-case paired
+evaluation recorded baseline **4/8** and candidate **2/8** passing. All four
+candidate cases with normal memory returned multiple proposals despite the provider option;
 the typed `ToolCallLimitExceeded` check rejected them before dispatch. Of the
 four candidate cases without memory, one omitted the file and one wrote malformed
 JSON. The core verdict is `failed` and adoption is `refused`. The option is a
@@ -61,10 +60,12 @@ experiment, not broad held-out model or product qualification.
 
 Use the Docker mounts, pinned assets and CPU/RAM/network limits from
 [the qualification recipe](local-model-qualification.md). Replace its final
-Python arguments with:
+Python arguments with the following, supplying a failed qualification report
+from your own run as `--evidence`:
 
 ```sh
 -B -m scripts.evaluate_local_planning \
+  --evidence /reports/local-qualification.json \
   --memory-root "$qualification_memory_root" \
   --audit-dir /reports/planning-audit \
   --output /reports/planning-evaluation.json
@@ -89,7 +90,8 @@ alias, prompt, provider routing rule, or memory/plugin implementation is changed
 Earlier paired runs also rejected the candidate; one passed 3/8 candidate cases
 and another 4/8. The final run adds typed failure attribution and binds the current
 driver/core hashes. Those variations reinforce that this model/profile is not
-qualified by an occasional successful artifact. Prior reports and metadata-only
-audit sessions remain under ignored `.local-runtime/reports/` on the measured machine.
+qualified by an occasional successful artifact. The
+[evaluation driver](../scripts/evaluate_local_planning.py) records paired
+measurements and metadata-only audit sessions.
 The next experiment should test an appropriate tool-capable model/runtime and
 artifact verification, preserving the source-fact oracle and the failed evidence.

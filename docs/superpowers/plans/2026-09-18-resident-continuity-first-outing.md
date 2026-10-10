@@ -7,7 +7,8 @@ implemented: native resident instructions, configured default model,
 explicit no-model state and optional default context profile. The existing MCP
 connection to agent-swarm was also repaired. These changes do not complete C1a or
 the remaining integration/capture work. See the
-[startup validation receipt](../../handoffs/2026-09-18-resident-startup/README.md).
+[resident startup configuration](../../resident-workflow.md#configure-and-use)
+for the supported interface.
 
 ## Outcome
 

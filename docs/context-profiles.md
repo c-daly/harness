@@ -130,8 +130,8 @@ command above; the script reports whether IPv4 routes are present.
 Empty or whitespace-only subjects fail before workspace setup or plugin access,
 including when the check is invoked directly from Python.
 
-The [observed result](handoffs/2026-09-06-core-agency/context-memory-offline.json)
-establishes offline file/MCP plumbing against the actual installed plugin. It
+The historical offline check exercised file/MCP plumbing against the installed
+plugin using the [public probe](../scripts/check_memory_context.py). It
 does not establish model-generated answers, memory-entry body retrieval, a
 resident assistant, or the full M3 cold-start/cancel/resume journey with real
 cached weights. The available cached 30B/35B models still lack a useful measured

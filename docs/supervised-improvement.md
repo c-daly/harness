@@ -123,9 +123,9 @@ Normal dispatch permissions apply to inference. Each standalone command closes
 its owned runtime, so keep the terminal session open for locally owned evaluation
 or use a separately managed warm endpoint.
 
-The [offline smoke evidence](handoffs/2026-09-07-supervised-improvement/README.md)
-uses real local generation/evaluation, explicitly injected format faults and
-public cases. Controlled provider fixtures prove adoption, rollback, replay,
+The [offline smoke driver](../scripts/qualify_improvement.py) uses real local
+generation/evaluation, explicitly injected format faults and public cases.
+Controlled provider fixtures prove adoption, rollback, replay,
 refusal and interruption paths. These do not establish improvement on unseen
 interactions. M4 still needs held-out semantic qualification and broader live-agent
 handoff qualification. Assessment candidates now have the supervised lifecycle

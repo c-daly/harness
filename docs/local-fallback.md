@@ -104,5 +104,5 @@ and [supervised message-prompt adoption/rollback](supervised-improvement.md) are
 fallback gate does not qualify CPU-only execution, every local model, or
 arbitrary agent tasks.
 
-The [evidence handoff](handoffs/2026-09-07-local-fallback/README.md) records
-the real gate outcomes, retained failures, source hashes and reproduction recipe.
+The [qualification driver](../scripts/qualify_fallback.py) records gate outcomes
+and failures for a separately provisioned installation.

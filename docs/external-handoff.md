@@ -163,17 +163,18 @@ isolation from other processes or a sandbox for provider-native actions. Histori
 tool success proves the recorded result, not that another process has left the
 artifact unchanged. Operator inspection and explicit acceptance remain necessary.
 
-The [original evidence record](handoffs/2026-09-08-external-handoff/README.md) separates
-regressions, terminal rendering, a controlled external subprocess with real MCP,
-and an offline Qwen3-8B continuation. The subprocess is a public Codex-compatible
-fault fixture, not a live subscription agent. The
-[normal-memory recovery record](handoffs/2026-09-09-handoff-memory-recovery/README.md)
-adds an offline terminal journey with required-memory loss, a refused reused
-record, and newly reconciled continuation after session restart. Read that record
-for observed outcomes and limits; it does not establish general heterogeneous
-handoff or live-provider qualification.
+The [handoff fault driver](../scripts/qualify_handoff.py) combines terminal
+rendering, a controlled external subprocess with real MCP, and an offline
+Qwen3-8B continuation. The subprocess is a public Codex-compatible fault fixture,
+not a live subscription agent. The
+[normal-memory recovery driver](../scripts/qualify_handoff_memory.py) exercises
+required-memory loss, refusal to reuse a reconciliation record, and newly
+reconciled continuation after session restart. These bounded checks do not
+establish general heterogeneous handoff or live-provider qualification.
 
-The [destination recovery record](handoffs/2026-09-09-handoff-destination-recovery/README.md)
-adds busy preflight, process loss after a completed write, and Esc during a
-continuation. It preserves the first failed qualification run and the separately
-frozen diagnostic follow-up, alongside the provider truncation regression.
+The [destination recovery driver](../scripts/qualify_handoff_destination.py)
+exercises busy preflight, process loss after a completed write, and Esc during a
+continuation. Its initial qualification attempt failed. A separately frozen
+diagnostic follow-up and a provider truncation regression are distinct from that
+failed attempt. The driver code describes the checks; it does not prove a passing
+result on another installation.

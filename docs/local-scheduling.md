@@ -75,8 +75,9 @@ Local admission refusal does not trigger an automatic fallback loop.
 `tests/test_local_scheduling.py` covers priority, queue bounds, alias exclusion,
 deadlines, cancellation at handoff, failed journals, authority, replay, real
 process replacement and final TUI rendering. The opt-in
-`scripts/qualify_scheduling.py` uses the pinned M3 8B model on two local ports,
-with plugins absent and with normal memory. It checks a real stream, queued
+[qualification driver](../scripts/qualify_scheduling.py) uses the pinned M3 8B
+model on two local ports, with plugins absent and with normal memory. It checks
+a real stream, queued
 user cancellation, preserved draft, background abstention, interactive priority,
 owned replacement, one exact project write, retained criteria and settled logs.
 The two aliases load the same weights; this does not compare model quality.
@@ -93,8 +94,7 @@ python -B -m scripts.qualify_scheduling \
 
 Provision weights and runtime separately. The driver requires loopback-only
 networking, finite CPU/RAM limits, zero swap and the pinned weight hash. Its
-metadata report contains no private memory or generated prose. See the
-[evidence handoff](handoffs/2026-09-07-local-scheduling/README.md) for results.
+metadata report contains no private memory or generated prose.
 
 M4 still needs the supervised improvement candidate/evaluation/activation/
 rollback cycle, held-out semantic promotion, and explicit reconciliation for

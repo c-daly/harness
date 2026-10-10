@@ -47,8 +47,7 @@ This slice tests response configuration against both artifact correctness and
 the same final-viewport checks. The checks have not been relaxed to accept shorter
 but incorrect answers, stale memory, or omitted file operations.
 
-The [saved pilot reports](handoffs/2026-09-06-core-agency/local-response-pilots.json)
-contain three one-repeat feasibility probes that failed the complete four-journey gate:
+Three one-repeat feasibility probes failed the complete four-journey gate:
 
 | Model and response candidate | No-plugin file | Memory file | No-plugin TUI | Memory TUI |
 |---|---|---|---|---|
@@ -75,8 +74,7 @@ image and 8,192-token context. The 8B asset is provisioned separately, stays
 under ignored `.local-runtime/`, and does not change the user's configured model.
 
 The formal response experiment keeps the original 4B sampling and compares the
-recovery profile alone with the
-[conservative response settings](handoffs/2026-09-06-core-agency/concise-response.toml).
+recovery profile alone with the conservative response settings reproduced below.
 Its fixed plan contains 18 paired cases: original harbor/3 regression and reserved
 maple-ν/23 source facts, with/without memory, repeated three times (12 file cases),
 plus no-plugin and normal-memory TUI journeys repeated three times (six UI cases).
@@ -85,16 +83,14 @@ least two cases without a failure. Per-case 60-second and 2x aggregate latency
 gates remain. The whole-run deadline is 600 seconds for this expanded suite.
 Core evidence, candidate, plan, run and result records feed the adoption gate; no activation occurs even if evaluation passes.
 
-The [completed paired result](handoffs/2026-09-06-core-agency/local-response-evaluation.json)
-rejected the candidate: **incumbent 14/18, candidate 9/18**, with six regressions
-and one improvement. File cases fell from 10/12 to 5/12; both arms passed 4/6 TUI
+The completed paired evaluation rejected the candidate: **incumbent 14/18,
+candidate 9/18**, with six regressions and one improvement. File cases fell from
+10/12 to 5/12; both arms passed 4/6 TUI
 journeys, with different failures. Two incumbent memory answers repeated about
 14 KB and hid the project name. The candidate fixed one of those cases but also
 produced an answer without the project and a failed memory-resume response.
 Missing files, wrong facts, malformed JSON and invalid tool arguments remain
-failures. No profile was activated. The core audit session is
-`b5324774b0e84388be1bf8ba9b79f70e`, under ignored
-`.local-runtime/reports/response-audit`.
+failures. No profile was activated.
 
 **Resource limitation:** the longer paired run emitted unclosed
 `aiohttp.ClientSession` warnings. The current checks establish model-process and
@@ -108,12 +104,24 @@ Closing the global SDK cache during concurrent calls would be unsafe. The report
 retains the original checks and source hashes; these warnings are an additional
 qualification gap, not a reason to reinterpret the failed quality result.
 
+Save the measured candidate settings below as `concise-response.toml` in a
+location mounted into the container. These are the historical settings, not a
+recommended profile; the candidate failed the evaluation above.
+
+```toml
+max_output_tokens = 512
+max_output_bytes = 4096
+instructions = "In the final answer, give the requested facts briefly. Do not quote retrieved memory unless its contents were explicitly requested."
+```
+
 Use the [offline container recipe](local-model-qualification.md) with these final
-Python arguments:
+Python arguments, supplying the failed recovery report from your preceding
+evaluation as `--evidence` and the mounted path to the TOML file:
 
 ```sh
 -B -m scripts.evaluate_local_planning \
-  --response-profile docs/handoffs/2026-09-06-core-agency/concise-response.toml \
+  --response-profile /reports/concise-response.toml \
+  --evidence /reports/recovery-evaluation.json \
   --memory-root "$qualification_memory_root" \
   --audit-dir /reports/response-audit --output /reports/response-evaluation.json
 ```

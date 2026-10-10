@@ -27,9 +27,9 @@ state rather than supplying echo responses. `--demo` explicitly selects echo.
 The [Saoirse local profile](examples/local-resident/saoirse.toml) demonstrates
 automatic normal-memory and project discovery with a focused tool set. The local
 projects integration can register `plugins/projects_overview.py` to provide a
-compact checkout overview; the [repair receipt](handoffs/2026-09-18-resident-startup/README.md)
-records the installed registration, validation and rollback paths. A checkout
-overview does not establish milestone completion or replace project management.
+compact checkout overview. Registration belongs to that separate integration;
+this repository does not install its configuration. A checkout overview does not
+establish milestone completion or replace project management.
 
 This startup support does not complete the proposed continuity/capture integration
 or shared desktop attachment. MCP connections start the configured server code:
@@ -168,9 +168,8 @@ human usability qualification.
 
 ## Observed result — September 7
 
-The [completed pilot](handoffs/2026-09-07-resident-workflow/resident-workflow.json)
-**failed overall**. Both real project reads and normal-memory index retrievals
-completed before inference, including after restart. Context/status display,
+The completed pilot **failed overall**. Both real project reads and normal-memory
+index retrievals completed before inference, including after restart. Context/status display,
 real stream cancellation (123 ms), an unsent draft, unresolved task requirements
 and restart continuity passed. The resumed answer contained the correct public
 project facts and was visible in the final compositor (6.0 seconds).
@@ -183,8 +182,7 @@ the model failed. Tool selection and relevance need separate measurement before
 claiming a useful write workflow. No retry or changed criterion converted this
 failure to a pass.
 
-The [initial probe report](handoffs/2026-09-07-resident-workflow/resident-workflow-initial.json)
-retains the same artifact/answer failures and a probe `AttributeError` that
+The initial probe had the same artifact/answer failures and an `AttributeError` that
 prevented cancellation and resume measurement. Correcting that probe method
 allowed the complete journey above; it did not change model settings, prompts
 or artifact checks. Neither run qualifies a model or activates a fallback.

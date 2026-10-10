@@ -181,16 +181,15 @@ This qualifies the tested contract, not local-model quality or the complete
 resident workflow. Broader usability, task revisions and automatic requirement
 proposals remain future work; proposals must not become their own approval.
 
-The [saved synthetic probe](handoffs/2026-09-07-task-evidence/probe.json) records
-source hashes, state checkpoints and five warm preparation samples after 5,000
+A historical run of the [synthetic probe](../scripts/check_task_workflow.py)
+recorded state checkpoints and five warm preparation samples after 5,000
 additional events. The samples were **0.030–0.159 ms** on this run; this small
 probe is not a p95 or whole-interface latency qualification. Before the live view
 was introduced, a development probe rereading 5,004 events took 49.00–65.40 ms
 per preparation. The regression test also directly forbids repeated history reads.
 
-Rendered checkpoints show [pending review](handoffs/2026-09-07-task-evidence/unresolved.svg),
-[user acceptance](handoffs/2026-09-07-task-evidence/accepted.svg), and
-[changed work with preserved draft](handoffs/2026-09-07-task-evidence/changed.svg).
+The probe renders checkpoints for pending review, user acceptance, and
+changed work with a preserved draft.
 The inputs, provider and review actions in this probe are scripted public fixtures;
 they are not a human dogfood result or a real model-quality assessment. Reproduce
 the journey and export the final compositor with:
