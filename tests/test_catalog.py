@@ -78,3 +78,44 @@ assert 'litellm' not in sys.modules
 """
     result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=10)
     assert result.returncode == 0, result.stderr
+
+
+def test_catalog_inference_defers_external_tool_server_until_agent_use(tmp_path):
+    code = """
+import asyncio
+import sys
+from pathlib import Path
+
+from harness.catalog import Catalog
+from harness.cli import _catalog_provider, build_kernel
+from harness.handoff import capture_scope
+from harness.provider_claude_code import McpToolServer, running_tool_server
+
+root = Path(sys.argv[1])
+catalog = Catalog({
+    "desk": {"route": "openai/fixture", "api_base": "http://127.0.0.1:8080/v1"},
+    "vendor": {"backend": "claude-code", "route": "claude-code/default"},
+})
+provider = _catalog_provider(catalog)
+kernel = build_kernel(base_dir=root, model="desk", provider=provider, native_tools=True, workspace_root=root)
+
+async def check():
+    dispatcher = kernel.loop.dispatcher
+    assert provider.execution_kind("desk") == "inference"
+    scope = capture_scope(dispatcher)
+    assert "read_file" in scope["tools"] and scope["context_bindings"] == {}
+    assert provider.agent_runtime_info("vendor").runtime == "claude-code"
+    server = McpToolServer(specs=kernel.registry.specs(), dispatch=dispatcher.dispatch_tool)
+    dependencies = {"mcp", "uvicorn", "starlette"}
+    assert not dependencies.intersection(sys.modules), dependencies.intersection(sys.modules)
+    async with running_tool_server(server):
+        assert server.url.startswith("http://127.0.0.1:")
+        assert dependencies.issubset(sys.modules)
+
+try:
+    asyncio.run(check())
+finally:
+    kernel.session.close()
+"""
+    result = subprocess.run([sys.executable, "-c", code, str(tmp_path)], capture_output=True, text=True, timeout=25)
+    assert result.returncode == 0, result.stderr

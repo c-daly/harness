@@ -12,20 +12,16 @@ import asyncio
 import contextlib
 import hmac
 import secrets
-from typing import Any, Awaitable, Callable, Sequence
-
-import mcp.types as mcp_types
-import uvicorn
-from mcp.server.lowlevel import Server
-from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
-from starlette.applications import Starlette
-from starlette.routing import Mount
-from starlette.responses import PlainTextResponse
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Sequence
 
 from harness.dispatcher import ToolOutcome
 from harness.hooks import ProposedToolCall
 from harness.tools import ToolSpec
 from harness.types import ToolName, new_call_id
+
+if TYPE_CHECKING:
+    import uvicorn
+    from starlette.applications import Starlette
 
 Dispatch = Callable[[ProposedToolCall], Awaitable[ToolOutcome]]
 
@@ -36,6 +32,8 @@ class _CapabilityGate:
         self.capability = capability.encode()
 
     async def __call__(self, scope, receive, send):
+        from starlette.responses import PlainTextResponse
+
         if scope["type"] == "http":
             token = scope["path"].split("/")[1].encode()
             if not hmac.compare_digest(token, self.capability):
@@ -75,7 +73,13 @@ class McpToolServer:
             raise RuntimeError("McpToolServer not started")
         return f"http://127.0.0.1:{self._port}/{self._capability}/mcp"
 
-    def _build_app(self) -> Starlette:
+    def _build_app(self) -> "Starlette":
+        import mcp.types as mcp_types
+        from mcp.server.lowlevel import Server
+        from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
+        from starlette.applications import Starlette
+        from starlette.routing import Mount
+
         server: Server = Server("harness")
 
         @server.list_tools()
@@ -128,6 +132,8 @@ class McpToolServer:
         return app
 
     async def start(self) -> None:
+        import uvicorn
+
         self._stopping = False
         config = uvicorn.Config(
             self._build_app(), host="127.0.0.1", port=0, log_level="error", lifespan="on"

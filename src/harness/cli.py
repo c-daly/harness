@@ -18,7 +18,6 @@ from harness.fallback import FallbackPolicy
 from harness.interaction import HeadlessResolver, Resolver
 from harness.loop import AgentLoop
 from harness.mcp_config import McpConfigError, McpServerSpec, load_mcp_config, load_mcp_file
-from harness.mcp_host import McpHost
 from harness.permissions import PermissionEngine, default_engine
 from harness.provider import FakeProvider, ModelProvider, text_turn
 from harness.resident import RESIDENT_SYSTEM_PROMPT, ResidentConfig, UnconfiguredResidentProvider
@@ -28,6 +27,7 @@ from harness.tools import FilteredRegistry, ToolRegistry
 from harness.types import ModelId, SessionId, new_session_id
 
 if TYPE_CHECKING:
+    from harness.mcp_host import McpHost
     from harness.plugins import LoadedPlugins
     from harness.routing import RoutingRuleSet
 
@@ -42,7 +42,7 @@ class Kernel:
     runner: "SubagentRunner"
     resumed: bool = field(default=False)
     tags: list[str] = field(default_factory=list)
-    mcp: McpHost | None = None
+    mcp: "McpHost | None" = None
     plugins: "LoadedPlugins | None" = None
     plugin_warnings: list[str] = field(default_factory=list)
     _plugin_pumps: list = field(default_factory=list)
@@ -366,6 +366,8 @@ def build_kernel(
         )
     mcp_host = None
     if mcp:
+        from harness.mcp_host import McpHost
+
         mcp_host = McpHost(mcp, registry=registry, hooks=hooks, session=session)
     return Kernel(
         session=session,

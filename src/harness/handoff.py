@@ -134,11 +134,14 @@ def policy_version():
 
 def context_bindings(dispatcher):
     """Bind declared context adapters without copying credentials or plugin internals."""
+    policy = dispatcher.scope.context_policy
+    if policy is None or not policy.sources:
+        return {}
+
     from harness.mcp_host import McpTool
     from harness.tools import UnknownToolError
     bindings = {}
-    policy = dispatcher.scope.context_policy
-    for source in policy.sources if policy else ():
+    for source in policy.sources:
         try:
             tool = dispatcher.registry.get(source.tool)
         except UnknownToolError:
