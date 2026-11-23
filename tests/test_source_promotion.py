@@ -46,6 +46,34 @@ def invoke(command, cwd):
     return subprocess.run(command, cwd=cwd, capture_output=True, text=True, timeout=10, check=True)
 
 
+@pytest.mark.parametrize("damage", ["evaluation", "selected_snapshot"])
+async def test_damaged_adoption_refuses_selection_but_can_restore_initial_source(tmp_path, revisions, damage):
+    from harness.blobs import BlobIntegrityError
+    from harness.events import ImprovementRecorded
+    from harness.improvement import SourceEntrypoint
+    from harness.source_promotion import adopt_source, rollback_source
+
+    session, journal, result = await ready(tmp_path, revisions)
+    with session:
+        change = adopt_source(journal, result.id, "trial", SourceEntrypoint(module="entry", function="main"))
+        damaged = result.artifact if damage == "evaluation" else change.source
+        (session.blobs._root / damaged.sha256).write_bytes(b"incomplete artifact")
+        seq = session.last_seq
+        with pytest.raises(BlobIntegrityError):
+            session.append(ImprovementRecorded(record=change.model_copy(update={"slot": "repeat", "id": "again"})))
+        assert session.last_seq == seq and "repeat" not in read_improvements(session.base, session.id).active_sources
+        with pytest.raises(BlobIntegrityError):
+            launch(session)
+        assert not (session.base / "source-launches").exists()
+        restored = rollback_source(journal, "trial")
+        assert restored.source == change.previous
+        command, _ = launch(session, "trial", "7")
+        assert invoke(command, tmp_path).stdout.splitlines()[0] == "8"
+        with pytest.raises(BlobIntegrityError):
+            rollback_source(journal, "trial")  # Undoing the rollback would select the damaged candidate.
+        assert read_improvements(session.base, session.id).active_sources["trial"] == restored.id
+
+
 async def test_adopt_launch_and_rollback_restore_behavior_after_restart(tmp_path, revisions):
     from harness.improvement import SourceEntrypoint
     from harness.source_promotion import adopt_source, rollback_source

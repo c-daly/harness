@@ -16,7 +16,7 @@ from harness.blobs import BlobRef
 from harness.events import AssessmentObserved, EvaluationRunStarted, SemanticObserved
 from harness.fold import fold
 from harness.improvement import Candidate, EvaluationPlan, Evidence, PromptChange, PromptFunction, verdict
-from harness.improvement_journal import read_improvements
+from harness.improvement_journal import active_prompt_selections, read_improvements
 from harness.inference import InferenceRequest
 from harness.log import read_session
 from harness.messages import Message
@@ -68,10 +68,14 @@ def default_prompt(session, *, persist=True, function="message_kind"):
 
 def prompt_selection(session, provider, model, *, limits=None, persist_default=True, function="message_kind"):
     """Read a recorded selection; changed declarations suspend it without inference."""
-    state = read_improvements(session.base, session.id)
-    change = state.selected_prompt(model, function)
-    if change is None:
+    if session.prompt_selection_error is not None:
+        raise ValueError(session.prompt_selection_error)
+    if session.prompt_selections is None:
+        session.prompt_selections = active_prompt_selections(read_improvements(session.base, session.id))
+    selection = session.prompt_selections.get((model, function))
+    if selection is None:
         return default_prompt(session, persist=persist_default, function=function), "builtin", None
+    change, artifact = selection
     load_function_prompt(session.blobs, change.prompt, function)
     if change.configuration is not None:
         if change.configuration.size > 16384:
@@ -80,6 +84,8 @@ def prompt_selection(session, provider, model, *, limits=None, persist_default=T
         if (config.model != model or evaluator_version(provider, config) != change.evaluator_version
                 or limits is not None and limits != config.limits):
             return default_prompt(session, persist=persist_default, function=function), "suspended: evaluation configuration changed", change
+        if artifact is not None:
+            session.blobs.get(artifact)
     return change.prompt, change.action, change
 
 

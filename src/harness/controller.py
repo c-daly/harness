@@ -15,6 +15,7 @@ class PendingPrompt:
     id: int
     text: str
     expand_mentions: bool = True
+    reply_before_seq: int | None = None
 
 
 class InteractionController:
@@ -44,11 +45,11 @@ class InteractionController:
             raise ValueError(f"prompt exceeds {self.max_prompt_chars} characters")
         return text
 
-    def submit(self, text: str, *, expand_mentions: bool = True) -> PendingPrompt:
+    def submit(self, text: str, *, expand_mentions: bool = True, reply_before_seq: int | None = None) -> PendingPrompt:
         text = self._validate(text)
         if len(self._pending) >= self.max_pending:
             raise ValueError(f"prompt queue is full ({self.max_pending}); draft preserved")
-        prompt = PendingPrompt(self._next_id, text, expand_mentions)
+        prompt = PendingPrompt(self._next_id, text, expand_mentions, reply_before_seq)
         self._pending.append(prompt)
         self._next_id += 1
         return prompt

@@ -53,6 +53,18 @@ _ERROR_TEXT_CAP = 4096
 # events its tool calls into the SUBAGENT session, not the parent dispatcher’s.
 current_dispatch_tool: ContextVar = ContextVar("current_dispatch_tool", default=None)
 
+# Only the ordinary primary turn gives Harness ownership of helper selection.
+# Configured workflows, child tasks and independent agents have their own contracts.
+primary_conversation: ContextVar = ContextVar("primary_conversation", default=None)
+HOST_COORDINATION_TOOLS = frozenset({"consult_panel", "ensemble", "escalate", "dispatch_agent"})
+
+
+def execution_kind_for(provider, model):
+    kind = getattr(provider, "execution_kind", None)
+    if kind is not None:
+        return kind(model) if callable(kind) else kind
+    return "inference" if hasattr(provider, "infer") else "legacy"
+
 
 class ModelDispatchBlocked(Exception):
     pass
@@ -95,7 +107,16 @@ class Dispatcher:
         self.scope = scope or ExecutionScope(session, registry, session._execution_budget or ExecutionBudget())
         self.terminal_tools: dict = {}
 
-    async def _run_chain(self, action, *, purpose=None) -> tuple[object | None, str | None]:
+    def owns_primary_coordination(self):
+        run = current_agent_run.get()
+        return run is not None and primary_conversation.get() == (self, run.task.id)
+
+    def conversation_tools(self, tools, execution_kind):
+        if execution_kind == "agent" or not self.owns_primary_coordination():
+            return tools
+        return tuple(tool for tool in tools if tool.name not in HOST_COORDINATION_TOOLS)
+
+    async def _run_chain(self, action, *, purpose=None, allow_ask=True) -> tuple[object | None, str | None]:
         """Run hooks + Ask resolution. Returns (effective_action, denial_reason)."""
         outcome = await self.hooks.run_dispatch(action)
         for name, decision in outcome.decisions:
@@ -106,6 +127,13 @@ class Dispatcher:
             )
         if outcome.blocked is not None:
             return None, f"blocked by policy: {outcome.blocked.reason}"
+        if (purpose == "conversation" and isinstance(action, ProposedToolCall) and self.owns_primary_coordination()
+                and any(isinstance(call, ProposedToolCall) and call.tool in HOST_COORDINATION_TOOLS
+                        for call in (action, outcome.effective))):
+            reason = "Harness manages consultation for Saoirse. Continue with the available task tools."
+            self.session.append(HookDecided(call_id=action.call_id, hook="saoirse-coordination",
+                                            decision={"kind": "block", "reason": reason}))
+            return None, reason
         from dataclasses import replace
         from harness.handoff import current_handoff
         guard = current_handoff.get()
@@ -122,6 +150,8 @@ class Dispatcher:
             if isinstance(decision, Ask) and outcome.ask is None:
                 outcome = replace(outcome, ask=decision)
         if outcome.ask is not None:
+            if not allow_ask:
+                return None, "background observation requires existing permission"
             self.session.append(
                 PermissionRequested(call_id=action.call_id, reason=outcome.ask.reason)
             )
@@ -294,7 +324,7 @@ class Dispatcher:
         self, *, provider, request: InferenceRequest,
         pricing: dict[str, float] | None = None,
         pricing_for: Callable[[ModelId], dict[str, float]] | None = None,
-        pinned: bool = False, on_chunk: Callable[[Chunk], None] | None = None,
+        pinned: bool = False, on_chunk: Callable[[Chunk], None] | None = None, examples=None,
     ) -> InferenceResult:
         """Conversation migration path preserving stop reasons for task control.
 
@@ -303,7 +333,7 @@ class Dispatcher:
         """
         return await self._dispatch_generation(
             provider=provider, request=request, allow_agent=request.purpose == "conversation",
-            pricing=pricing, pricing_for=pricing_for, pinned=pinned, on_chunk=on_chunk,
+            pricing=pricing, pricing_for=pricing_for, pinned=pinned, on_chunk=on_chunk, examples=examples,
         )
 
     async def dispatch_inference(
@@ -311,13 +341,13 @@ class Dispatcher:
         pricing: dict[str, float] | None = None,
         pricing_for: Callable[[ModelId], dict[str, float]] | None = None,
         pinned: bool = False, on_chunk: Callable[[Chunk], None] | None = None,
-        exact_model: bool = False,
+        exact_model: bool = False, allow_ask: bool = True,
     ) -> InferenceResult:
         """Bounded, audited inference; routing cannot replace it with an agent."""
         return await self._dispatch_generation(
             provider=provider, request=request, allow_agent=False,
             pricing=pricing, pricing_for=pricing_for, pinned=pinned, on_chunk=on_chunk,
-            exact_model=exact_model,
+            exact_model=exact_model, allow_ask=allow_ask,
         )
 
     async def dispatch_agent_response(
@@ -334,7 +364,7 @@ class Dispatcher:
 
     async def _dispatch_generation(
         self, *, provider, request: InferenceRequest, allow_agent: bool,
-        pricing, pricing_for, pinned, on_chunk, required_runtime=None, exact_model=False,
+        pricing, pricing_for, pinned, on_chunk, required_runtime=None, exact_model=False, examples=None, allow_ask=True,
     ) -> InferenceResult:
         with self.scope.budget.activity.track(
             session_id=self.session.id, kind="model", label=str(request.model), phase="dispatch",
@@ -342,12 +372,12 @@ class Dispatcher:
             return await self._generate(
                 provider=provider, request=request, allow_agent=allow_agent, pricing=pricing,
                 pricing_for=pricing_for, pinned=pinned, on_chunk=on_chunk,
-                required_runtime=required_runtime, exact_model=exact_model,
+                required_runtime=required_runtime, exact_model=exact_model, examples=examples, allow_ask=allow_ask,
             )
 
     async def _generate(
         self, *, provider, request: InferenceRequest, allow_agent: bool,
-        pricing, pricing_for, pinned, on_chunk, required_runtime=None, exact_model=False,
+        pricing, pricing_for, pinned, on_chunk, required_runtime=None, exact_model=False, examples=None, allow_ask=True,
     ) -> InferenceResult:
         observation = current_activity.get()
         request = InferenceRequest.model_validate(request.model_dump())
@@ -368,15 +398,11 @@ class Dispatcher:
             request = request.model_copy(update={"parallel_tool_calls": parallel})
         model, messages, tools, purpose = request.model, request.messages, request.tools, request.purpose
 
-        def kind_for(alias):
-            kind = getattr(provider, "execution_kind", None)
-            if kind is not None:
-                return kind(alias) if callable(kind) else kind
-            return "inference" if hasattr(provider, "infer") else "legacy"
+        defer_response = False
 
         def observed(chunk):
             observation.touch("stream event", stream=True)
-            if on_chunk is not None:
+            if on_chunk is not None and not defer_response:
                 try:
                     on_chunk(chunk)
                 except Exception:
@@ -398,7 +424,7 @@ class Dispatcher:
             return (time.monotonic_ns() - started) // 1_000_000 if started is not None else 0
 
         try:
-            effective, denial = await self._run_chain(call)
+            effective, denial = await self._run_chain(call, allow_ask=allow_ask)
             if denial is not None:
                 raise ModelDispatchBlocked(denial)
             if not isinstance(effective, ProposedModelCall):
@@ -406,7 +432,10 @@ class Dispatcher:
             effective_model = effective.model
             if exact_model and effective_model != model:
                 raise ModelDispatchBlocked("routing changed the required inference model")
-            execution_kind = kind_for(effective_model)
+            execution_kind = execution_kind_for(provider, effective_model)
+            if purpose == "conversation":
+                tools = self.conversation_tools(tools, execution_kind)
+                request = request.model_copy(update={"tools": tools})
             if purpose == "conversation" and execution_kind != "agent":
                 # Decide after routing: a native request and an external agent
                 # have different lifetimes even when sharing this transport.
@@ -435,6 +464,17 @@ class Dispatcher:
                 raise ProviderError(
                     f"{effective_model!r} is an agent runtime; select an inference alias for {purpose}"
                 )
+            # The selected destination is known only after the dispatch hooks. A
+            # rerouted call and a fallback retry receive the ordinary request.
+            if (examples and purpose == "conversation" and active_run and execution_kind == "inference"
+                    and effective_model == examples.model and self.owns_primary_coordination()):
+                limit = min(policy.max_input_bytes, request.max_input_bytes) if policy else request.max_input_bytes
+                original = messages
+                messages = examples.admit(self.session, active_run.task, active_run.run_id, messages, tools, limit)
+                defer_response = messages is not original
+                request = request.model_copy(update={"messages": tuple(messages)})
+            if examples is not None and examples.received:
+                defer_response = True
             self.session.append(
                 DispatchResolved(call_id=call.call_id, kind="model", model=effective_model)
             )
@@ -463,6 +503,9 @@ class Dispatcher:
             model_token = current_model_call_id.set(call.call_id)
             from harness.execution import current_agent_timeout
             timeout_token = current_agent_timeout.set(request.timeout_seconds if execution_kind == "agent" else None)
+            # A model-routing hook can select an external agent after the
+            # ordinary loop has prepared a native request.
+            external_turn = primary_conversation.set(None) if execution_kind == "agent" else None
             try:
                 while True:
                     try:
@@ -534,6 +577,8 @@ class Dispatcher:
                         with waiting("retry delay"):
                             await asyncio.sleep(delay)
             finally:
+                if external_turn is not None:
+                    primary_conversation.reset(external_turn)
                 current_dispatch_tool.reset(token)
                 current_scope.reset(scope_token)
                 current_model_call_id.reset(model_token)
@@ -562,6 +607,7 @@ class Dispatcher:
                 call_id=call.call_id,
                 model=effective_model,
                 message=message.model_dump(),
+                response_deferred=defer_response,
                 usage=usage.as_dict(),
                 stop_reason=stop_reason,
                 pricing=stamped_pricing,
@@ -571,4 +617,6 @@ class Dispatcher:
                 **lineage,
             )
         )
+        if defer_response:
+            examples.received = True
         return replace(result, model=effective_model, call_id=call.call_id)

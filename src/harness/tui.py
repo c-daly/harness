@@ -775,6 +775,7 @@ class HarnessApp(App[None]):
         self._workspace_write_roots = tuple(workspace_write_roots)
         self._vim_enabled = vim
         self._routing_rules = routing_rules
+        self._startup_worker = None
         self._turn_worker = None
         self.controller = kernel.controller
         self._pending_model: str | None = None
@@ -942,7 +943,9 @@ class HarnessApp(App[None]):
         prompt.focus()
         prompt._show_vim_mode()
         self._refresh_statusbar()
-        self.run_worker(self._session_driver(), group="driver", exit_on_error=False)
+        self._startup_worker = self.run_worker(self._session_driver(), group="driver", exit_on_error=False)
+        if self.kernel.mcp is None:
+            await self._startup_worker.wait()
 
     async def _session_driver(self) -> None:
         kernel = self.kernel
@@ -1473,6 +1476,10 @@ class HarnessApp(App[None]):
         prompt_input = self.query_one("#prompt", HistoryInput)
         if not text:
             return
+        # The interactive MCP checklist runs in a worker so the modal can mount.
+        # A submission after the checklist may arrive while servers are starting.
+        if self._startup_worker is not None and not self._startup_worker.is_finished:
+            await self._startup_worker.wait()
         command = parse_slash_command(text)
         if command is not None:
             if command.name in self._plugin_commands and command.name not in {"task", "status", "semantics", "improvements", "handoff", "models", "export", "coordination", "budget", "execution", "activity", "vim"}:
@@ -1498,7 +1505,8 @@ class HarnessApp(App[None]):
             return False
         try:
             was_empty = not self.controller.pending and self.controller.active is None
-            prompt = self.controller.submit(text, expand_mentions=expand_mentions)
+            prompt = self.controller.submit(text, expand_mentions=expand_mentions,
+                                            reply_before_seq=self.kernel.session.last_seq if was_empty else 0)
         except ValueError as exc:
             self.say("! ", str(exc))
             return False
@@ -1646,9 +1654,10 @@ class HarnessApp(App[None]):
     async def _run_turn(self, prompt: str) -> AgentResult:
         self._clear_live()
         try:
-            result = await self.kernel.loop.run_task(self.kernel.tasks.prepare(
+            result = await self.kernel.loop.run_conversation(self.kernel.tasks.prepare(
                 prompt, context=tuple(self.kernel.loop.turn_context),
-            ), on_progress=self._on_agent_progress)
+            ), on_progress=self._on_agent_progress, defer_reply=True,
+                reply_before_seq=self.controller.active.reply_before_seq if self.controller.active else None)
             reply = result.read_text(self.kernel.session.blobs)
         except asyncio.CancelledError:
             raise  # _after_interrupt owns cleanup; keep _stream_buffer for it to preserve
@@ -1820,8 +1829,8 @@ class HarnessApp(App[None]):
                     "plugin commands: " + "  ".join(f"/{n}" for n in sorted(self._plugin_commands)),
                 )
         elif command.name == "tools":
-            self.say("", "Tools available to the agent: ask for them in ordinary language. "
-                     "These are not slash commands; /help lists interface controls.")
+            self.say("", "Tool registry. Harness reserves coordination tools for host and workflow calls "
+                     "during an ordinary Saoirse conversation. /help lists interface commands.")
             specs = self.kernel.loop.registry.specs()
             if command.arg:
                 spec = next((s for s in specs if s.name == command.arg.strip()), None)
@@ -1997,6 +2006,20 @@ class HarnessApp(App[None]):
                 if self._semantic_worker is not None and not self._semantic_worker.is_finished:
                     self.say("", "An assessment or improvement is already running; Esc cancels it.")
                     return
+                verb, *rest = command.arg.split(maxsplit=1)
+                if verb in ("feedback", "failure"):
+                    from harness.improvement_cli import feedback
+                    from harness.log import TornLogError
+                    try:
+                        saved = feedback(self.kernel, rest[0] if rest else "", failure=verb == "failure")
+                        self.say("", str(saved))
+                        if verb == "failure":
+                            self._semantic_worker = self.run_worker(
+                                self._improvement_action("", confirmed_failure=saved.evidence.id),
+                                group="semantics", exit_on_error=False)
+                    except (OSError, ValueError, TornLogError) as exc:
+                        self.say("! ", f"Feedback could not be recorded: {exc}")
+                    return
                 self._semantic_worker = self.run_worker(self._improvement_action(command.arg),
                     group="semantics", exit_on_error=False)
                 return
@@ -2011,6 +2034,8 @@ class HarnessApp(App[None]):
                 "evaluate CANDIDATE EXPERIMENT.json | compare ASSESSMENT.json | "
                 "adopt RESULT [message|context|progress] | rollback [message|context|progress]")
             self.say("", "Source proposals: /improvements source-author SPEC.json | source-finalize AUTHOR_ID")
+            self.say("", "Turn observations: /improvements feedback|failure [--turn SEQ] TEXT")
+            self.say("", "Session examples · /improvements examples")
             self.say("", "Source checks: /improvements source-prepare SPEC.json | source-evaluate PLAN_ID")
             self.say("", "Source selection: /improvements "
                 "source-adopt RESULT SLOT MODULE:FUNCTION IMPORT_ROOT | source-rollback SLOT")
@@ -2188,6 +2213,7 @@ class HarnessApp(App[None]):
             self._refresh_tasks()
 
     async def _cancel_semantic_check(self) -> None:
+        await self.kernel.loop.finish_reply_observation(cancel=True)
         worker = self._semantic_worker
         if worker is not None and not worker.is_finished:
             worker.cancel()
@@ -2197,12 +2223,17 @@ class HarnessApp(App[None]):
                 pass
         self._semantic_worker = None
 
-    async def _improvement_action(self, argument) -> None:
+    async def _improvement_action(self, argument, *, confirmed_failure=None) -> None:
         import shlex
         from harness.improvement_cli import perform, refusal_message
         self.say("", "Running supervised improvement; Esc cancels, new work takes priority.")
         try:
-            for line in (await perform(self.kernel, shlex.split(argument))).splitlines():
+            if confirmed_failure is not None:
+                from harness.experience_review import review_confirmed
+                result = await review_confirmed(self.kernel, confirmed_failure)
+            else:
+                result = await perform(self.kernel, shlex.split(argument))
+            for line in result.splitlines():
                 self.say("", line)
         except asyncio.CancelledError:
             self.say("", "Improvement interrupted; inspect /improvements for recorded work.")
@@ -2573,6 +2604,7 @@ class HarnessApp(App[None]):
             # a no-op here rather than tearing down a half-built kernel.
             return
         prompt = self.query_one("#prompt", HistoryInput)
+        self.kernel.loop.cancel_reply_observation()
         running = any(worker is not None and worker.is_running for worker in (
             self._turn_worker, self._compact_worker, self._semantic_worker, self._resource_worker))
         if self.focused is prompt and prompt.vim_enabled and not running:
@@ -2591,7 +2623,8 @@ class HarnessApp(App[None]):
             )
             return
         worker = self._turn_worker
-        if worker is None or worker.is_finished or self._interrupting:
+        settled = self.controller.active is None and self.controller.last_result is not None and not self.controller.pending
+        if worker is None or worker.is_finished or self._interrupting or settled:
             if not self._interrupting and self._semantic_worker is not None:
                 self._semantic_worker.cancel()
             if not self._interrupting and self._resource_worker is not None:
@@ -2650,6 +2683,7 @@ class HarnessApp(App[None]):
             except (WorkerCancelled, WorkerFailed):
                 pass
         try:
+            await self.kernel.loop.finish_reply_observation(cancel=True)
             await self.kernel.resources.close(emit=self.kernel.session.append)
         except Exception as exc:
             self.say("! ", f"local resource cleanup failed: {exc}")
@@ -2702,6 +2736,7 @@ async def run_tui(
         # app.kernel, not the `kernel` param -- /clear may have rebuilt it in
         # place, and the live kernel at exit is the one that needs teardown.
         live = app.kernel
+        await live.loop.finish_reply_observation(cancel=True)
         if live.mcp is not None:
             await live.mcp.stop()
             live.mcp.flush_events()

@@ -8,7 +8,7 @@ from pathlib import Path
 
 from textual.widgets import RichLog
 
-from harness.cli import build_kernel, run_once
+from harness.cli import build_kernel, run_once, run_workflow_once
 from harness.log import read_session
 from harness.plugins import load_plugins
 from harness.provider import EchoProvider, FakeProvider, text_turn, tool_call_turn
@@ -341,7 +341,7 @@ async def test_agent_from_plugin_restricts_tools(tmp_path):
     )
     kernel.registry.register(ExtraTool())
 
-    result = await run_once(kernel, "delegate to the limited agent")
+    result = await run_workflow_once(kernel, "delegate to the limited agent")
     assert result == "parent done"
 
     envelopes = read_session(tmp_path, kernel.session.id)

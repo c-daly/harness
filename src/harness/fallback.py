@@ -149,7 +149,7 @@ class TaskFallback:
         self.record(error, "held", "exhausted")
         return None
 
-    async def dispatch(self, request, *, before_work, on_chunk, on_switch):
+    async def dispatch(self, request, *, before_work, on_chunk, on_switch, examples=None):
         loop = self.loop
 
         async def attempt(current, pricing):
@@ -159,7 +159,7 @@ class TaskFallback:
                     pinned=True, exact_model=True, on_chunk=on_chunk)
             return await loop.dispatcher.dispatch_response(
                 provider=loop.provider, request=current, pricing=loop.pricing,
-                pricing_for=loop.pricing_for, pinned=self.pinned, on_chunk=on_chunk)
+                pricing_for=loop.pricing_for, pinned=self.pinned, on_chunk=on_chunk, examples=examples)
 
         if self.policy is None or not self.policy.models:
             return await attempt(request, loop.pricing)
@@ -183,7 +183,8 @@ class TaskFallback:
                         # it cannot acquire a fresh inference timeout.
                         deadline = min(deadline, began + loop.dispatcher.scope.budget.limits.inference_timeout_seconds)
                         timer.reschedule(deadline)
-                    resolved = self.choose(exc, before_work=before_work, tools=request.tools)
+                    tools = self.loop.dispatcher.conversation_tools(request.tools, exc.execution_kind)
+                    resolved = self.choose(exc, before_work=before_work, tools=tools)
                     if resolved is None:
                         raise
                     pricing = resolved.pricing_dict()

@@ -1500,6 +1500,41 @@ async def test_unchecked_server_never_starts(tmp_path):
         kernel.session.close()
 
 
+async def test_first_task_after_checklist_waits_for_session_start(tmp_path, monkeypatch):
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def delayed_binding(workspace):
+        entered.set()
+        await release.wait()
+
+    monkeypatch.setattr("harness.project_binding.current_project", delayed_binding)
+    kernel, _, _ = _build_checklist_kernel(tmp_path)
+    app = HarnessApp(kernel)
+    try:
+        async with app.run_test() as pilot:
+            assert isinstance(app.screen, ServerChecklistScreen)
+            await pilot.press("enter")
+            await asyncio.wait_for(entered.wait(), 3)
+            composer = app.query_one("#prompt", Input)
+            composer.value = "/task new First task"
+            submission = asyncio.create_task(app._submitted(Input.Submitted(composer, composer.value)))
+            try:
+                await asyncio.sleep(0)
+                assert not submission.done() and composer.value == "/task new First task"
+            finally:
+                release.set()
+                await asyncio.wait_for(submission, 3)
+            events = read_session(tmp_path, kernel.session.id)
+            assert events[0].event.type == "session_started"
+            assert kernel.tasks.selected().definition.title == "First task"
+    finally:
+        release.set()
+        if app._mcp_errlog is not None:
+            app._mcp_errlog.close()
+        await kernel.mcp.stop()
+        kernel.session.close()
+
+
 async def test_checked_server_full_capability(tmp_path):
     kernel, on_counter, off_counter = _build_checklist_kernel(tmp_path)
     app = HarnessApp(kernel)

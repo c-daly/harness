@@ -17,7 +17,7 @@ import subprocess
 import sys
 
 from harness.catalog import Catalog
-from harness.cli import build_kernel, run_once
+from harness.cli import build_kernel, run_workflow_once
 from harness.context import ContextPolicy, ResponsePolicy
 from harness.events import AgentRunFinished, SubagentFinished, SubagentSpawned
 from harness.execution import ExecutionLimits, current_scope
@@ -225,7 +225,7 @@ async def execute(args, request):
     loop.add_signal_handler(signal.SIGINT, task.cancel)
     loop.add_signal_handler(signal.SIGTERM, task.cancel)
     try:
-        result = await run_once(
+        result = await run_workflow_once(
             kernel,
             "Dispatch exactly one swarm-implementer child on the configured model now. "
             "The plugin supplies its complete queued request at dispatch. Wait for it and "

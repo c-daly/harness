@@ -3,30 +3,118 @@
 from copy import deepcopy
 from pathlib import Path
 
+from harness.blobs import BlobStore
 from harness.events import AgentRunStarted, AgentRunFinished, EvaluationRunStarted, EvaluationRunFinished, ImprovementRecorded
 from harness.improvement import (
     Candidate, EvaluationPlan, Evidence, ExperimentResult, ImprovementRecord, ImprovementState, PromptChange, SourceChange, SourceAuthoring,
 )
 from harness.log import read_session
+from harness.improvement_outcomes import project_task_outcomes, record_cited_outcomes
 from harness.session import Session
 from harness.types import SessionId
 
 
+def _check_paired_run(state, change, runs):
+    if change.action == "rollback":
+        return
+    result = state.results[change.result_id]
+    plan = state.plans[result.plan_id]
+    facts = runs.get(result.run_id, ())
+    configuration = plan.suite if isinstance(change, SourceChange) else change.configuration
+    if (len(facts) != 3 or not isinstance(facts[0], EvaluationRunStarted) or facts[1] != result
+            or not isinstance(facts[2], EvaluationRunFinished) or facts[0].plan_id != plan.id
+            or facts[0].incumbent != change.previous or facts[0].configuration != configuration
+            or facts[2].status != "completed" or facts[2].result_id != result.id):
+        raise ValueError("adoption requires its completed paired evaluation run")
+
+
 def read_improvements(base: Path, session_id: SessionId) -> ImprovementState:
+    envelopes = read_session(base, session_id, repair=False)
+    blobs = BlobStore(Path(base) / "sessions" / str(session_id) / "blobs", create=False)
+    return project_improvements(envelopes, blobs=blobs)
+
+
+def project_improvements(envelopes, *, blobs=None) -> ImprovementState:
+    """Rebuild improvement state visible through the supplied session events."""
+    return _project_improvements(envelopes, {}, blobs)
+
+
+def _project_improvements(envelopes, runs, blobs):
+    state = _recorded_improvements(envelopes, runs)
+    project_task_outcomes(state, envelopes, blobs)
+    return state
+
+
+def _recorded_improvements(envelopes, runs):
     state = ImprovementState()
-    for envelope in read_session(base, session_id, repair=False):
+    for envelope in envelopes:
         if isinstance(envelope.event, ImprovementRecorded):
-            state.apply(envelope.event.record)
+            record = envelope.event.record
+            state.apply(record)
+            if isinstance(record, ExperimentResult) and record.run_id is not None:
+                runs.setdefault(record.run_id, []).append(record)
+            elif isinstance(record, (PromptChange, SourceChange)):
+                _check_paired_run(state, record, runs)
         elif isinstance(envelope.event, EvaluationRunStarted):
             state.runs[envelope.event.run_id] = "running"
+            runs.setdefault(envelope.event.run_id, []).append(envelope.event)
         elif isinstance(envelope.event, EvaluationRunFinished):
             state.runs[envelope.event.run_id] = envelope.event.status
+            runs.setdefault(envelope.event.run_id, []).append(envelope.event)
         elif isinstance(envelope.event, AgentRunStarted) and envelope.event.runtime == "resident-source-author":
             state.source_author_runs[envelope.event.task_id] = "running"
         elif isinstance(envelope.event, AgentRunFinished) and envelope.event.result.task_id in state.source_author_runs:
             state.source_author_runs[envelope.event.result.task_id] = envelope.event.result.status
             state.source_author_results[envelope.event.result.task_id] = envelope.event.result.model_dump(mode="json")
     return state
+
+
+def active_prompt_selections(state):
+    """Keep only the selected changes and their originating evaluation artifacts."""
+    selections = {}
+    for identity in (*state.active_prompts.values(), *state.active_assessment_prompts.values()):
+        change = state.prompt_changes[identity]
+        origin = state.selected_adoption(change)
+        artifact = state.results[origin.result_id].artifact if origin else None
+        selections[change.model, change.function] = (change, artifact)
+    return selections
+
+
+def replay_prompt_selections(envelopes):
+    return active_prompt_selections(_recorded_improvements(envelopes, {}))
+
+
+def validate_selection(session, change):
+    """Check the exact selection that will cross Session's durable append boundary."""
+    events = read_session(session.base, session.id, repair=False)
+    runs = {}
+    state = _project_improvements(events, runs, session.blobs)
+    state.apply(change)
+    _check_paired_run(state, change, runs)
+    if isinstance(change, SourceChange):
+        from harness.source_promotion import validate_change
+        validate_change(session.blobs, state, change)
+        return
+    from harness.fold import fold
+    from harness.prompt_improvement import default_prompt, load_function_prompt
+    from harness.semantic_evaluation import EvaluatorConfig
+    active = fold(events)
+    if active.open_intents or active.open_model_intents or active.open_agent_runs or active.open_evaluations:
+        raise ValueError("prompt selection requires an idle session")
+    if change.action == "adopt":
+        load_function_prompt(session.blobs, change.previous, change.function)
+    load_function_prompt(session.blobs, change.prompt, change.function)
+    if change.previous_id is None and change.previous != default_prompt(session, persist=False, function=change.function):
+        raise ValueError("first prompt selection requires the current built-in incumbent")
+    if change.configuration is not None:
+        if change.configuration.size > 16384:
+            raise ValueError("prompt evaluation configuration is too large")
+        config = EvaluatorConfig.model_validate_json(session.blobs.get(change.configuration))
+        if config.model != change.model:
+            raise ValueError("prompt selection model differs from its evaluation configuration")
+    if origin := state.selected_adoption(change):
+        session.blobs.get(state.results[origin.result_id].artifact)
+    return active_prompt_selections(state)
 
 
 def render_improvements(state: ImprovementState) -> str:
@@ -161,32 +249,6 @@ class ImprovementJournal:
                     and updated.candidates[record.candidate_id].source_authoring_id is not None):
             from harness.source_authorship import validate_record
             validate_record(self.session, updated, record)
-        if isinstance(record, SourceChange):
-            from harness.source_promotion import validate_change
-            validate_change(self.session, updated, record)
-        if isinstance(record, PromptChange):
-            from harness.semantic_evaluation import EvaluatorConfig
-            from harness.prompt_improvement import load_function_prompt
-            load_function_prompt(self.session.blobs, record.previous, record.function)
-            load_function_prompt(self.session.blobs, record.prompt, record.function)
-            if record.configuration is not None:
-                if record.configuration.size > 16384:
-                    raise ValueError("prompt evaluation configuration is too large")
-                config = EvaluatorConfig.model_validate_json(self.session.blobs.get(record.configuration))
-                if config.model != record.model:
-                    raise ValueError("prompt selection model differs from its evaluation configuration")
-            if record.action == "adopt":
-                result = updated.results[record.result_id]
-                events = read_session(self.session.base, self.session.id, repair=False)
-                starts = [e.event for e in events if isinstance(e.event, EvaluationRunStarted)
-                          and e.event.run_id == result.run_id]
-                finishes = [e.event for e in events if isinstance(e.event, EvaluationRunFinished)
-                            and e.event.run_id == result.run_id]
-                if (len(starts) != 1 or len(finishes) != 1
-                        or starts[0].plan_id != result.plan_id or starts[0].incumbent != record.previous
-                        or starts[0].configuration != record.configuration
-                        or finishes[0].status != "completed" or finishes[0].result_id != result.id):
-                    raise ValueError("adoption requires its completed paired evaluation run")
-                self.session.blobs.get(result.artifact)
+        record_cited_outcomes(self.session, updated, record)
         self.session.append(ImprovementRecorded(record=record))
         self.state = updated

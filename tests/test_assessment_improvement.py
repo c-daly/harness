@@ -93,6 +93,44 @@ async def passed(kernel, function, provider):
     return candidate, result
 
 
+@pytest.mark.parametrize("function", ("message_kind", *FUNCTIONS))
+async def test_selection_publication_and_replay_require_the_native_completed_run(tmp_path, monkeypatch, function):
+    from harness.events import EvaluationRunFinished, ImprovementRecorded
+    from tests.test_prompt_improvement import LearningProvider, passing_candidate
+
+    provider = LearningProvider() if function == "message_kind" else LearningAssessmentProvider(function)
+    kernel = await kernel_for(tmp_path, provider)
+    try:
+        _, result = (await passing_candidate(kernel) if function == "message_kind"
+                     else await passed(kernel, function, provider))
+        selected = kernel.improvement_service.adopt(result.id, model=MODEL, function=function)
+        log = read_session(kernel.session.base, kernel.session.id)
+        recorded = next(r for r in log if isinstance(r.event, ImprovementRecorded) and r.event.record == selected)
+        # An imported history can retain a published selection while lacking
+        # the evaluation's terminal event. A result alone cannot restore it.
+        history = [r for r in log if not isinstance(r.event, EvaluationRunFinished) and r.seq < recorded.seq]
+        with monkeypatch.context() as m:
+            m.setattr("harness.improvement_journal.read_session", lambda *args, **kwargs: history)
+            seq = kernel.session.last_seq
+            with pytest.raises(ValueError, match="completed paired evaluation"):
+                kernel.session.append(recorded.event)
+            assert kernel.session.last_seq == seq
+            history.append(recorded)
+            with pytest.raises(ValueError, match="completed paired evaluation"):
+                prompt_selection(kernel.session, provider, MODEL, function=function)
+        from harness.blobs import MissingBlobError
+        (kernel.session.blobs._root / result.artifact.sha256).unlink()
+        with pytest.raises(MissingBlobError):
+            prompt_selection(kernel.session, provider, MODEL, function=function)
+        (kernel.session.blobs._root / selected.prompt.sha256).unlink()
+        baseline = kernel.improvement_service.rollback(model=MODEL, function=function)
+        assert prompt_selection(kernel.session, provider, MODEL, function=function)[0] == baseline.prompt
+        with pytest.raises(MissingBlobError):
+            kernel.improvement_service.rollback(model=MODEL, function=function)
+    finally:
+        kernel.session.close()
+
+
 @pytest.mark.parametrize("function", FUNCTIONS)
 async def test_proposal_evaluation_adoption_live_use_restart_and_exact_rollback(tmp_path, function):
     provider = LearningAssessmentProvider(function)

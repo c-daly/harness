@@ -18,7 +18,8 @@ from harness.blobs import BlobRef, BlobStore
 from harness.execution import BudgetExceeded, ExecutionLimits
 from harness.messages import Message
 from harness.provider import Chunk, Usage
-from harness.types import AgentId, ModelId, SessionId
+from harness.tasks import RequirementEvidence
+from harness.types import AgentId, CallId, ModelId, SessionId
 
 if TYPE_CHECKING:
     from harness.session import Session
@@ -66,6 +67,10 @@ class AgentResult(BaseModel):
     output: BlobRef | None = None
     # Optional bounded assistant response for transcript replay, including reasoning.
     response: Message | None = None
+    # When the model draft was held, this is its original immutable receipt.
+    draft_call_id: CallId | None = None
+    delivery_checks: tuple[RequirementEvidence, ...] = ()
+    observed_calls: tuple[CallId, ...] = ()
     usage: Usage = Field(default_factory=Usage)
     acceptance: Literal["unverified"] = "unverified"
     remaining_criteria: tuple[str, ...] = ()
@@ -134,6 +139,9 @@ class AgentOutput:
     reason: str = ""
     usage: Usage = Usage()
     response: Message | None = None
+    draft_call_id: CallId | None = None
+    delivery_checks: tuple[RequirementEvidence, ...] = ()
+    observed_calls: tuple[CallId, ...] = ()
 
 
 def add_usage(total: Usage, increment: Usage) -> Usage:
@@ -199,7 +207,8 @@ async def execute_task(
             if response is not None and (response.role != "assistant" or response.text() != output.text):
                 raise ValueError("agent response must match its assistant output")
             result = terminal(output.status, output.reason, output=session.blobs.put(payload),
-                              usage=output.usage, response=response)
+                              usage=output.usage, response=response, draft_call_id=output.draft_call_id,
+                              delivery_checks=output.delivery_checks, observed_calls=output.observed_calls)
         except OperatorRunCancelled:
             result = terminal("cancelled", "operator_cancelled")
             session.append(AgentRunFinished(result=result, purpose=purpose))

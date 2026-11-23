@@ -144,7 +144,11 @@ def fold(envelopes: list[Envelope]) -> FoldedState:
         elif isinstance(ev, ModelCallCompleted):
             state.open_model_intents.pop(ev.call_id, None)
             if ev.purpose == "conversation":
-                state._append(env.seq, Message.model_validate(ev.message))
+                message = Message.model_validate(ev.message)
+                if not ev.response_deferred:
+                    state._append(env.seq, message)
+                elif ev.stop_reason in ("tool_use", "end_turn") and message.tool_calls():
+                    state._append(env.seq, Message(role=message.role, blocks=message.tool_calls()))
         elif isinstance(ev, (ModelCallFailed, ModelCallCancelled, ModelCallAborted)):
             state.open_model_intents.pop(ev.call_id, None)
         elif isinstance(ev, ToolCallProposed):

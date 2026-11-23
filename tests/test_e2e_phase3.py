@@ -4,7 +4,7 @@ persisting across KERNELS (the 'always allow' future), deny staying absolute."""
 
 from pathlib import Path
 
-from harness.cli import build_kernel, run_once
+from harness.cli import build_kernel, run_once, run_workflow_once
 from harness.events import PermissionRequested
 from harness.interaction import ScriptedResolver
 from harness.log import read_session
@@ -56,7 +56,7 @@ async def test_permission_lifecycle_across_kernels(tmp_path):
         permissions=engine1, resolver=PersistingResolver(engine1),
     )
     sid1 = kernel1.session.id
-    assert await run_once(kernel1, "go") == "run one complete"
+    assert await run_workflow_once(kernel1, "go") == "run one complete"
     asks1 = [e for e in read_session(tmp_path / "base1", sid1)
              if isinstance(e.event, PermissionRequested)]
     assert len(asks1) == 1
@@ -73,7 +73,7 @@ async def test_permission_lifecycle_across_kernels(tmp_path):
         permissions=engine2, resolver=ScriptedResolver([]),  # NO answers available
     )
     sid2 = kernel2.session.id
-    assert await run_once(kernel2, "go again") == "run two complete"
+    assert await run_workflow_once(kernel2, "go again") == "run two complete"
     asks2 = [e for e in read_session(tmp_path / "base2", sid2)
              if isinstance(e.event, PermissionRequested)]
     assert asks2 == []

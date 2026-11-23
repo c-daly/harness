@@ -48,6 +48,7 @@ class SessionStarted(_Event):
     parent_session_id: SessionId | None = None
     parent_seq: int | None = None
     default_model: ModelId | None = None
+    project: dict[str, str] | None = None
 
 
 class SessionEnded(_Event):
@@ -178,6 +179,7 @@ class ModelSelected(_Event):
 class UserMessage(_Event):
     type: Literal["user_message"] = "user_message"
     text: str
+    reply_to_seq: int | None = Field(default=None, ge=1, strict=True)
 
 
 class UserInterrupt(_Event):
@@ -326,6 +328,8 @@ class ModelCallCompleted(_Event):
     call_id: CallId
     model: ModelId
     message: dict[str, Any]  # Message.model_dump(); assistant turn incl. tool-call blocks
+    # Retain raw evidence while deferring user-visible prose to the native run finish.
+    response_deferred: bool = False
     usage: dict[str, int | None]  # absent/None is unknown; zero must be measured
     stop_reason: str = "unknown"  # end_turn | tool_use | max_tokens | unknown (additive, default keeps old logs valid)
     pricing: dict[str, float] = Field(

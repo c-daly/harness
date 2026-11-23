@@ -9,10 +9,8 @@ from pathlib import Path
 from uuid import uuid4
 
 from harness.blobs import BlobStore
-from harness.events import EvaluationRunFinished, EvaluationRunStarted
 from harness.improvement import EvaluationPlan, SourceChange, SourceEntrypoint
 from harness.improvement_journal import read_improvements
-from harness.log import read_session
 from harness.source_improvement import (
     SourceSnapshot, SourceSuite, _encoded, _load, evaluator_version, load_patch,
 )
@@ -33,34 +31,30 @@ def _entry_file(snapshot, entry):
     raise ValueError('source entrypoint module is missing from the snapshot')
 
 
-def validate_change(session, state, change):
-    """Check artifacts and authority before the one durable selection append."""
-    before = _load(session.blobs, change.previous, SourceSnapshot)
-    after = _load(session.blobs, change.source, SourceSnapshot)
-    _entry_file(before, change.previous_entrypoint)
+def validate_change(blobs, state, change, *, publishing=True):
+    """Verify the selected artifacts against the evaluated patch and frozen suite."""
+    after = _load(blobs, change.source, SourceSnapshot)
     _entry_file(after, change.entrypoint)
-    if change.action == 'rollback':
-        return
-    if any(status == 'running' for status in state.runs.values()):
+    origin = state.selected_adoption(change)
+    if origin is None:
+        return after  # The original incumbent needs no candidate artifacts to recover.
+    publishing = publishing and change.action == 'adopt'
+    before = _load(blobs, origin.previous, SourceSnapshot)
+    _entry_file(before, origin.previous_entrypoint)
+    if publishing and any(status == 'running' for status in state.runs.values()):
         raise ValueError('finish or recover running evaluations before source adoption')
-    result = state.results[change.result_id]
+    result = state.results[origin.result_id]
     plan = state.plans[result.plan_id]
     candidate = state.candidates[plan.candidate_id]
-    patch, incumbent, selected = load_patch(session.blobs, candidate.artifact)
-    suite = _load(session.blobs, plan.suite, SourceSuite)
+    patch, incumbent, selected = load_patch(blobs, candidate.artifact)
+    suite = _load(blobs, plan.suite, SourceSuite)
     expected = EvaluationPlan(**(plan.model_dump() | suite.plan_fields()))
-    if (patch.incumbent != change.previous or incumbent != before or selected != after
-            or session.blobs.get(change.source) != _encoded(selected)
-            or plan != expected or evaluator_version(suite) != plan.evaluator_version):
+    if (patch.incumbent != origin.previous or incumbent != before or selected != after
+            or blobs.get(change.source) != _encoded(selected)
+            or plan != expected or publishing and evaluator_version(suite) != plan.evaluator_version):
         raise ValueError('source evaluator, fixed suite or exact snapshots differ; prepare and evaluate a new plan')
-    events = read_session(session.base, session.id, repair=False)
-    starts = [e.event for e in events if isinstance(e.event, EvaluationRunStarted) and e.event.run_id == result.run_id]
-    finishes = [e.event for e in events if isinstance(e.event, EvaluationRunFinished) and e.event.run_id == result.run_id]
-    if (len(starts) != 1 or len(finishes) != 1 or starts[0].plan_id != plan.id
-            or starts[0].incumbent != change.previous or starts[0].configuration != plan.suite
-            or finishes[0].status != 'completed' or finishes[0].result_id != result.id):
-        raise ValueError('source adoption requires its completed paired evaluation run')
-    session.blobs.get(result.artifact)
+    blobs.get(result.artifact)
+    return after
 
 
 def adopt_source(journal, result_id, slot, entrypoint):
@@ -124,7 +118,8 @@ def launch_source(base, session_id, slot, arguments, *, execute=True):
     blob_root = base / 'sessions' / str(session_id) / 'blobs'
     if any(p.is_symlink() for p in (blob_root, *blob_root.parents)):
         raise ValueError('source launch blob paths must not follow symlinks')
-    snapshot = _load(BlobStore(blob_root, create=False), change.source, SourceSnapshot)
+    blobs = BlobStore(blob_root, create=False)
+    snapshot = validate_change(blobs, state, change, publishing=False)
     expected = _entry_file(snapshot, change.entrypoint)
     directory = base / 'source-launches'
     if directory.is_symlink():

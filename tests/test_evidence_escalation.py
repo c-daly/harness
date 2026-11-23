@@ -431,9 +431,7 @@ async def test_terminal_exposes_failed_and_passing_checks_without_accepting_task
     async with app.run_test(size=(180, 55)) as pilot:
         await command(app, pilot, "/task new Solve with checked fallback")
         await command(app, pilot, "/task require-json " + json.dumps(output_requirement()))
-        await command(app, pilot, "Solve")
-        if app._turn_worker is not None:
-            await asyncio.wait_for(app._turn_worker.wait(), 3)
+        await app.kernel.loop.run_task(app.kernel.tasks.prepare("Solve"))
         before = read_session(tmp_path, app.kernel.session.id)
         await command(app, pilot, "/coordination")
         app.query_one("#prompt", Input).value = "keep this draft"

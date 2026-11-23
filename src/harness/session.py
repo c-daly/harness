@@ -6,7 +6,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from harness.blobs import BlobStore
-from harness.events import Envelope, Event, SessionStarted
+from harness.events import (
+    AgentRunFinished, AgentRunStarted, Envelope, Event, ImprovementRecorded, SessionResumed, SessionStarted, TaskChecked,
+)
 from harness.log import EventLogWriter
 from harness.types import ModelId, SessionId
 
@@ -67,8 +69,25 @@ class Session:
         # One live owner prevents independent dispatchers from resetting admission.
         self._execution_ledger = None
         self._execution_budget = None
+        self._experience_project = None
+        self._experience_run = False
+        from harness.reply_semantics import ReplyHistory
+        self.reply_history = ReplyHistory()
+        # A new session has no selections. Resume seeds them from its existing
+        # replay. A directly reopened administrative writer can recover them lazily.
+        self.prompt_selections = {} if start_seq == 0 else None
+        self.prompt_selection_error = None
 
-    def start(self) -> Envelope:
+    def observe_project_scope(self, event):
+        """Recover the single-project prefix across starts, including older native bindings."""
+        from harness.project_examples import projected_scope
+        self._experience_project = projected_scope(self._experience_project, event)
+        if isinstance(event, (SessionStarted, SessionResumed)):
+            self._experience_run = False
+        elif isinstance(event, AgentRunStarted) and event.parent_run_id is None:
+            self._experience_run = bool(self._experience_project)
+
+    def start(self, *, project=None) -> Envelope:
         if self._seq != 0:
             raise RuntimeError("Session.start() already called")
         parent_id, parent_seq = self._parent if self._parent else (None, None)
@@ -77,16 +96,49 @@ class Session:
                 parent_session_id=parent_id,
                 parent_seq=parent_seq,
                 default_model=self._default_model,
+                project=project,
             )
         )
+
+    def index_experience(self, *, recorded=None):
+        if self._experience_run:
+            from harness.project_examples import index_prefix
+            try:
+                if recorded is None:
+                    size, seq = self._writer.path.stat().st_size, self.last_seq
+                else:
+                    from itertools import islice
+                    line_number, seq = recorded
+                    with self._writer.path.open("rb") as journal:
+                        size = sum(map(len, islice(journal, line_number)))
+                index_prefix(self.base, self._experience_project, self.id, size, seq, if_missing=recorded is not None)
+            except (OSError, ValueError):
+                # An unavailable derived index must not invalidate a committed event.
+                pass
 
     def append(self, event: Event) -> Envelope:
         for redactor in self._redactors:
             event = redactor(event)  # frozen events: redactors must model_copy(update=...)
+        selections = None
+        if isinstance(event, ImprovementRecorded) and event.record.kind in {"prompt_change", "source_change"}:
+            from harness.improvement_journal import validate_selection
+            # A failed publication can expose missing evaluation evidence. Reuse
+            # cached lineage only after validation and the durable write succeed.
+            self.prompt_selections = None
+            selections = validate_selection(self, event.record)
         # _seq advances before the write and is not rolled back on failure: a failed write leaves a gap, never a duplicate
         self._seq += 1
         envelope = Envelope(session_id=self.id, seq=self._seq, ts=time.time(), event=event)
         self._writer.append(envelope)  # source of truth first
+        self.reply_history.apply(envelope)
+        if selections is not None:
+            self.prompt_selections = selections
+            self.prompt_selection_error = None
+        if isinstance(event, (SessionStarted, SessionResumed, AgentRunStarted)):
+            self.observe_project_scope(event)
+        elif isinstance(event, (AgentRunFinished, TaskChecked)) or (
+                isinstance(event, ImprovementRecorded) and event.record.kind == "evidence"):
+            self.index_experience()
         if self._task_state is not None:
             self._task_state.apply(envelope)
         self.bus.publish(envelope)  # observers second; never blocking
@@ -99,6 +151,10 @@ class Session:
     @property
     def closed(self) -> bool:
         return self._closed
+
+    @property
+    def last_seq(self) -> int:
+        return self._seq
 
     def __enter__(self) -> "Session":
         return self
