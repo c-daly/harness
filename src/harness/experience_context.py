@@ -4,7 +4,8 @@ import asyncio
 from dataclasses import asdict, dataclass, field
 import json
 
-from harness.events import ContextSourceObserved
+from harness.blobs import BlobIntegrityError, MissingBlobError
+from harness.events import ContextSourceObserved, ErrorRaised
 from harness.errors import ContextOverflow
 from harness.improvement_examples import select_examples, session_examples
 from harness.inference import input_bytes
@@ -153,5 +154,11 @@ async def ordinary_examples(loop, task, project):
         examples += await project_examples(loop, project=project)
     if not examples:
         return None
-    observation, selected = await select_examples(loop.semantics, model=loop.model, query=task.prompt, examples=examples)
+    try:
+        observation, selected = await select_examples(loop.semantics, model=loop.model,
+                                                     query=task.prompt, examples=examples)
+    except (OSError, ValueError, KeyError, BlobIntegrityError, MissingBlobError, TornLogError) as exc:
+        session.append(ErrorRaised(where="semantic:context_selection",
+            message=f"Historical example selection unavailable for this turn: {type(exc).__name__}."))
+        return None
     return ExampleContext(observation.id, selected, loop.model) if selected else None
