@@ -2,6 +2,8 @@
 
 The implementation branch starts at committed main `a3b0eb9`. The earlier polish branch at `4bbe3b3` supplies comparison cases. The first independently evaluated change on this branch is `f3c26a1`. [Original design](https://github.com/c-daly/harness/blob/a3b0eb97580a2a5aa5e8eeb231c516b6af32277e/docs/superpowers/plans/2026-09-06-core-agency-roadmap.md#L155-L191)
 
+**Conformance remains incomplete for ordinary replies.** The roadmap requires observing explicit corrections and interpreting submitted messages, initially in shadow mode. In ten follow-ups the conversation journal saved every message, while the supervised system produced zero reply interpretations and zero linked corrections. The classifier runs through explicit commands and evaluation. The rebuild excluded the earlier fixed feedback prompts and left their ordinary-input coverage missing. The implementation gap includes associating conversational feedback with its target. A separate design question concerns the evidence needed to confirm a free-form failure when the reply is ambiguous. [Submitted-message interpretation and evaluation gates](https://github.com/c-daly/harness/blob/a3b0eb97580a2a5aa5e8eeb231c516b6af32277e/docs/superpowers/plans/2026-09-06-core-agency-roadmap.md#L340-L373)
+
 | Comparison | Main or incumbent | Candidate | Interpretation |
 | --- | --- | --- | --- |
 | Six historical lifecycle checks, native paired evaluation | Main passed 3/6 | `f3c26a1` passed 6/6. The polish branch also passed 6/6. | The original scripts and gates were reused. One main failure stopped early on an absent inspection property. A separate probe reached the underlying publication defect. No source selection was made in this experiment. |
