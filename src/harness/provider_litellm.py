@@ -384,6 +384,16 @@ async def _acomplete(
                     await owned_http.aclose()
 
 
+def _configured_api_key(env_name: str | None) -> str | None:
+    if env_name is None:
+        return None
+    key = os.environ.get(env_name)
+    if not key or not key.strip():
+        raise AuthFailed("Set the credential environment variable named by api_key_env, "
+                         "then start Harness from that environment and retry.")
+    return key
+
+
 @dataclass
 class LiteLLMProvider:
     api_base: str | None = None
@@ -392,7 +402,7 @@ class LiteLLMProvider:
     def infer(self, request: "InferenceRequest") -> AsyncIterator[Chunk]:
         return _acomplete(model=request.model, messages=request.messages, tools=request.tools,
                           api_base=self.api_base,
-                          api_key=os.environ.get(self.api_key_env) if self.api_key_env else None,
+                          api_key=_configured_api_key(self.api_key_env),
                           request=request)
 
     async def complete(
@@ -404,7 +414,7 @@ class LiteLLMProvider:
     ) -> AsyncIterator[Chunk]:
         async with aclosing(_acomplete(
             model=model, messages=messages, tools=tools, api_base=self.api_base,
-            api_key=os.environ.get(self.api_key_env) if self.api_key_env else None,
+            api_key=_configured_api_key(self.api_key_env),
         )) as source:
             async for chunk in source:
                 yield chunk
@@ -469,6 +479,7 @@ class CatalogProvider:
         from contextlib import nullcontext
         from harness.execution import current_model_call_id, current_scope
         from harness.scheduling import request_priority
+        key = _configured_api_key(resolved.api_key_env) if resolved is not None else None
         readiness = nullcontext()
         started = time.monotonic()
         if resolved is not None and resolved.local is not None:
@@ -478,7 +489,6 @@ class CatalogProvider:
             readiness = scope.resources.use(resolved, emit=scope.session.append,
                 priority=request_priority(request.purpose, scope.depth), timeout_seconds=request.timeout_seconds,
                 call_id=current_model_call_id.get())
-        key = os.environ.get(resolved.api_key_env) if resolved and resolved.api_key_env else None
         if resolved and resolved.api_base and key is None:
             key = "local-no-key"
         async with readiness:
@@ -558,7 +568,7 @@ class CatalogProvider:
             return
         if resolved.local is not None:
             raise ProviderError("local profiles require bounded inference through a dispatcher")
-        api_key = os.environ.get(resolved.api_key_env) if resolved.api_key_env else None
+        api_key = _configured_api_key(resolved.api_key_env)
         if resolved.api_base and api_key is None:
             # litellm openai/* routes refuse to run without SOME api_key, even
             # against a local api_base; local servers ignore the value. Local

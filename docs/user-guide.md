@@ -279,7 +279,7 @@ models and quantization comparisons remain on the
 | `route` (required) | Model identifier for the selected connection. The default transport takes a LiteLLM model string. |
 | `transport` | `"claude-cli"` with `route = "claude-cli/default"` or a specific Claude model connects Saoirse to a signed-in subscription through the SDK with direct CLI fallback. |
 | `api_base` | Custom endpoint base URL — for OpenAI-compatible or local servers. |
-| `api_key_env` | Name of the env var holding the API key (a *name*, never the key itself). |
+| `api_key_env` | Name of the environment variable holding this connection's API key. A missing or blank value stops the request before contacting the provider. |
 | `backend` | Runs an external agent through the signed-in `claude-code`, `codex` or `antigravity` backend. Its `route` is `<backend>/<model>`. |
 | `tags` | Free-form capability labels you can use to organize aliases. |
 | `input_cost_per_token` / `output_cost_per_token` | Pricing overrides. |
