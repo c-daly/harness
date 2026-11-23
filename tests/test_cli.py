@@ -724,6 +724,36 @@ def test_explicit_demo_prompt_echoes(tmp_path, capsys):
     assert "echo: hello" in capsys.readouterr().out
 
 
+@pytest.mark.parametrize("source", ["# One Ω\r\n\r\nTwo\r\n", "# No final newline", ""])
+def test_prompt_mode_pipes_the_authorized_source_exactly(tmp_path, monkeypatch, source):
+    import io
+    import sys
+    from harness.provider import tool_call_turn
+
+    (tmp_path / "guide.md").write_bytes(source.encode("utf-8"))
+    provider = FakeProvider([tool_call_turn("", "read_file", {"file_path": "guide.md", "display": True})])
+    monkeypatch.setattr("harness.cli.FakeProvider", lambda script: provider)
+    sink = io.BytesIO()
+    monkeypatch.setattr(sys, "stdout", io.TextIOWrapper(sink, encoding="latin-1", newline="\r\n"))
+    run_cli("--demo", "-p", "Show the guide", "--workspace", str(tmp_path), "--base-dir", str(tmp_path / "state"),
+            "--no-plugins", "--no-mcp")
+    assert sink.getvalue() == source.encode("utf-8")
+    assert len(provider.calls) == 1
+
+
+def test_prompt_mode_terminal_neutralizes_file_controls(tmp_path, monkeypatch, capsys):
+    import sys
+    from harness.provider import tool_call_turn
+
+    (tmp_path / "guide.md").write_bytes("one\r\n\ttwo\x1b]8;;\x07 three\x9b four\x7f".encode())
+    provider = FakeProvider([tool_call_turn("", "read_file", {"file_path": "guide.md", "display": True})])
+    monkeypatch.setattr("harness.cli.FakeProvider", lambda script: provider)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
+    run_cli("--demo", "-p", "Show the guide", "--workspace", str(tmp_path), "--base-dir", str(tmp_path / "state"),
+            "--no-plugins", "--no-mcp")
+    assert capsys.readouterr().out == "one\n\ttwo]8;; three four\n"
+
+
 def test_prompt_mode_incomplete_result_prints_partial_output_and_exits_nonzero(tmp_path, monkeypatch, capsys):
     import pytest
     from harness.provider import StreamStop, TextDelta

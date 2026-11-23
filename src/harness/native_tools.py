@@ -185,12 +185,17 @@ class ReadFileTool:
             description=(
                 "Read a text file with line numbers. Accepts an absolute path or one relative "
                 "to the workspace root. Use offset (1-based start line) and limit (max lines, "
-                "default 2000) to window large files."
+                "default 2000) to window large files. When the user wants to see the file "
+                "itself, call read_file alone with display=true as your final action. "
+                "Harness presents the text directly. For analysis, editing, or any "
+                "remaining work, omit display."
             ),
             parameters={
                 "type": "object",
                 "properties": {
                     "file_path": {"type": "string"},
+                    "display": {"type": "boolean", "description":
+                        "Deliver this file or requested range to the user as the final answer."},
                     "offset": {"type": "integer", "minimum": 1},
                     "limit": {"type": "integer", "minimum": 1},
                 },
@@ -198,8 +203,11 @@ class ReadFileTool:
             },
         )
 
+    def resolve_path(self, raw: str) -> Path:
+        return _resolve(self._access, raw)
+
     async def __call__(self, args: dict[str, Any]) -> str:
-        path = _resolve(self._access, args.get("file_path", ""))
+        path = self.resolve_path(args.get("file_path", ""))
         try:
             # presence-based, not truthiness: 0 must be rejected below, not
             # silently swapped for the default
@@ -218,7 +226,9 @@ class ReadFileTool:
             )
         windowed = raw_offset is not None or raw_limit is not None
         try:
-            result, digest = await asyncio.to_thread(self._read, path, offset, limit, windowed)
+            result, digest = await asyncio.to_thread(
+                self._read, path, offset, limit, windowed, args.get("display") is True
+            )
         except _FileMissing:
             if self._rs is not None:
                 self._rs.forget(str(path))
@@ -227,21 +237,23 @@ class ReadFileTool:
             self._rs.mark(str(path), digest)
         return result
 
-    def _read(self, path: Path, offset: int, limit: int, windowed: bool) -> tuple[str, str]:
+    def _read(self, path: Path, offset: int, limit: int, windowed: bool, display: bool) -> tuple[str, str]:
         if not path.exists():
             raise _FileMissing(
                 f"file does not exist: {path}. Check the path, or use glob/grep to find it."
             )
         if path.is_dir():
             raise ToolError(f"{path} is a directory. Use glob to list files in it.")
+        if display and not path.is_file():
+            raise ToolError(f"{path} is not a regular text file.")
         try:
-            size = path.stat().st_size
-            if not windowed and size > _READ_MAX_FILE_BYTES:
-                raise ToolError(
-                    f"file is {size} bytes, too large to read at once. Pass offset and limit to "
-                    f"read a range (e.g. offset: 1, limit: 500), or use grep to find the section."
-                )
-            data = path.read_bytes()
+            with path.open("rb") as source:
+                if not windowed and (size := os.fstat(source.fileno()).st_size) > _READ_MAX_FILE_BYTES:
+                    raise ToolError(
+                        f"file is {size} bytes, too large to read at once. Pass offset and limit to "
+                        f"read a range (e.g. offset: 1, limit: 500), or use grep to find the section."
+                    )
+                return self._read_window(source, offset, limit, windowed, display)
         except FileNotFoundError as exc:
             raise _FileMissing(f"file does not exist: {path}. Check the path before retrying.") from exc
         except OSError as exc:
@@ -249,32 +261,74 @@ class ReadFileTool:
                 f"could not read {path}: {exc.strerror or exc}. The file may have restrictive "
                 f"permissions or be unreadable. Check access, or use bash (e.g. ls -l) to inspect it."
             ) from exc
-        text = data.decode("utf-8", errors="replace")
-        digest = hashlib.sha256(data).hexdigest()
-        if text == "":
-            return "File exists but is empty.", digest
-        all_lines = text.split("\n")
-        if all_lines and all_lines[-1] == "":
-            all_lines = all_lines[:-1]  # drop trailing-newline artifact
-        total = len(all_lines)
+
+    @staticmethod
+    def _read_window(source, offset: int, limit: int, windowed: bool, display: bool) -> tuple[str, str]:
+        digest = hashlib.sha256()
+        lines = []
+        total = consumed = output_size = 0
+        too_large = (
+            f"the requested window is over {_READ_MAX_BYTES} bytes. Narrow it with a "
+            "smaller limit, or use grep to find the relevant lines."
+        )
+        # Bound even a single line with no newline. For numbered reads four
+        # bytes per character retain enough UTF-8 to apply the character cap.
+        prefix_bytes = 4 * (_LINE_MAX_CHARS + 1)
+        chunk = source.readline(_READ_MAX_BYTES + 1)
+        while chunk:
+            total += 1
+            selected = offset <= total < offset + limit
+            captured = bytearray()
+            while chunk:
+                consumed += len(chunk)
+                if not windowed and consumed > _READ_MAX_FILE_BYTES:
+                    raise ToolError("File is too large to read at once. Pass offset and limit to read a range.")
+                digest.update(chunk)
+                if selected:
+                    if display:
+                        if output_size + len(captured) + len(chunk) > _READ_MAX_BYTES:
+                            raise ToolError(too_large)
+                        captured.extend(chunk)
+                    else:
+                        captured.extend(chunk[:prefix_bytes - len(captured)])
+                ends_line = chunk.endswith(b"\n")
+                chunk = source.readline(_READ_MAX_BYTES + 1)
+                if ends_line:
+                    break
+            if selected:
+                try:
+                    line = captured.decode("utf-8", errors="strict" if display else "replace")
+                except UnicodeDecodeError as exc:
+                    raise ToolError(
+                        "The requested file or range contains invalid UTF-8 and cannot be displayed as text."
+                    ) from exc
+                if not display:
+                    line = _format_numbered([line.removesuffix("\n")], total)
+                    output_size += bool(lines)  # newline between numbered lines
+                output_size += len(line.encode())
+                if output_size > _READ_MAX_BYTES:
+                    raise ToolError(too_large)
+                lines.append(line)
+
+        if total == 0:
+            return ("" if display else "File exists but is empty."), digest.hexdigest()
         if offset > total:
             raise ToolError(
                 f"offset {offset} is beyond the end of the file ({total} lines). "
                 f"Use a smaller offset or omit it to read from the start."
             )
-        window = all_lines[offset - 1 : offset - 1 + limit]
-        body = _format_numbered(window, offset)
-        if len(body.encode()) > _READ_MAX_BYTES:
-            raise ToolError(
-                f"the requested window is over {_READ_MAX_BYTES} bytes. Narrow it with a "
-                f"smaller limit, or use grep to find the relevant lines."
-            )
-        last = offset - 1 + len(window)
-        if last < total:
+        last = offset - 1 + len(lines)
+        if display:
+            if not windowed and last < total:
+                raise ToolError(f"File contains {total} lines. Specify an offset and limit to show a range.")
+            body = "".join(lines)
+        else:
+            body = "\n".join(lines)
+        if last < total and not display:
             body += (
                 f"\n\n(showing lines {offset}\u2013{last} of {total} \u2014 use offset to continue)"
             )
-        return body, digest
+        return body, digest.hexdigest()
 
 
 class WriteFileTool:

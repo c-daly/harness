@@ -16,7 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from harness.blobs import BlobRef, BlobStore
 from harness.execution import BudgetExceeded, ExecutionLimits
-from harness.messages import Message
+from harness.messages import FilePresentation, Message
 from harness.provider import Chunk, Usage
 from harness.tasks import RequirementEvidence
 from harness.types import AgentId, CallId, ModelId, SessionId
@@ -67,6 +67,7 @@ class AgentResult(BaseModel):
     output: BlobRef | None = None
     # Optional bounded assistant response for transcript replay, including reasoning.
     response: Message | None = None
+    presented_file: FilePresentation | None = None
     # When the model draft was held, this is its original immutable receipt.
     draft_call_id: CallId | None = None
     delivery_checks: tuple[RequirementEvidence, ...] = ()
@@ -142,6 +143,7 @@ class AgentOutput:
     draft_call_id: CallId | None = None
     delivery_checks: tuple[RequirementEvidence, ...] = ()
     observed_calls: tuple[CallId, ...] = ()
+    presented_file: FilePresentation | None = None
 
 
 def add_usage(total: Usage, increment: Usage) -> Usage:
@@ -208,7 +210,8 @@ async def execute_task(
                 raise ValueError("agent response must match its assistant output")
             result = terminal(output.status, output.reason, output=session.blobs.put(payload),
                               usage=output.usage, response=response, draft_call_id=output.draft_call_id,
-                              delivery_checks=output.delivery_checks, observed_calls=output.observed_calls)
+                              delivery_checks=output.delivery_checks, observed_calls=output.observed_calls,
+                              presented_file=output.presented_file)
         except OperatorRunCancelled:
             result = terminal("cancelled", "operator_cancelled")
             session.append(AgentRunFinished(result=result, purpose=purpose))

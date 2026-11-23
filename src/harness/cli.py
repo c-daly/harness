@@ -467,6 +467,11 @@ async def _run_headless(kernel, prompt, run_task, *, on_settled=None) -> str:
                 kernel.session.close()
 
 
+def terminal_text(text: str) -> str:
+    """Drop terminal control bytes while keeping readable text, tabs and line breaks."""
+    return "".join(ch for ch in text if ch in "\n\t" or " " <= ch < "\x7f" or ch >= "\xa0")
+
+
 async def _amain(kernel: Kernel, prompt: str) -> str:
     task = asyncio.current_task()
     loop = asyncio.get_running_loop()
@@ -474,7 +479,22 @@ async def _amain(kernel: Kernel, prompt: str) -> str:
 
     def deliver(answer):
         nonlocal settled
-        print(answer, flush=True)
+        result = kernel.controller.last_result
+        is_file = result is not None and result.presented_file is not None
+        terminal = sys.stdout.isatty()
+        if is_file and not terminal:
+            # A pipe receives the exact authorized source, including its line endings.
+            stream = getattr(sys.stdout, "buffer", None)
+            if stream is None:
+                sys.stdout.write(answer)
+                sys.stdout.flush()
+            else:
+                stream.write(answer.encode("utf-8"))
+                stream.flush()
+        else:
+            text = terminal_text(answer) if terminal else answer
+            end = "" if is_file and (not text or text.endswith("\n")) else "\n"
+            print(text, end=end, flush=True)
         settled = True
 
     def interrupt():

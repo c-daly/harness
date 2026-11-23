@@ -114,6 +114,78 @@ async def test_ask_approved_executes(tmp_path):
     assert resolved[0].allowed is True
 
 
+@pytest.mark.parametrize("source", ["", "  short\r\n", "Ω" * 10_000])
+async def test_native_presentation_replays_only_the_published_file(tmp_path, source):
+    from harness.agent import AgentResult
+    from harness.events import AgentRunFinished
+    from harness.fold import fold
+    from harness.native_tools import ReadFileTool
+    from harness.workspace import WorkspaceGuard
+
+    path = tmp_path / "notes.txt"
+    path.write_bytes(source.encode())
+    hooks = HookBus()
+    hooks.register_dispatch("workspace", WorkspaceGuard(tmp_path))
+    session, dispatcher = _kernel_bits(tmp_path, hooks)
+    dispatcher.registry.register(ReadFileTool(workspace_root=tmp_path))
+    call = ProposedToolCall(CallId("read"), ToolName("read_file"), {"file_path": path.name, "display": True})
+    result = await dispatcher.dispatch_tool(call, exact=True)
+    assert result.presented_file.call_id == call.call_id
+    assert result.presented_file.file_path == str(path)
+    assert result.read_text() == source
+    run = AgentResult(task_id="task", run_id="run", status="completed", presented_file=result.presented_file,
+                      output=session.blobs.put(source.encode()))
+    path.write_text("different current contents")
+    session.append(AgentRunFinished(result=run, purpose="conversation"))
+    session.close()
+    envelopes = read_session(tmp_path, SessionId("s1"))
+    block = fold(envelopes).messages[-1].blocks[0]
+    assert block.display_path == str(path)
+    assert (block.text, block.blob) == (result.text, result.blob)
+    finish = envelopes[-1]
+    for bad_run in (run.model_copy(update={"output": session.blobs.put(b"unrelated")}),
+                    run.model_copy(update={"status": "incomplete"}),
+                    run.model_copy(update={"presented_file": result.presented_file.model_copy(
+                        update={"file_path": "wrong-title.txt"})})):
+        forged = finish.model_copy(update={"event": AgentRunFinished(result=bad_run, purpose="conversation")})
+        assert fold([*envelopes[:-1], forged]).messages[-1].blocks[0].display_path is None
+
+
+@pytest.mark.parametrize("replacement", [{"file_path": "other"}, {"display": False}, {"offset": 2}])
+async def test_requested_display_rejects_hook_changes_before_execution(tmp_path, replacement):
+    from harness.native_tools import ReadFileTool
+
+    hooks = HookBus()
+    def rewrite(call):
+        # A hook can mutate the args in place, even on the frozen call.
+        call.args.update(replacement)
+        return Rewrite(action=call)
+    hooks.register_dispatch("rewrite", rewrite)
+    session, dispatcher = _kernel_bits(tmp_path, hooks)
+    dispatcher.registry.register(ReadFileTool(workspace_root=tmp_path))
+    args = {"file_path": "requested", "display": True}
+    outcome = await dispatcher.dispatch_tool(ProposedToolCall(CallId("read"), ToolName("read_file"), args))
+    session.close()
+    assert outcome.is_error and outcome.presented_file is None
+    assert "differs" in outcome.read_text()
+    assert not any(isinstance(ev, DispatchResolved) for ev in _events(tmp_path))
+
+
+async def test_display_requires_native_reader(tmp_path):
+    from harness.native_tools import ReadFileTool
+
+    class OtherReader(ReadFileTool):
+        async def __call__(self, args):
+            pytest.fail("a replacement reader must not run as the authorized native viewer")
+
+    session, dispatcher = _kernel_bits(tmp_path)
+    dispatcher.registry.register(OtherReader(workspace_root=tmp_path))
+    outcome = await dispatcher.dispatch_tool(ProposedToolCall(
+        CallId("read"), ToolName("read_file"), {"file_path": "requested", "display": True}))
+    session.close()
+    assert outcome.is_error and outcome.presented_file is None
+
+
 async def test_ask_denied_headless_returns_error(tmp_path):
     hooks = HookBus()
     hooks.register_dispatch("asker", lambda a: Ask(reason="confirm?"), priority=10)

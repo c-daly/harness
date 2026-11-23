@@ -97,6 +97,7 @@ class FoldedState:
 
 def fold(envelopes: list[Envelope]) -> FoldedState:
     state = FoldedState()
+    last_presentation = None
     for env in envelopes:
         state.tasks.apply(env)
         state.usage_budget.apply(env.event)
@@ -141,6 +142,10 @@ def fold(envelopes: list[Envelope]) -> FoldedState:
             state.agent_runs[ev.result.run_id] = ev.result
             if ev.purpose == "conversation" and ev.result.response is not None:
                 state._append(env.seq, ev.result.response)
+            elif (ev.purpose == "conversation" and ev.result.status == "completed"
+                  and ev.result.output is not None and last_presentation is not None
+                  and ev.result.presented_file == last_presentation):
+                last_presentation.mark_transcript(state.messages, output=ev.result.output)
         elif isinstance(ev, ModelCallCompleted):
             state.open_model_intents.pop(ev.call_id, None)
             if ev.purpose == "conversation":
@@ -172,6 +177,7 @@ def fold(envelopes: list[Envelope]) -> FoldedState:
             if ev.call_id in state._agent_tool_calls:
                 state._agent_tool_calls.discard(ev.call_id)
                 continue
+            last_presentation = ev.presented_file if not ev.is_error else None
             state._append(
                 env.seq,
                 Message.tool_result(

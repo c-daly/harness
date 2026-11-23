@@ -15,6 +15,7 @@ from harness.handoff import HandoffRecord
 from harness.resources import ResourceObservation
 from harness.context import ContextPolicy
 from harness.improvement import ImprovementRecord
+from harness.messages import FilePresentation
 from harness.fallback import FallbackDecision, FallbackPolicy
 from harness.scheduling import LocalRequestObservation
 from harness.semantics import AssessmentObservation, SemanticObservation
@@ -299,6 +300,7 @@ class ToolCallCompleted(_Event):
     result_text: str | None = None
     result_blob: BlobRef | None = None
     is_error: bool = False
+    presented_file: FilePresentation | None = None
     duration_ms: int = 0
 
 

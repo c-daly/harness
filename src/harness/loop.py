@@ -244,7 +244,7 @@ class AgentLoop:
             capabilities = {"handoff_scope": capture_scope(self.dispatcher)}
             if project := await current_project(self.workspace_root):
                 capabilities["project"] = project
-            return await execute_task(
+            result = await execute_task(
                 self.session, task, runtime="harness", model=self.model,
                 purpose="conversation" if primary_conversation.get() == (self.dispatcher, task.id) else "task",
                 activity=self.dispatcher.scope.budget.activity,
@@ -254,6 +254,9 @@ class AgentLoop:
                 capabilities=capabilities,
                 execute=lambda: self._run_task_body(task, on_progress, project, _reply_to_seq),
             )
+            if result.presented_file is not None:
+                result.presented_file.mark_transcript(self.history, output=result.output)
+            return result
         finally:
             self._task_active = False
             self.active_model = None
@@ -441,6 +444,13 @@ class AgentLoop:
                             is_error=outcome.is_error,
                         )
                     )
+                # A sole native display read can deliver the source directly. A turn
+                # using advisory examples still follows the checked delivery path above.
+                if (len(outcomes) == 1 and outcomes[0].presented_file is not None
+                        and self.dispatcher.owns_primary_coordination() and not task.acceptance_criteria
+                        and not task.handoff_id and not (example_context and example_context.received)):
+                    source = outcomes[0]
+                    return AgentOutput(source.read_text(), usage=usage, presented_file=source.presented_file)
             self.session.append(
                 ErrorRaised(where="loop", message=f"max iterations ({max_iterations}) reached")
             )

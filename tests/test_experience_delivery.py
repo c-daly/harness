@@ -80,13 +80,18 @@ async def test_current_native_checks_gate_previous_examples(tmp_path, selected_c
         kernel.session.close()
 
 
-@pytest.mark.parametrize("source", ["schedule.txt", "other.txt", "missing.txt"])
-async def test_ordinary_read_shows_actual_observation_and_provisional_interpretation(tmp_path, selected_context, source):
+@pytest.mark.parametrize(("source", "display"), [
+    ("schedule.txt", False), ("other.txt", False), ("missing.txt", False), ("schedule.txt", True),
+])
+async def test_ordinary_read_shows_actual_observation_and_provisional_interpretation(
+    tmp_path, selected_context, source, display,
+):
     (tmp_path / "schedule.txt").write_text("Platform seven")
     (tmp_path / "other.txt").write_text("office supplies")
     draft = "I think the train leaves from platform seven."
     kernel = await kernel_for(tmp_path / "state", FakeProvider([
-        tool_call_turn("An unchecked intermediate conclusion", "read_file", {"file_path": source}, call_id="current-read"),
+        tool_call_turn("An unchecked intermediate conclusion", "read_file", {"file_path": source, "display": display},
+                       call_id="current-read"),
         text_turn(draft),
     ]), workspace_root=tmp_path, native_tools=True)
     chunks = []
@@ -95,6 +100,7 @@ async def test_ordinary_read_shows_actual_observation_and_provisional_interpreta
         answer = await kernel.loop.run_conversation(kernel.tasks.prepare("Which platform does the schedule give?"))
         visible = answer.read_text(kernel.session.blobs)
         assert answer.status == "incomplete" and not answer.delivery_checks
+        assert answer.presented_file is None
         if source == "missing.txt":
             assert not answer.observed_calls and draft not in visible
         else:

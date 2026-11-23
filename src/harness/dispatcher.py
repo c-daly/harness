@@ -38,7 +38,7 @@ from harness.interaction import PermissionRequest, Resolver
 from harness.inference import (
     InferenceRequest, InferenceResult, LegacyCompletionAdapter, check_input, collect_bounded, infer,
 )
-from harness.messages import Message, materialize_tool_results
+from harness.messages import FilePresentation, Message, materialize_tool_results
 from harness.provider import Chunk, ModelProvider, Usage
 from harness.callctx import reset_current_call_id, set_current_call_id
 from harness.redaction import StringRedactor, identity_redact
@@ -77,6 +77,7 @@ class ToolOutcome:
     is_error: bool
     _blobs: BlobStore | None = field(default=None, repr=False, compare=False)
     resolved: DispatchResolved | None = field(default=None, repr=False, compare=False)
+    presented_file: FilePresentation | None = None
 
     def read_text(self) -> str:
         if self.blob is not None:
@@ -185,15 +186,15 @@ class Dispatcher:
                 return None, "denied by user"
         return outcome.effective, None
 
-    async def dispatch_tool(self, call: ProposedToolCall, *, purpose=None) -> ToolOutcome:
+    async def dispatch_tool(self, call: ProposedToolCall, *, purpose=None, exact: bool = False) -> ToolOutcome:
         with self.scope.budget.activity.track(
             session_id=self.session.id, kind="tool", label=str(call.tool),
             call_id=str(call.call_id),
             phase="reading context" if purpose == "context" else "tool execution",
         ):
-            return await self._dispatch_tool(call, purpose=purpose)
+            return await self._dispatch_tool(call, purpose=purpose, exact=exact)
 
-    async def _dispatch_tool(self, call: ProposedToolCall, *, purpose=None) -> ToolOutcome:
+    async def _dispatch_tool(self, call: ProposedToolCall, *, purpose=None, exact=False) -> ToolOutcome:
         self.scope.budget.attach(self.session)
         active_run = current_agent_run.get()
         lineage = {"task_id": active_run.task.id, "agent_run_id": active_run.run_id,
@@ -213,7 +214,7 @@ class Dispatcher:
                     call_id=call.call_id, result_text=result.text, is_error=True,
                 ))
             else:
-                result = await self._dispatch_tool_body(call, purpose=lineage.get("purpose"))
+                result = await self._dispatch_tool_body(call, purpose=lineage.get("purpose"), exact=exact)
         except asyncio.CancelledError:
             text = "(call cancelled; side effects may have occurred)"
             self.session.append(ToolCallCancelled(call_id=call.call_id, result_text=text))
@@ -227,8 +228,33 @@ class Dispatcher:
         finally:
             current_scope.reset(scope_token)
 
-    async def _dispatch_tool_body(self, call: ProposedToolCall, *, purpose=None) -> ToolOutcome:
+    def _matches_exact_tool(self, proposed, args, effective) -> bool:
+        if (not isinstance(effective, ProposedToolCall)
+                or (effective.call_id, effective.tool) != (proposed.call_id, proposed.tool)):
+            return False
+        if effective.args == args:
+            return True
+        # WorkspaceGuard canonicalizes the path before the permission check.
+        # Accept only the native reader's own canonical spelling of the original.
+        if proposed.tool != "read_file" or not isinstance(args.get("file_path"), str):
+            return False
+        from harness.native_tools import ReadFileTool, ToolError
+        from harness.tools import UnknownToolError
+        try:
+            reader = self.registry.get(proposed.tool)
+            if type(reader) is not ReadFileTool:
+                return False
+            path = str(reader.resolve_path(args["file_path"]))
+        except (ToolError, UnknownToolError, OSError, RuntimeError):
+            return False
+        return effective.args == {**args, "file_path": path}
+
+    async def _dispatch_tool_body(self, call: ProposedToolCall, *, purpose=None, exact=False) -> ToolOutcome:
+        display = call.tool == "read_file" and call.args.get("display") is True
+        approved_args = deepcopy(dict(call.args)) if exact or display else None
         effective, denial = await self._run_chain(call, purpose=purpose)
+        if denial is None and approved_args is not None and not self._matches_exact_tool(call, approved_args, effective):
+            denial = "The effective call differs from the approved request."
         if denial is not None:
             self.session.append(
                 ToolCallCompleted(call_id=call.call_id, result_text=denial, is_error=True)
@@ -259,13 +285,21 @@ class Dispatcher:
         self.session.append(resolved)
         current_activity.get().update(label=str(effective.tool))
         started = time.monotonic()
+        presented_file = None
         try:
             token = set_current_call_id(call.call_id)
             try:
                 tool = self.registry.get(effective.tool)
-                validate_arguments(tool.spec, dict(effective.args))
-                raw = (await guard.execute_tool(tool, dict(effective.args)) if guard is not None
-                       else await tool(dict(effective.args)))
+                args = dict(effective.args)
+                validate_arguments(tool.spec, args)
+                if display:
+                    from harness.native_tools import ReadFileTool, ToolError
+                    if type(tool) is not ReadFileTool:
+                        raise ToolError("File presentation requires the native read_file tool.")
+                    args["file_path"] = str(tool.resolve_path(args["file_path"]))
+                raw = await guard.execute_tool(tool, args) if guard is not None else await tool(args)
+                if display:
+                    presented_file = FilePresentation(call_id=call.call_id, file_path=args["file_path"])
             finally:
                 reset_current_call_id(token)
             is_error = False
@@ -285,12 +319,13 @@ class Dispatcher:
                 call_id=call.call_id,
                 result_text=text,
                 result_blob=blob,
+                presented_file=presented_file,
                 is_error=is_error,
                 duration_ms=duration_ms,
             )
         )
         return ToolOutcome(text=text, blob=blob, is_error=is_error, _blobs=self.session.blobs,
-                           resolved=resolved)
+                           resolved=resolved, presented_file=presented_file)
 
     async def dispatch_model(
         self,
