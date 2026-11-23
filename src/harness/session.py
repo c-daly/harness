@@ -106,6 +106,9 @@ class Session:
         selections = None
         if isinstance(event, ImprovementRecorded) and event.record.kind in {"prompt_change", "source_change"}:
             from harness.improvement_journal import validate_selection
+            # A failed publication can expose missing evaluation evidence. Reuse
+            # cached lineage only after validation and the durable write succeed.
+            self.prompt_selections = None
             selections = validate_selection(self, event.record)
         # _seq advances before the write and is not rolled back on failure: a failed write leaves a gap, never a duplicate
         self._seq += 1
