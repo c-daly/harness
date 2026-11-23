@@ -237,6 +237,34 @@ def test_routing_ruleset_load_malformed_toml_raises_clean_error(tmp_path):
     assert str(path) in str(exc.value)
 
 
+@pytest.mark.parametrize(("source", "field"), [
+    ('router=7', 'router'),
+    ('leeway="false"', 'leeway'),
+    ('rules=7', 'rules'),
+    ('rules=["PRIVATE"]', 'rules[0]'),
+    ('[[rules]]\ntarget=["PRIVATE"]', 'rules[0].target'),
+    ('[[rules]]\ntarget="desk"\ntags="PRIVATE"', 'rules[0].tags'),
+    ('[[rules]]\ntarget="desk"\npath_globs=[3]', 'rules[0].path_globs'),
+    ('[[rules]]\ntarget="desk"\nprompt_contains=["PRIVATE"]', 'rules[0].prompt_contains'),
+])
+def test_routing_loader_rejects_unusable_fields_before_dispatch(tmp_path, source, field):
+    path = tmp_path / "routing.toml"
+    path.write_text(source)
+    with pytest.raises(RoutingConfigError) as error:
+        RoutingRuleSet.load(path)
+    assert str(path) in str(error.value) and field in str(error.value)
+    assert "PRIVATE" not in str(error.value)
+
+
+def test_routing_loader_keeps_valid_signal_and_extension_fields(tmp_path):
+    path = tmp_path / "routing.toml"
+    path.write_text('default="local"\nrouter="helper"\nleeway=true\nextension=1\n'
+                    '[[rules]]\ntarget="desk"\nprompt_contains=""\ntags=[]\npath_globs=["*.py"]\nextension=2\n')
+    rules = RoutingRuleSet.load(path)
+    assert (rules.default, rules.router, rules.leeway) == ("local", "helper", True)
+    assert rules.rules == [RoutingRule(target="desk", prompt_contains="", path_globs=("*.py",))]
+
+
 # --- build_kernel wiring: the signals closure reads the live turn prompt ---
 
 async def test_build_kernel_routes_unpinned_turn_by_prompt(tmp_path):

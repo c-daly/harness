@@ -57,6 +57,21 @@ class RoutingRule:
     path_globs: tuple[str, ...] = ()     # match if ANY context path matches ANY glob
     prompt_contains: str | None = None   # case-insensitive substring on the prompt
 
+    @classmethod
+    def from_config(cls, data, location: str) -> "RoutingRule":
+        if not isinstance(data, dict):
+            raise RoutingConfigError(f"{location} must be a rule table")
+        target = data.get("target")
+        if not isinstance(target, str) or not target.strip():
+            raise RoutingConfigError(f"{location}.target must be a nonempty catalog alias")
+        for key in ("tags", "path_globs"):
+            if key in data and (not isinstance(data[key], list) or not all(isinstance(x, str) for x in data[key])):
+                raise RoutingConfigError(f"{location}.{key} must be an array of strings")
+        if "prompt_contains" in data and not isinstance(data["prompt_contains"], str):
+            raise RoutingConfigError(f"{location}.prompt_contains must be a string")
+        return cls(target=target, tags=tuple(data.get("tags", ())), path_globs=tuple(data.get("path_globs", ())),
+                   prompt_contains=data.get("prompt_contains"))
+
     def matches(self, ctx: RoutingContext) -> bool:
         if self.tags and not (set(self.tags) & set(ctx.tags)):
             return False
@@ -85,20 +100,19 @@ class RoutingRuleSet:
         try:
             with open(path, "rb") as fh:
                 data = tomllib.load(fh)
-        except tomllib.TOMLDecodeError as exc:
-            raise RoutingConfigError(f"{path}: invalid TOML: {exc}") from exc
-        try:
-            rules = [
-                RoutingRule(
-                    target=r["target"],
-                    tags=tuple(r.get("tags", ())),
-                    path_globs=tuple(r.get("path_globs", ())),
-                    prompt_contains=r.get("prompt_contains"),
-                )
-                for r in data.get("rules", [])
-            ]
-        except KeyError as exc:
-            raise RoutingConfigError(f"{path}: rule missing required key {exc}") from exc
+        except (tomllib.TOMLDecodeError, UnicodeDecodeError):
+            raise RoutingConfigError(f"{path}: expected UTF-8 TOML; check the file syntax") from None
+        except OSError as exc:
+            raise RoutingConfigError(f"{path}: {exc.strerror}") from None
+        for key in ("default", "router"):
+            if key in data and (not isinstance(data[key], str) or not data[key].strip()):
+                raise RoutingConfigError(f"{path}: {key} must be a nonempty catalog alias")
+        if "leeway" in data and not isinstance(data["leeway"], bool):
+            raise RoutingConfigError(f"{path}: leeway must be true or false")
+        raw_rules = data.get("rules", [])
+        if not isinstance(raw_rules, list):
+            raise RoutingConfigError(f"{path}: rules must be an array of rule tables")
+        rules = [RoutingRule.from_config(rule, f"{path}: rules[{i}]") for i, rule in enumerate(raw_rules)]
         try:
             fallback = FallbackPolicy.model_validate(data["fallback"]) if "fallback" in data else None
         except (ValueError, TypeError) as exc:
@@ -106,7 +120,7 @@ class RoutingRuleSet:
         return cls(
             rules=rules,
             default=data.get("default"),
-            leeway=bool(data.get("leeway", False)),
+            leeway=data.get("leeway", False),
             router=data.get("router"),
             fallback=fallback,
         )

@@ -61,8 +61,8 @@ class ResidentConfig:
 class UnconfiguredResidentProvider:
     """Keep the interface usable for model selection without simulated answers."""
 
-    message = ("Saoirse has no model configured. Select one with /model <alias>, "
-               "pass --model <alias>, or set model in ~/.config/harness/resident.toml.")
+    message = ("Saoirse has no model configured. Run harness setup in a shell to connect one, "
+               "or select an existing alias with /model <alias> or --model <alias>.")
 
     async def complete(self, *, model, messages, tools):
         from harness.errors import ProviderError

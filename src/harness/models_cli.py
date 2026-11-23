@@ -6,6 +6,7 @@ import json
 import sys
 from pathlib import Path
 
+from harness.catalog import CatalogConfigError
 from harness.model_management import ModelSetupError, inspect_hub, register_model, render_catalog, render_hub
 
 
@@ -101,5 +102,5 @@ def main(argv: list[str]) -> None:
     except KeyboardInterrupt:
         raise SystemExit("Model setup cancelled; no further registration will occur.") from None
     except (ModelSetupError, OSError, ValueError) as exc:
-        message = str(exc) if isinstance(exc, ModelSetupError) else f"Model setup failed ({type(exc).__name__})."
+        message = str(exc) if isinstance(exc, (ModelSetupError, CatalogConfigError)) else f"Model setup failed ({type(exc).__name__})."
         raise SystemExit(message) from None

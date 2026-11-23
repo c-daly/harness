@@ -26,6 +26,10 @@ uv run harness --help   # run the CLI through uv
 `uv run harness` is the entry point throughout this guide. If you install the
 package (`uv pip install -e .`), the `harness` command is available directly.
 
+Run `uv run harness setup` to connect a local endpoint, a subscription, or an
+API model. Setup prints a launch command for the configured alias.
+`uv run harness doctor` checks the configuration locally before the first prompt.
+
 ---
 
 ## Running a session
@@ -235,7 +239,7 @@ uv run harness --model sonnet -p "..."
 uv run harness --model gpt -p "..."
 ```
 
-The `route` is a [LiteLLM](https://docs.litellm.ai/) model string. It selects
+These `route` values are [LiteLLM](https://docs.litellm.ai/) model strings. Each selects
 Anthropic, OpenAI-compatible endpoints, local servers, or another supported
 adapter; actual compatibility still requires a working endpoint and suitable
 model. Point at a different catalog with `--catalog PATH`.
@@ -272,10 +276,11 @@ models and quantization comparisons remain on the
 
 | Field | Meaning |
 |---|---|
-| `route` (required) | The LiteLLM model string the alias maps to. |
+| `route` (required) | Model identifier for the selected connection. The default transport takes a LiteLLM model string. |
+| `transport` | `"claude-cli"` with `route = "claude-cli/default"` or a specific Claude model connects Saoirse to a signed-in subscription through the SDK with direct CLI fallback. |
 | `api_base` | Custom endpoint base URL — for OpenAI-compatible or local servers. |
 | `api_key_env` | Name of the env var holding the API key (a *name*, never the key itself). |
-| `backend` | Selects a non-LiteLLM provider implementation: `"claude-code"` runs turns through the local, logged-in Claude Code CLI on subscription auth (see [Claude on your Claude Code subscription](#claude-on-your-claude-code-subscription)); `"codex"` runs turns through the local, logged-in Codex CLI on subscription auth (see [Codex on your ChatGPT subscription](#codex-on-your-chatgpt-subscription)); `"antigravity"` runs turns through the local, logged-in Antigravity (`agy`) CLI on Google-account subscription auth (see [Antigravity (Gemini) backend](#antigravity-gemini-backend)). Either way `route` becomes `<backend>/<model>` instead of a LiteLLM string. Absent → the LiteLLM route above. |
+| `backend` | Runs an external agent through the signed-in `claude-code`, `codex` or `antigravity` backend. Its `route` is `<backend>/<model>`. |
 | `tags` | Free-form capability labels you can use to organize aliases. |
 | `input_cost_per_token` / `output_cost_per_token` | Pricing overrides. |
 | `max_input_tokens` | Context-window override. |
@@ -611,6 +616,31 @@ model and last observed call cannot reliably reconstruct `/model` choices or pin
 
 ## Claude on your Claude Code subscription
 
+### Use Claude as Saoirse's model
+
+On Linux or WSL, install the Claude CLI and sign in with a subscription. These
+commands register the account's default model, check the connection settings,
+and start a Saoirse task.
+
+```bash
+uv run harness setup cli my-claude
+uv run harness doctor --model my-claude
+uv run harness --model my-claude -p "Read the README and summarize how to run this project."
+```
+
+The standard Harness installation includes the Claude Agent SDK. Saoirse sends
+one model request at a time through the SDK and the signed-in CLI. Harness
+executes permitted tool calls and supplies their results to the next request.
+The same alias works in the terminal and in headless sessions.
+
+If the SDK is unavailable, or the CLI rejects SDK initialization as incompatible
+before receiving a prompt, Harness uses the same executable and model directly.
+Once submission begins, a failed request ends that attempt. Account limits and
+charges depend on the subscription. Use `harness setup api` to configure a
+separate API-key connection.
+
+### Run the external Claude Code agent
+
 Entries with `backend = "claude-code"` run turns through your locally
 installed, logged-in Claude Code CLI (headless `claude -p`) instead of an
 API. The harness serves its own tools to Claude over MCP and requests that
@@ -625,8 +655,6 @@ with `claude` once and the backend uses that.
 [models.claude]
 backend = "claude-code"
 route = "claude-code/default"   # "claude-code/<model>" passes --model <model>
-input_cost_per_token = 0.0      # subscription: flat-rate, no per-token cost
-output_cost_per_token = 0.0
 tags = ["anthropic", "subscription", "tool-calling", "frontier"]
 ```
 

@@ -2341,6 +2341,7 @@ class HarnessApp(App[None]):
 
     async def _models_command(self, arg: str) -> None:
         import shlex
+        from harness.catalog import CatalogConfigError
         from harness.model_management import ModelSetupError
         from harness.models_cli import perform
         widget = self.query_one("#model-progress", Static)
@@ -2364,7 +2365,7 @@ class HarnessApp(App[None]):
             self.say("", "Model operation cancelled.")
             raise
         except (ValueError, OSError) as exc:
-            detail = str(exc) if isinstance(exc, ModelSetupError) else type(exc).__name__
+            detail = str(exc) if isinstance(exc, (ModelSetupError, CatalogConfigError)) else type(exc).__name__
             self.say("! ", f"Model operation failed: {detail}")
         finally:
             widget.update("")
@@ -2500,32 +2501,43 @@ class HarnessApp(App[None]):
         no tags/limits to judge it against."""
         if self.catalog_path is None or not Path(self.catalog_path).exists():
             return
-        from harness.catalog import Catalog, UnknownAliasError
-
-        catalog = Catalog.load(Path(self.catalog_path))
+        from harness.catalog import Catalog, CatalogConfigError, UnknownAliasError
         try:
+            catalog = Catalog.load(Path(self.catalog_path))
             resolved = catalog.resolve(str(self.kernel.loop.model))
+        except CatalogConfigError as exc:
+            self.say("! ", str(exc))
+            return
+        except OSError as exc:
+            self.say("! ", f"Cannot read the catalog: {exc.strerror}. Check --catalog.")
+            return
         except UnknownAliasError:
             return
         self._maybe_warn_context(resolved)
 
     async def _switch_model(self, alias: str, *, _at_boundary: bool = False) -> None:
         if self.catalog_path is None or not Path(self.catalog_path).exists():
-            self.say("! ", "no catalog configured (--catalog)")
+            self.say("! ", "no catalog configured. Run harness setup in a shell or specify --catalog.")
             return
-        # Catalog.load lazily imports litellm on pricing fallback -- slow first touch
-        # is acceptable here; /model is off the hot path.
-        from harness.catalog import Catalog, UnknownAliasError
+        from harness.catalog import Catalog, CatalogConfigError, UnknownAliasError
 
-        catalog = await asyncio.to_thread(Catalog.load, Path(self.catalog_path))
-        if not alias:
-            for name in catalog.aliases():
-                self.say("  ", name)
-            return
         try:
+            catalog = await asyncio.to_thread(Catalog.load, Path(self.catalog_path))
+            if not alias:
+                if not catalog.aliases():
+                    self.say("", "No configured aliases. Run harness setup in a shell.")
+                for name in catalog.aliases():
+                    self.say("  ", name)
+                return
             resolved = await asyncio.to_thread(catalog.resolve, alias)
         except UnknownAliasError:
             self.say("! ", f"unknown alias: {alias}")
+            return
+        except CatalogConfigError as exc:
+            self.say("! ", str(exc))
+            return
+        except OSError as exc:
+            self.say("! ", f"Cannot read the catalog: {exc.strerror}. Check --catalog.")
             return
         if self._rebuild_in_progress:
             self.say("! ", "session rebuild in progress; model switch deferred")
