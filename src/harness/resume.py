@@ -35,13 +35,22 @@ def _reopen(
         writer = EventLogWriter(base, session_id, _lock=lock)
         session = Session(base, session_id, default_model=default_model,
                           start_seq=state.last_seq, _writer=writer)
-        session.has_prompt_changes = False
+        has_prompt_changes = False
         for env in envelopes:
             session.reply_history.apply(env)
             if isinstance(env.event, ImprovementRecorded) and env.event.record.kind == "prompt_change":
-                session.has_prompt_changes = True
+                has_prompt_changes = True
             if isinstance(env.event, (SessionStarted, SessionResumed, AgentRunStarted)):
                 session.observe_project_scope(env.event)
+        session.prompt_selections = {}
+        if has_prompt_changes:
+            from harness.improvement_journal import replay_prompt_selections
+            try:
+                session.prompt_selections = replay_prompt_selections(envelopes)
+            except (KeyError, ValueError) as exc:
+                # A bad improvement history cannot authorize a selection, but
+                # ordinary work can still resume. Drop the replay traceback.
+                session.prompt_selection_error = str(exc)
     except BaseException:
         lock.close()
         raise

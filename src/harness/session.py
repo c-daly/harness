@@ -73,7 +73,10 @@ class Session:
         self._experience_run = False
         from harness.reply_semantics import ReplyHistory
         self.reply_history = ReplyHistory()
-        self.has_prompt_changes = False if start_seq == 0 else None
+        # A new session has no selections. Resume seeds them from its existing
+        # replay. A directly reopened administrative writer can recover them lazily.
+        self.prompt_selections = {} if start_seq == 0 else None
+        self.prompt_selection_error = None
 
     def observe_project_scope(self, event):
         """Recover the single-project prefix across starts, including older native bindings."""
@@ -100,16 +103,18 @@ class Session:
     def append(self, event: Event) -> Envelope:
         for redactor in self._redactors:
             event = redactor(event)  # frozen events: redactors must model_copy(update=...)
+        selections = None
         if isinstance(event, ImprovementRecorded) and event.record.kind in {"prompt_change", "source_change"}:
             from harness.improvement_journal import validate_selection
-            validate_selection(self, event.record)
+            selections = validate_selection(self, event.record)
         # _seq advances before the write and is not rolled back on failure: a failed write leaves a gap, never a duplicate
         self._seq += 1
         envelope = Envelope(session_id=self.id, seq=self._seq, ts=time.time(), event=event)
         self._writer.append(envelope)  # source of truth first
         self.reply_history.apply(envelope)
-        if isinstance(event, ImprovementRecorded) and event.record.kind == "prompt_change":
-            self.has_prompt_changes = True
+        if selections is not None:
+            self.prompt_selections = selections
+            self.prompt_selection_error = None
         if isinstance(event, (SessionStarted, SessionResumed, AgentRunStarted)):
             self.observe_project_scope(event)
         elif self._experience_run and (isinstance(event, (AgentRunFinished, TaskChecked)) or

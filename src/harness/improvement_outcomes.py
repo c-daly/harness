@@ -4,7 +4,7 @@ import hashlib
 from collections import Counter
 
 from harness.events import (
-    AgentRunFinished, AgentRunStarted, ImprovementRecorded, ModelCallCompleted, SemanticObserved,
+    AgentRunFinished, AgentRunStarted, ImprovementRecorded, ModelCallCompleted, ModelCallProposed, SemanticObserved,
     SessionOutcome, SessionStarted, TaskAccepted, TaskChecked, TaskOutcome,
 )
 from harness.improvement import Candidate, Evidence, ImprovementState, SourceAuthoring
@@ -77,6 +77,7 @@ def _reply_corrections(envelopes, blobs):
     history = ReplyHistory()
     latest_exchange = None
     by_seq = None
+    proposals = {}
     calls = {}
     for row in envelopes:
         event = row.event
@@ -93,8 +94,13 @@ def _reply_corrections(envelopes, blobs):
             prior = history.pending_prior
             latest_exchange = (prior.request_seq, prior.finish_seq, history.request.seq)
         history.apply(row)
-        if isinstance(event, ModelCallCompleted) and event.purpose.startswith("semantic:"):
-            calls[event.call_id] = (row, latest_exchange) if event.call_id not in calls else None
+        if isinstance(event, ModelCallProposed) and event.purpose.startswith("semantic:"):
+            proposal = (latest_exchange, event.purpose, event.model)
+            proposals[event.call_id] = proposal if event.call_id not in proposals else None
+        elif isinstance(event, ModelCallCompleted) and event.purpose.startswith("semantic:"):
+            proposal = proposals.pop(event.call_id, None)
+            if proposal is not None and (event.purpose, event.model) == proposal[1:]:
+                calls[event.call_id] = (row, proposal[0]) if event.call_id not in calls else None
         elif isinstance(event, SemanticObserved):
             observed = event.observation
             origin = observed.reply_origin

@@ -86,6 +86,9 @@ class AgentLoop:
         self.on_chunk: Callable[[Chunk], None] | None = None
         self._ended = False
         self._task_active = False
+        self._reply_task: asyncio.Task | None = None
+        self._reply_started = False
+        self._reply_skip = False
         self._turn_outcomes: dict[CallId, ToolOutcome] = {}
 
     def set_turn_context(self, messages: list[Message]) -> None:
@@ -148,9 +151,11 @@ class AgentLoop:
         from harness.semantics import SemanticService
         return SemanticService(self.dispatcher, lambda: self.provider)
 
-    async def run_conversation(self, task: AgentTask, *, on_progress=None, reply_before_seq=None) -> AgentResult:
+    async def run_conversation(self, task: AgentTask, *, on_progress=None, reply_before_seq=None,
+                               defer_reply=False) -> AgentResult:
         """Run an ordinary Saoirse turn with host-owned coordination."""
         from harness.reply_semantics import observe_reply
+        await self.finish_reply_observation(cancel=True)
         prior = self.session.reply_history.last
         submission_seq = self.session.last_seq if reply_before_seq is None else reply_before_seq
         if (task.handoff_id or self.dispatcher.scope.depth or current_agent_run.get() is not None
@@ -173,7 +178,44 @@ class AgentLoop:
                 timeout = self.dispatcher.scope.budget.limits.task_timeout_seconds
                 if "timeout_seconds" in task.limits.model_fields_set:
                     timeout = min(timeout, task.limits.timeout_seconds)
-                await observe_reply(self, prior, history.request, timeout - (clock.time() - started))
+                followup = history.request
+                deadline = started + timeout
+                if defer_reply:
+                    self._reply_started = self._reply_skip = False
+
+                    async def review():
+                        self._reply_started = True
+                        await observe_reply(self, prior, followup, deadline - clock.time(),
+                                            abstain_reason="busy" if self._reply_skip else None)
+
+                    self._reply_task = asyncio.create_task(review(), name="harness-reply-observation")
+                else:
+                    await observe_reply(self, prior, followup, deadline - clock.time())
+
+    def cancel_reply_observation(self):
+        """Preempt optional work, including an observation still awaiting its first timeslice."""
+        if self._reply_task is not None and not self._reply_task.done() and not self._reply_skip:
+            self._reply_skip = True
+            if self._reply_started:
+                self._reply_task.cancel()
+
+    async def finish_reply_observation(self, *, cancel=False):
+        task = self._reply_task
+        if task is None:
+            return
+        if cancel:
+            self.cancel_reply_observation()
+        try:
+            await task
+        except asyncio.CancelledError:
+            if asyncio.current_task().cancelling():
+                raise
+        except Exception as exc:
+            self.session.append(ErrorRaised(where="semantic:reply", message=(
+                f"Background reply observation ended with {type(exc).__name__}.")))
+        finally:
+            if task is self._reply_task and task.done():
+                self._reply_task = None
 
     async def run_task(
         self, task: AgentTask, *, on_progress: Callable[[AgentProgress], None] | None = None, _reply_to_seq=None,
@@ -457,5 +499,6 @@ class AgentLoop:
         if self._ended:
             raise RuntimeError("AgentLoop.end() already called")
         self._ended = True
+        await self.finish_reply_observation(cancel=True)
         await self._apply_contributions(LifecyclePoint.SESSION_END, {"session_id": self.session.id})
         self.session.append(SessionEnded())

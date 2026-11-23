@@ -21,7 +21,8 @@ MessageKind = Literal[
     "new_request", "continuation", "correction", "question", "acknowledgement",
     "stop_request", "pause", "uncertain",
 ]
-ReplyAbstention = Literal["budget", "no_local_model", "unavailable", "integrity", "input_limit", "busy", "denied"]
+ReplyAbstention = Literal["budget", "no_local_model", "ambiguous_local_model", "unavailable",
+                          "integrity", "input_limit", "busy", "denied"]
 
 
 class MessageInterpretation(BaseModel):

@@ -40,6 +40,12 @@ def project_improvements(envelopes, *, blobs=None) -> ImprovementState:
 
 
 def _project_improvements(envelopes, runs, blobs):
+    state = _recorded_improvements(envelopes, runs)
+    project_task_outcomes(state, envelopes, blobs)
+    return state
+
+
+def _recorded_improvements(envelopes, runs):
     state = ImprovementState()
     for envelope in envelopes:
         if isinstance(envelope.event, ImprovementRecorded):
@@ -60,8 +66,22 @@ def _project_improvements(envelopes, runs, blobs):
         elif isinstance(envelope.event, AgentRunFinished) and envelope.event.result.task_id in state.source_author_runs:
             state.source_author_runs[envelope.event.result.task_id] = envelope.event.result.status
             state.source_author_results[envelope.event.result.task_id] = envelope.event.result.model_dump(mode="json")
-    project_task_outcomes(state, envelopes, blobs)
     return state
+
+
+def active_prompt_selections(state):
+    """Keep only the selected changes and their originating evaluation artifacts."""
+    selections = {}
+    for identity in (*state.active_prompts.values(), *state.active_assessment_prompts.values()):
+        change = state.prompt_changes[identity]
+        origin = state.selected_adoption(change)
+        artifact = state.results[origin.result_id].artifact if origin else None
+        selections[change.model, change.function] = (change, artifact)
+    return selections
+
+
+def replay_prompt_selections(envelopes):
+    return active_prompt_selections(_recorded_improvements(envelopes, {}))
 
 
 def validate_selection(session, change):
@@ -94,6 +114,7 @@ def validate_selection(session, change):
             raise ValueError("prompt selection model differs from its evaluation configuration")
     if origin := state.selected_adoption(change):
         session.blobs.get(state.results[origin.result_id].artifact)
+    return active_prompt_selections(state)
 
 
 def render_improvements(state: ImprovementState) -> str:

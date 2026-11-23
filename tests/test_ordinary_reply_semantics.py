@@ -41,6 +41,22 @@ class ReplyProvider(FakeProvider):
         return super().infer(request)
 
 
+async def test_remote_primary_uses_the_only_known_ready_local_alias():
+    from harness.reply_semantics import _local_alias
+    entries = {alias: {"route": f"openai/{alias}", "api_base": "http://127.0.0.1:12345/v1",
+                       "local": {"auto_start": False}} for alias in ("local-a", "local-b")}
+    catalog = Catalog(entries)
+    resources = LocalResources(transport=httpx.MockTransport(
+        lambda request: httpx.Response(200, json={"data": [{"id": "local-b"}]})))
+    try:
+        assert _local_alias(catalog, "remote", resources) == (None, "ambiguous_local_model")
+        await resources.check(catalog.resolve("local-b"), emit=lambda event: None)
+        assert _local_alias(catalog, "remote", resources) == ("local-b", None)
+        assert _local_alias(catalog, "local-a", resources) == ("local-a", None)
+    finally:
+        await resources.close(emit=lambda event: None)
+
+
 async def ready_kernel(base, provider, *, session_id=None, **kwargs):
     resources = LocalResources(transport=httpx.MockTransport(
         lambda request: httpx.Response(200, json={"data": [{"id": "fixture"}]})))

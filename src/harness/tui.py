@@ -1656,7 +1656,7 @@ class HarnessApp(App[None]):
         try:
             result = await self.kernel.loop.run_conversation(self.kernel.tasks.prepare(
                 prompt, context=tuple(self.kernel.loop.turn_context),
-            ), on_progress=self._on_agent_progress,
+            ), on_progress=self._on_agent_progress, defer_reply=True,
                 reply_before_seq=self.controller.active.reply_before_seq if self.controller.active else None)
             reply = result.read_text(self.kernel.session.blobs)
         except asyncio.CancelledError:
@@ -2213,6 +2213,7 @@ class HarnessApp(App[None]):
             self._refresh_tasks()
 
     async def _cancel_semantic_check(self) -> None:
+        await self.kernel.loop.finish_reply_observation(cancel=True)
         worker = self._semantic_worker
         if worker is not None and not worker.is_finished:
             worker.cancel()
@@ -2603,6 +2604,7 @@ class HarnessApp(App[None]):
             # a no-op here rather than tearing down a half-built kernel.
             return
         prompt = self.query_one("#prompt", HistoryInput)
+        self.kernel.loop.cancel_reply_observation()
         running = any(worker is not None and worker.is_running for worker in (
             self._turn_worker, self._compact_worker, self._semantic_worker, self._resource_worker))
         if self.focused is prompt and prompt.vim_enabled and not running:
@@ -2621,7 +2623,8 @@ class HarnessApp(App[None]):
             )
             return
         worker = self._turn_worker
-        if worker is None or worker.is_finished or self._interrupting:
+        settled = self.controller.active is None and self.controller.last_result is not None and not self.controller.pending
+        if worker is None or worker.is_finished or self._interrupting or settled:
             if not self._interrupting and self._semantic_worker is not None:
                 self._semantic_worker.cancel()
             if not self._interrupting and self._resource_worker is not None:
@@ -2680,6 +2683,7 @@ class HarnessApp(App[None]):
             except (WorkerCancelled, WorkerFailed):
                 pass
         try:
+            await self.kernel.loop.finish_reply_observation(cancel=True)
             await self.kernel.resources.close(emit=self.kernel.session.append)
         except Exception as exc:
             self.say("! ", f"local resource cleanup failed: {exc}")
@@ -2732,6 +2736,7 @@ async def run_tui(
         # app.kernel, not the `kernel` param -- /clear may have rebuilt it in
         # place, and the live kernel at exit is the one that needs teardown.
         live = app.kernel
+        await live.loop.finish_reply_observation(cancel=True)
         if live.mcp is not None:
             await live.mcp.stop()
             live.mcp.flush_events()

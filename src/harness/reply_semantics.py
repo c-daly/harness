@@ -98,19 +98,30 @@ def exchange_for_origin(by_seq, origin, blobs=None):
     return exchange_text(request.event.text, visible_answer(result, blobs), followup.event.text)
 
 
-def _local_alias(catalog, primary):
+def _local_alias(catalog, primary, resources):
     """Prefer the local primary, otherwise use an unambiguous configured local resource."""
+    from harness.catalog import UnknownAliasError, UnknownBackendError
     if catalog is None:
-        return None
+        return None, "no_local_model"
     aliases = [alias for alias in catalog.aliases() if "local" in catalog.entries[alias]]
     if primary in aliases:
-        return primary
+        return primary, None
     if len(aliases) == 1:
-        return aliases[0]
-    return None
+        return aliases[0], None
+    ready = []
+    for alias in aliases:
+        try:
+            status = resources.snapshot(catalog.resolve(alias))
+        except (KeyError, ValueError, UnknownAliasError, UnknownBackendError):
+            continue
+        if status.status == "ready" and not status.stale:
+            ready.append(alias)
+    if len(ready) == 1:
+        return ready[0], None
+    return None, "ambiguous_local_model" if aliases else "no_local_model"
 
 
-async def observe_reply(loop, prior, followup, remaining_time):
+async def observe_reply(loop, prior, followup, remaining_time, *, abstain_reason=None):
     from harness.catalog import UnknownAliasError, UnknownBackendError
     from harness.events import ErrorRaised
     from harness.log import TornLogError
@@ -119,16 +130,15 @@ async def observe_reply(loop, prior, followup, remaining_time):
     answer = visible_answer(prior.result, session.blobs)
     text = exchange_text(prior.request, answer, followup.event.text)
     catalog = getattr(loop.provider, "catalog", None)
-    alias = _local_alias(catalog, loop.model)
+    alias, reason = _local_alias(catalog, loop.model, loop.dispatcher.scope.resources)
     budget = loop.dispatcher.scope.budget
-    reason = None
-    if alias is None:
-        reason = "no_local_model"
+    if abstain_reason is not None:
+        reason = abstain_reason
     elif text is None:
         reason = "input_limit" if prior.result.output.size > 16384 or answer is not None else "integrity"
     elif budget.model_calls >= budget.limits.max_model_calls or remaining_time <= 0:
         reason = "budget"
-    else:
+    elif alias is not None:
         try:
             resolved = catalog.resolve(alias)
             if resolved.execution_kind != "inference" or resolved.local is None:

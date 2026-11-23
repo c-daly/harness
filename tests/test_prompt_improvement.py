@@ -5,6 +5,7 @@ import json
 
 import pytest
 
+from harness.blobs import BlobIntegrityError
 from harness.cli import build_kernel
 from harness.events import EvaluationRunFinished, SemanticObserved
 from harness.fold import fold
@@ -117,6 +118,40 @@ async def test_complete_supervised_loop_preserves_task_and_replay_without_infere
         assert interpreted.kind == "uncertain" and interpreted.prompt == baseline
         assert interpreted.selection_status == "rollback"
         assert resumed.tasks.selected().definition.id == task.id and not resumed.tasks.selected().accepted
+    finally:
+        resumed.session.close()
+
+
+async def test_selected_prompt_uses_cached_lineage_and_rechecks_artifacts_after_resume(tmp_path, monkeypatch):
+    provider = LearningProvider()
+    model = ModelId("fake")
+    kernel = await kernel_for(tmp_path, provider)
+    try:
+        candidate, result = await passing_candidate(kernel)
+        adoption = kernel.improvement_service.adopt(result.id, model=model)
+        session_id = kernel.session.id
+
+        def unexpected_replay(*args, **kwargs):
+            pytest.fail("selecting an already validated prompt replayed the improvement journal")
+
+        with monkeypatch.context() as patch:
+            patch.setattr("harness.prompt_improvement.read_improvements", unexpected_replay)
+            assert prompt_selection(kernel.session, provider, model) == (candidate.artifact, "adopt", adoption)
+    finally:
+        kernel.session.close()
+
+    monkeypatch.setattr("harness.prompt_improvement.read_improvements", unexpected_replay)
+    resumed = build_kernel(base_dir=tmp_path, model=model, provider=provider, resume_session_id=session_id)
+    try:
+        for _ in range(2):
+            assert prompt_selection(resumed.session, provider, model) == (candidate.artifact, "adopt", adoption)
+        assert prompt_selection(resumed.session, provider, ModelId("other"))[1] == "builtin"
+        assert prompt_selection(resumed.session, provider, model, function="context_selection")[1] == "builtin"
+        assert prompt_selection(resumed.session, provider, model, limits=SemanticLimits(
+            max_output_tokens=1))[1].startswith("suspended")
+        (resumed.session.blobs._root / result.artifact.sha256).write_bytes(b"damaged evaluation result")
+        with pytest.raises(BlobIntegrityError):
+            prompt_selection(resumed.session, provider, model)
     finally:
         resumed.session.close()
 

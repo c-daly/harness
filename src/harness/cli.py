@@ -5,7 +5,7 @@ import asyncio
 import signal
 import sys
 from dataclasses import dataclass, field
-from functools import cached_property
+from functools import cached_property, partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Sequence
 
@@ -384,7 +384,7 @@ def build_kernel(
 
 async def run_once(kernel: Kernel, prompt: str) -> str:
     """Submit an ordinary headless conversation turn."""
-    return await _run_headless(kernel, prompt, kernel.loop.run_conversation)
+    return await _run_headless(kernel, prompt, partial(kernel.loop.run_conversation, defer_reply=True))
 
 
 async def run_workflow_once(kernel: Kernel, prompt: str) -> str:
@@ -392,11 +392,12 @@ async def run_workflow_once(kernel: Kernel, prompt: str) -> str:
     return await _run_headless(kernel, prompt, kernel.loop.run_task)
 
 
-async def _run_headless(kernel, prompt, run_task) -> str:
+async def _run_headless(kernel, prompt, run_task, *, on_settled=None) -> str:
     from harness.events import CustomEvent
     from harness.plugins import start_subscriber_pumps
 
     pump_tasks: list = []
+    settled = False
     try:
         if kernel.mcp is not None:
             # Headless never shows the TUI checklist -- there is no one to ask,
@@ -434,13 +435,18 @@ async def _run_headless(kernel, prompt, run_task) -> str:
 
         kernel.controller.submit(prompt, expand_mentions=False)
         await kernel.controller.run_next(execute)
+        settled = True
+        if on_settled is not None:
+            on_settled(result)
+        await kernel.loop.finish_reply_observation()
         await kernel.loop.end()
         return result
     except asyncio.CancelledError:
-        try:
-            kernel.loop.interrupt_turn()
-        except Exception:
-            pass
+        if not settled:
+            try:
+                kernel.loop.interrupt_turn()
+            except Exception:
+                pass
         raise
     finally:
         try:
@@ -453,6 +459,7 @@ async def _run_headless(kernel, prompt, run_task) -> str:
                 kernel.mcp.flush_events()
         finally:
             try:
+                await kernel.loop.finish_reply_observation(cancel=True)
                 await kernel.resources.close(emit=kernel.session.append)
             finally:
                 kernel.session.close()
@@ -461,9 +468,23 @@ async def _run_headless(kernel, prompt, run_task) -> str:
 async def _amain(kernel: Kernel, prompt: str) -> str:
     task = asyncio.current_task()
     loop = asyncio.get_running_loop()
-    loop.add_signal_handler(signal.SIGINT, task.cancel)
+    settled = False
+
+    def deliver(answer):
+        nonlocal settled
+        print(answer, flush=True)
+        settled = True
+
+    def interrupt():
+        if settled:
+            kernel.loop.cancel_reply_observation()
+        else:
+            task.cancel()
+
+    loop.add_signal_handler(signal.SIGINT, interrupt)
     try:
-        return await run_once(kernel, prompt)
+        return await _run_headless(kernel, prompt, partial(kernel.loop.run_conversation, defer_reply=True),
+                                   on_settled=deliver)
     finally:
         loop.remove_signal_handler(signal.SIGINT)
 
@@ -902,7 +923,7 @@ def _run_main() -> None:
     from harness.errors import ProviderError
 
     try:
-        print(asyncio.run(_amain(kernel, args.prompt)))
+        asyncio.run(_amain(kernel, args.prompt))
         outcome = kernel.controller.last_result
         if outcome is not None and outcome.status != "completed":
             raise SystemExit(f"task {outcome.status}: {outcome.reason}")
