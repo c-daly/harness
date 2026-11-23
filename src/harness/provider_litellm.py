@@ -447,13 +447,25 @@ class CatalogProvider:
         except UnknownAliasError:
             return "unknown"
 
-    async def infer(self, request: "InferenceRequest") -> AsyncIterator[Chunk]:
+    def _model_connection(self, model: ModelId):
         try:
-            resolved = self.catalog.resolve(str(request.model))
+            return self.catalog.resolve(str(model))
         except UnknownAliasError:
-            resolved = None
+            if str(model).startswith("claude-cli/"):
+                raise ProviderError("Register a CLI model with 'harness setup cli' and select its alias.") from None
+            return None  # Other literal provider routes use the caller's ambient configuration.
+
+    async def infer(self, request: "InferenceRequest") -> AsyncIterator[Chunk]:
+        resolved = self._model_connection(request.model)
         if resolved is not None and resolved.execution_kind != "inference":
             raise ProviderError(f"{request.model!r} is an agent runtime, not a model inference route")
+        if resolved is not None and resolved.transport == "claude-cli":
+            from harness.provider_cli_model import ClaudeCliModelProvider
+            routed = request.model_copy(update={"model": resolved.route})
+            async with aclosing(ClaudeCliModelProvider().infer(routed)) as stream:
+                async for chunk in stream:
+                    yield chunk
+            return
         from contextlib import nullcontext
         from harness.execution import current_model_call_id, current_scope
         from harness.scheduling import request_priority
@@ -497,10 +509,8 @@ class CatalogProvider:
         messages: Sequence[Message],
         tools: Sequence[ToolSpec] = (),
     ) -> AsyncIterator[Chunk]:
-        try:
-            resolved = self.catalog.resolve(str(model))
-        except UnknownAliasError:
-            # not a catalog alias: treat the string as a literal route on ambient env
+        resolved = self._model_connection(model)
+        if resolved is None:
             async with aclosing(_acomplete(model=model, messages=messages, tools=tools)) as source:
                 async for chunk in source:
                     yield chunk
@@ -514,6 +524,14 @@ class CatalogProvider:
                 model=resolved.route, messages=messages, tools=tools
             )) as source:
                 async for chunk in source:
+                    yield chunk
+            return
+        if resolved.transport == "claude-cli":
+            from harness.inference import InferenceRequest
+            request = InferenceRequest(model=model, messages=tuple(messages), tools=tuple(tools),
+                                       tool_choice="auto" if tools else "none", purpose="completion")
+            async with aclosing(self.infer(request)) as stream:
+                async for chunk in stream:
                     yield chunk
             return
         if resolved.backend == "codex":
