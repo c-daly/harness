@@ -117,7 +117,9 @@ class Dispatcher:
             return tools
         return tuple(tool for tool in tools if tool.name not in HOST_COORDINATION_TOOLS)
 
-    async def _run_chain(self, action, *, purpose=None, allow_ask=True) -> tuple[object | None, str | None]:
+    async def _run_chain(
+        self, action, *, purpose=None, allow_ask=True, approved_args=None,
+    ) -> tuple[object | None, str | None]:
         """Run hooks + Ask resolution. Returns (effective_action, denial_reason)."""
         outcome = await self.hooks.run_dispatch(action)
         for name, decision in outcome.decisions:
@@ -128,6 +130,11 @@ class Dispatcher:
             )
         if outcome.blocked is not None:
             return None, f"blocked by policy: {outcome.blocked.reason}"
+        if approved_args is not None:
+            approved = self._exact_tool_action(action, approved_args, outcome.effective)
+            if approved is None:
+                return None, "The effective call differs from the approved request."
+            outcome = replace(outcome, effective=approved)
         if (purpose == "conversation" and isinstance(action, ProposedToolCall) and self.owns_primary_coordination()
                 and any(isinstance(call, ProposedToolCall) and call.tool in HOST_COORDINATION_TOOLS
                         for call in (action, outcome.effective))):
@@ -135,7 +142,6 @@ class Dispatcher:
             self.session.append(HookDecided(call_id=action.call_id, hook="saoirse-coordination",
                                             decision={"kind": "block", "reason": reason}))
             return None, reason
-        from dataclasses import replace
         from harness.handoff import current_handoff
         guard = current_handoff.get()
         if guard is not None:
@@ -150,9 +156,14 @@ class Dispatcher:
                 return None, decision.reason
             if isinstance(decision, Ask) and outcome.ask is None:
                 outcome = replace(outcome, ask=decision)
+        effective = outcome.effective
         if outcome.ask is not None:
             if not allow_ask:
                 return None, "background observation requires existing permission"
+            if approved_args is not None:
+                # Hooks and the resolver hold mutable argument dictionaries. Keep
+                # the verified execution arguments private throughout the prompt.
+                effective = replace(effective, args=deepcopy(dict(effective.args)))
             self.session.append(
                 PermissionRequested(call_id=action.call_id, reason=outcome.ask.reason)
             )
@@ -184,7 +195,7 @@ class Dispatcher:
             )
             if not allowed:
                 return None, "denied by user"
-        return outcome.effective, None
+        return effective, None
 
     async def dispatch_tool(self, call: ProposedToolCall, *, purpose=None, exact: bool = False) -> ToolOutcome:
         with self.scope.budget.activity.track(
@@ -228,33 +239,41 @@ class Dispatcher:
         finally:
             current_scope.reset(scope_token)
 
-    def _matches_exact_tool(self, proposed, args, effective) -> bool:
+    def _exact_tool_action(self, proposed, args, effective):
         if (not isinstance(effective, ProposedToolCall)
                 or (effective.call_id, effective.tool) != (proposed.call_id, proposed.tool)):
-            return False
-        if effective.args == args:
-            return True
+            return None
+        display = proposed.tool == "read_file" and args.get("display") is True
+        if effective.args == args and not display:
+            return effective
         # WorkspaceGuard canonicalizes the path before the permission check.
         # Accept only the native reader's own canonical spelling of the original.
         if proposed.tool != "read_file" or not isinstance(args.get("file_path"), str):
-            return False
+            return None
         from harness.native_tools import ReadFileTool, ToolError
         from harness.tools import UnknownToolError
         try:
             reader = self.registry.get(proposed.tool)
             if type(reader) is not ReadFileTool:
-                return False
+                return None
             path = str(reader.resolve_path(args["file_path"]))
         except (ToolError, UnknownToolError, OSError, RuntimeError):
-            return False
-        return effective.args == {**args, "file_path": path}
+            return None
+        canonical = {**args, "file_path": path}
+        if effective.args != args and effective.args != canonical:
+            return None
+        # The resolver sees the same canonical source that will be opened.
+        return replace(effective, args=canonical)
 
     async def _dispatch_tool_body(self, call: ProposedToolCall, *, purpose=None, exact=False) -> ToolOutcome:
         display = call.tool == "read_file" and call.args.get("display") is True
         approved_args = deepcopy(dict(call.args)) if exact or display else None
-        effective, denial = await self._run_chain(call, purpose=purpose)
-        if denial is None and approved_args is not None and not self._matches_exact_tool(call, approved_args, effective):
-            denial = "The effective call differs from the approved request."
+        effective, denial = await self._run_chain(call, purpose=purpose, approved_args=approved_args)
+        if display and denial is None:
+            # An interactive permission prompt can outlive a filesystem change.
+            checked = self._exact_tool_action(call, effective.args, effective)
+            if checked is None or checked.args != effective.args:
+                denial = "The approved file path changed before it could be displayed."
         if denial is not None:
             self.session.append(
                 ToolCallCompleted(call_id=call.call_id, result_text=denial, is_error=True)
@@ -296,7 +315,6 @@ class Dispatcher:
                     from harness.native_tools import ReadFileTool, ToolError
                     if type(tool) is not ReadFileTool:
                         raise ToolError("File presentation requires the native read_file tool.")
-                    args["file_path"] = str(tool.resolve_path(args["file_path"]))
                 raw = await guard.execute_tool(tool, args) if guard is not None else await tool(args)
                 if display:
                     presented_file = FilePresentation(call_id=call.call_id, file_path=args["file_path"])

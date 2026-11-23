@@ -12,6 +12,7 @@ import hashlib
 import os
 import re
 import signal
+import stat
 import weakref
 from contextvars import copy_context
 from pathlib import Path
@@ -172,6 +173,23 @@ def _format_numbered(lines: list[str], start: int) -> str:
     return "\n".join(out)
 
 
+def _open_display_file(path: Path):
+    """Open the approved absolute path without following a replaced component."""
+    if os.open not in os.supports_dir_fd or not all(hasattr(os, name) for name in ("O_NOFOLLOW", "O_DIRECTORY")):
+        raise ToolError("This platform cannot securely open an authorized file for display.")
+    directories = getattr(os, "O_PATH", os.O_RDONLY) | os.O_DIRECTORY | os.O_NOFOLLOW
+    parent = os.open(path.anchor, directories)
+    try:
+        for part in path.parts[1:-1]:
+            child = os.open(part, directories, dir_fd=parent)
+            os.close(parent)
+            parent = child
+        fd = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
+    finally:
+        os.close(parent)
+    return os.fdopen(fd, "rb")
+
+
 class ReadFileTool:
     """read_file: cat -n style, absolute line numbers, offset/limit windowing."""
 
@@ -207,7 +225,11 @@ class ReadFileTool:
         return _resolve(self._access, raw)
 
     async def __call__(self, args: dict[str, Any]) -> str:
-        path = self.resolve_path(args.get("file_path", ""))
+        requested = args.get("file_path", "")
+        path = self.resolve_path(requested)
+        display = args.get("display") is True
+        if display and Path(requested).is_absolute() and Path(requested) != path:
+            raise ToolError("The approved file path changed before it could be displayed.")
         try:
             # presence-based, not truthiness: 0 must be rejected below, not
             # silently swapped for the default
@@ -227,7 +249,7 @@ class ReadFileTool:
         windowed = raw_offset is not None or raw_limit is not None
         try:
             result, digest = await asyncio.to_thread(
-                self._read, path, offset, limit, windowed, args.get("display") is True
+                self._read, path, offset, limit, windowed, display
             )
         except _FileMissing:
             if self._rs is not None:
@@ -244,11 +266,12 @@ class ReadFileTool:
             )
         if path.is_dir():
             raise ToolError(f"{path} is a directory. Use glob to list files in it.")
-        if display and not path.is_file():
-            raise ToolError(f"{path} is not a regular text file.")
         try:
-            with path.open("rb") as source:
-                if not windowed and (size := os.fstat(source.fileno()).st_size) > _READ_MAX_FILE_BYTES:
+            with (_open_display_file(path) if display else path.open("rb")) as source:
+                info = os.fstat(source.fileno())
+                if display and not stat.S_ISREG(info.st_mode):
+                    raise ToolError(f"{path} is not a regular text file.")
+                if not windowed and (size := info.st_size) > _READ_MAX_FILE_BYTES:
                     raise ToolError(
                         f"file is {size} bytes, too large to read at once. Pass offset and limit to "
                         f"read a range (e.g. offset: 1, limit: 500), or use grep to find the section."

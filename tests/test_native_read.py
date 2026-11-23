@@ -81,7 +81,7 @@ async def test_display_rejects_a_named_pipe_without_opening_it(tmp_path):
 async def test_sparse_read_hashes_the_entire_file_with_bounded_reads(tmp_path, monkeypatch):
     import hashlib
     import io
-    from pathlib import Path
+    from harness import native_tools
     from harness.native_tools import ReadState
 
     path = tmp_path / "sparse.txt"
@@ -102,19 +102,38 @@ async def test_sparse_read_hashes_the_entire_file_with_bounded_reads(tmp_path, m
             return super().readline(size)
 
     opened = []
-    original_open = Path.open
+    original_open = native_tools._open_display_file
 
-    def checked_open(target, *args, **kwargs):
-        if target == path:
-            opened.append(target)
-            return BoundedReader(io.FileIO(target, "rb"))
-        return original_open(target, *args, **kwargs)
+    def checked_open(target):
+        opened.append(target)
+        return BoundedReader(original_open(target).detach())
 
-    monkeypatch.setattr(Path, "open", checked_open)
+    monkeypatch.setattr(native_tools, "_open_display_file", checked_open)
     state = ReadState()
     reader = ReadFileTool(workspace_root=tmp_path, read_state=state)
     assert await reader({"file_path": path.name, "offset": 3, "limit": 1, "display": True}) == "  café\r\n"
     assert opened == [path] and state.version(str(path)) == version
+
+
+@pytest.mark.parametrize("swap_directory", [False, True])
+async def test_display_open_refuses_changed_path_components(tmp_path, monkeypatch, swap_directory):
+    from harness import native_tools
+
+    for directory in ("source", "other"):
+        (tmp_path / directory).mkdir()
+        (tmp_path / directory / "doc").write_text(directory)
+    source = tmp_path / "source" / "doc"
+    original_open = native_tools._open_display_file
+    def after_check(path):
+        selected = path.parent if swap_directory else path
+        replacement = tmp_path / "other" if swap_directory else tmp_path / "other" / "doc"
+        selected.rename(tmp_path / "original")
+        selected.symlink_to(replacement, target_is_directory=swap_directory)
+        return original_open(path)
+
+    monkeypatch.setattr(native_tools, "_open_display_file", after_check)
+    with pytest.raises(ToolError, match="could not read"):
+        await _tool(tmp_path)({"file_path": str(source), "display": True})
 
 
 async def test_offset_past_eof_raises(tmp_path):

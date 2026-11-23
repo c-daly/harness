@@ -117,6 +117,33 @@ async def test_resumed_ordinary_reply_observes_only_the_followup(tmp_path, reply
         assert not corrections
 
 
+async def test_correction_to_displayed_file_uses_the_delivered_snapshot_on_resume(tmp_path):
+    from harness.provider import tool_call_turn
+
+    base = tmp_path / "sessions"
+    source = tmp_path / "release.md"
+    source.write_bytes(b"# Release\r\n\r\nBuild A\r\n")
+    provider = FakeProvider([tool_call_turn("", "read_file", {"file_path": source.name, "display": True})])
+    first = build_kernel(base_dir=base, workspace_root=tmp_path, model=ModelId("local"),
+                         provider=provider, native_tools=True)
+    prompt = "Show the release notes."
+    delivered = await run_once(first, prompt)
+    assert delivered == "# Release\r\n\r\nBuild A\r\n"
+    source.write_text("Build B\n")
+
+    reviewer = ReplyProvider(answer="I'll check the release number.", label="correction")
+    resumed = await ready_kernel(base, reviewer, session_id=first.session.id)
+    followup = "Those notes have the wrong build."
+    await run_once(resumed, followup)
+    classification, = reviewer.classifications
+    assert json.loads(classification.messages[-1].text()) == {
+        "previous_request": prompt, "assistant_reply": delivered, "followup": followup,
+    }
+    observations = [row.event.observation for row in read_session(base, first.session.id)
+                    if isinstance(row.event, SemanticObserved)]
+    assert any(o.kind == "correction" and o.reply_origin is not None for o in observations)
+
+
 async def test_explicit_shadow_classification_does_not_attach_text_to_a_reply(tmp_path):
     base = tmp_path / "sessions-dir"
     provider = ReplyProvider(answer="Unchanged.", label="correction")

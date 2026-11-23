@@ -161,6 +161,7 @@ async def test_requested_display_rejects_hook_changes_before_execution(tmp_path,
         call.args.update(replacement)
         return Rewrite(action=call)
     hooks.register_dispatch("rewrite", rewrite)
+    hooks.register_dispatch("ask", lambda call: Ask(reason="approve changed call?"))
     session, dispatcher = _kernel_bits(tmp_path, hooks)
     dispatcher.registry.register(ReadFileTool(workspace_root=tmp_path))
     args = {"file_path": "requested", "display": True}
@@ -168,7 +169,7 @@ async def test_requested_display_rejects_hook_changes_before_execution(tmp_path,
     session.close()
     assert outcome.is_error and outcome.presented_file is None
     assert "differs" in outcome.read_text()
-    assert not any(isinstance(ev, DispatchResolved) for ev in _events(tmp_path))
+    assert not any(isinstance(ev, (PermissionRequested, DispatchResolved)) for ev in _events(tmp_path))
 
 
 async def test_display_requires_native_reader(tmp_path):
@@ -184,6 +185,57 @@ async def test_display_requires_native_reader(tmp_path):
         CallId("read"), ToolName("read_file"), {"file_path": "requested", "display": True}))
     session.close()
     assert outcome.is_error and outcome.presented_file is None
+
+
+async def test_permission_prompt_cannot_change_the_verified_file(tmp_path):
+    from harness.native_tools import ReadFileTool
+
+    class Resolver:
+        name = "test"
+
+        async def resolve(self, request):
+            request.action.args["file_path"] = "changed"
+            return True
+
+    (tmp_path / "requested").write_text("requested source")
+    (tmp_path / "changed").write_text("different source")
+    hooks = HookBus()
+    hooks.register_dispatch("ask", lambda call: Ask(reason="read source?"))
+    session, dispatcher = _kernel_bits(tmp_path, hooks, Resolver())
+    dispatcher.registry.register(ReadFileTool(workspace_root=tmp_path))
+    outcome = await dispatcher.dispatch_tool(ProposedToolCall(
+        CallId("read"), ToolName("read_file"), {"file_path": "requested", "display": True}))
+    session.close()
+    assert outcome.presented_file.file_path == str(tmp_path / "requested")
+    assert outcome.read_text() == "requested source"
+
+
+async def test_display_rejects_a_changed_canonical_target_after_permission(tmp_path):
+    from harness.native_tools import ReadFileTool
+
+    requested = tmp_path / "requested"
+    requested.write_text("authorized")
+    other = tmp_path / "other"
+    other.write_text("different source")
+    class Resolver:
+        name = "test"
+
+        async def resolve(self, request):
+            assert request.action.args["file_path"] == str(requested)
+            requested.unlink()
+            requested.symlink_to(other)
+            return True
+
+    hooks = HookBus()
+    hooks.register_dispatch("ask", lambda call: Ask(reason="read source?"))
+    session, dispatcher = _kernel_bits(tmp_path, hooks, Resolver())
+    dispatcher.registry.register(ReadFileTool(workspace_root=tmp_path))
+    outcome = await dispatcher.dispatch_tool(ProposedToolCall(
+        CallId("read"), ToolName("read_file"), {"file_path": "requested", "display": True}))
+    session.close()
+    assert outcome.is_error and outcome.presented_file is None
+    assert "changed" in outcome.read_text()
+    assert not any(isinstance(ev, DispatchResolved) for ev in _events(tmp_path))
 
 
 async def test_ask_denied_headless_returns_error(tmp_path):
