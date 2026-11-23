@@ -175,7 +175,8 @@ def _format_numbered(lines: list[str], start: int) -> str:
 
 def _open_display_file(path: Path):
     """Open the approved absolute path without following a replaced component."""
-    if os.open not in os.supports_dir_fd or not all(hasattr(os, name) for name in ("O_NOFOLLOW", "O_DIRECTORY")):
+    required_flags = ("O_NOFOLLOW", "O_DIRECTORY", "O_NONBLOCK")
+    if os.open not in os.supports_dir_fd or not all(hasattr(os, name) for name in required_flags):
         raise ToolError("This platform cannot securely open an authorized file for display.")
     directories = getattr(os, "O_PATH", os.O_RDONLY) | os.O_DIRECTORY | os.O_NOFOLLOW
     parent = os.open(path.anchor, directories)

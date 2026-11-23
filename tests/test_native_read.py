@@ -68,6 +68,17 @@ async def test_display_never_silently_truncates_a_whole_file(tmp_path):
         await _tool(tmp_path)({"file_path": "doc", "display": True})
 
 
+async def test_missing_platform_support_limits_only_display(tmp_path, monkeypatch):
+    import os
+
+    (tmp_path / "notes").write_text("current\n")
+    monkeypatch.delattr(os, "O_NONBLOCK", raising=False)
+    read = _tool(tmp_path)
+    with pytest.raises(ToolError, match="platform"):
+        await read({"file_path": "notes", "display": True})
+    assert await read({"file_path": "notes"}) == "     1\tcurrent"
+
+
 async def test_display_rejects_a_named_pipe_without_opening_it(tmp_path):
     import os
 
