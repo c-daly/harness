@@ -20,6 +20,8 @@ Use `/improvements feedback [--turn SEQ] TEXT` to attach a correction to a finis
 
 For a confirmed flawed response, use `/improvements failure [--turn SEQ] TEXT` or `harness improvements SESSION_ID --failure TEXT [--turn SEQ]`. Recording the failure needs no model or semantic service. A predeclared output requirement whose expected digest differs from a verified response artifact also yields native failure evidence. A missing or damaged output leaves correctness unverified.
 
+Both failure commands save the observation first. They then attempt a retrospective using the selected local inference model if it is ready and permitted. Repeating the command preserves the existing evidence and assessment. The explicit review command below can revisit the failure later.
+
 ### Looking up prior experience
 
 An ordinary Saoirse turn can use several earlier situations, actions and outcomes as worked examples. Harness allows this by default after checking the scope of the records. Native context selection proposes relevant examples and can abstain. A selected example can suggest a check. Only fresh evidence can establish the current answer. Look for the assessment in `/semantics` and the `supervised-examples` event to see what reached context preparation for the selected model. Changes to this default go through supervised evaluation and adoption.
@@ -29,6 +31,8 @@ In the current branch automatic selection uses an already-ready local inference 
 Use `/improvements examples` to inspect examples from the session. The source records live in Harness's own session store. Saoirse's experience across tasks belongs to that same private system. Vault project notes document the design and qualification results. Recalling a failure or a worked example carries no permission to publish it to the vault.
 
 For cross-session recall, linked Git worktrees share a locally verified checkout identity. Harness keeps an index of session IDs and journal positions. It checks the original run and the cited records before supplying an example. Two independent clones can have the same remote URL and still retain separate raw histories. Outside an identifiable checkout, Saoirse can use this launch's own examples.
+
+When a turn uses examples and makes a successful local read or search, Harness can show the source and its observed result alongside a provisional interpretation. It can verify an exact answer against a declared output requirement. An unsupported answer stays unresolved. A wider claim about what follows from a source may still need a different check.
 
 Run `/improvements review-failure FAILURE_ID` to investigate a recorded response failure. The retrospective reconstructs the original request and compares it with examples that existed in that session before the turn began. It reports which examples were eligible, which the selector saw, and whether selected examples had actually been prepared as original context. An incomplete search, abstention, or unavailable model leaves the question open. A complete no-match in that session can motivate proposing new wording. The retrospective does not generate or adopt a lesson.
 
