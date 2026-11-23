@@ -252,7 +252,8 @@ async def test_nested_delegation_and_internal_inference_use_same_ledger(tmp_path
     ])
     kernel = await make_kernel(tmp_path, provider, usage_limits=UsageLimits(max_input_tokens=21))
     try:
-        assert await kernel.loop.run_turn("work") == "root"
+        result = await kernel.loop.run_task(kernel.tasks.prepare("work"))
+        assert result.read_text(kernel.session.blobs) == "root"
         await dispatch(kernel, purpose="semantic-test")
         with pytest.raises(BudgetExceeded, match="stop limit"):
             await dispatch(kernel)

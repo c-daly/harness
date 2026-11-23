@@ -3,6 +3,7 @@
 from copy import deepcopy
 from pathlib import Path
 
+from harness.blobs import BlobStore
 from harness.events import AgentRunStarted, AgentRunFinished, EvaluationRunStarted, EvaluationRunFinished, ImprovementRecorded
 from harness.improvement import (
     Candidate, EvaluationPlan, Evidence, ExperimentResult, ImprovementRecord, ImprovementState, PromptChange, SourceChange, SourceAuthoring,
@@ -28,10 +29,17 @@ def _check_paired_run(state, change, runs):
 
 
 def read_improvements(base: Path, session_id: SessionId) -> ImprovementState:
-    return _project_improvements(read_session(base, session_id, repair=False), {})
+    envelopes = read_session(base, session_id, repair=False)
+    blobs = BlobStore(Path(base) / "sessions" / str(session_id) / "blobs", create=False)
+    return project_improvements(envelopes, blobs=blobs)
 
 
-def _project_improvements(envelopes, runs):
+def project_improvements(envelopes, *, blobs=None) -> ImprovementState:
+    """Rebuild improvement state visible through the supplied session events."""
+    return _project_improvements(envelopes, {}, blobs)
+
+
+def _project_improvements(envelopes, runs, blobs):
     state = ImprovementState()
     for envelope in envelopes:
         if isinstance(envelope.event, ImprovementRecorded):
@@ -52,7 +60,7 @@ def _project_improvements(envelopes, runs):
         elif isinstance(envelope.event, AgentRunFinished) and envelope.event.result.task_id in state.source_author_runs:
             state.source_author_runs[envelope.event.result.task_id] = envelope.event.result.status
             state.source_author_results[envelope.event.result.task_id] = envelope.event.result.model_dump(mode="json")
-    project_task_outcomes(state, envelopes)
+    project_task_outcomes(state, envelopes, blobs)
     return state
 
 
@@ -60,7 +68,7 @@ def validate_selection(session, change):
     """Check the exact selection that will cross Session's durable append boundary."""
     events = read_session(session.base, session.id, repair=False)
     runs = {}
-    state = _project_improvements(events, runs)
+    state = _project_improvements(events, runs, session.blobs)
     state.apply(change)
     _check_paired_run(state, change, runs)
     if isinstance(change, SourceChange):

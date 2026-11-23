@@ -2,13 +2,14 @@
 """The agent loop: build context, dispatch model, dispatch tools concurrently, repeat."""
 
 import asyncio
+from functools import cached_property
 from typing import Callable
 
 from harness.agent import (
     AgentOutput, AgentProgress, AgentResult, AgentTask, add_usage, current_agent_run, execute_task,
 )
 from harness.agent_runtime import bind_agent_runtime
-from harness.dispatcher import Dispatcher, ToolOutcome
+from harness.dispatcher import Dispatcher, ToolOutcome, execution_kind_for, primary_conversation
 from harness.execution import ExecutionScope
 from harness.errors import ToolCallLimitExceeded
 from harness.fallback import FallbackPolicy, TaskFallback
@@ -47,6 +48,7 @@ class AgentLoop:
         resolver: Resolver,
         model: ModelId,
         system_prompt: str,
+        workspace_root=None,
         max_iterations: int = 20,
         history: list[Message] | None = None,
         pricing: dict[str, float] | None = None,
@@ -58,10 +60,12 @@ class AgentLoop:
     ) -> None:
         self.session = session
         self.provider = provider
+        self.session_entry_seq = session.last_seq
         self.registry = registry
         self.hooks = hooks
         self.model = model
         self.system_prompt = system_prompt
+        self.workspace_root = workspace_root
         self.max_iterations = max_iterations
         self.history: list[Message] = list(history) if history else []
         # Per-turn, non-persisted context (e.g. @-mention file contents from the
@@ -114,7 +118,8 @@ class AgentLoop:
             self.session.append(ErrorRaised(where=f"lifecycle:{point}", message=warning))
 
     async def start(self) -> None:
-        self.session.start()
+        from harness.project_binding import current_project
+        self.session.start(project=await current_project(self.workspace_root))
         self.dispatcher.scope.budget.attach(self.session)
         self.dispatcher.scope.budget.usage.attach(self.session)
         from harness.execution_controls import record_execution_limits
@@ -135,8 +140,21 @@ class AgentLoop:
             self.session.append(ModelSelected(model=self.model, pinned=self.model_pinned))
 
     async def run_turn(self, user_text: str) -> str:
-        result = await self.run_task(AgentTask(prompt=user_text, context=tuple(self.turn_context)))
+        result = await self.run_conversation(AgentTask(prompt=user_text, context=tuple(self.turn_context)))
         return result.read_text(self.session.blobs)
+
+    @cached_property
+    def semantics(self):
+        from harness.semantics import SemanticService
+        return SemanticService(self.dispatcher, lambda: self.provider)
+
+    async def run_conversation(self, task: AgentTask, *, on_progress=None) -> AgentResult:
+        """Run an ordinary Saoirse turn with host-owned coordination."""
+        token = primary_conversation.set((self.dispatcher, task.id))
+        try:
+            return await self.run_task(task, on_progress=on_progress)
+        finally:
+            primary_conversation.reset(token)
 
     async def run_task(
         self, task: AgentTask, *, on_progress: Callable[[AgentProgress], None] | None = None,
@@ -161,21 +179,26 @@ class AgentLoop:
         self.active_model = self.model
         try:
             from harness.handoff import capture_scope
+            from harness.project_binding import current_project
+            capabilities = {"handoff_scope": capture_scope(self.dispatcher)}
+            if project := await current_project(self.workspace_root):
+                capabilities["project"] = project
             return await execute_task(
                 self.session, task, runtime="harness", model=self.model,
+                purpose="conversation" if primary_conversation.get() == (self.dispatcher, task.id) else "task",
                 activity=self.dispatcher.scope.budget.activity,
                 run_budgets=self.dispatcher.scope.budget.runs,
                 run_controls=self.dispatcher.scope.budget.controls,
                 extension_blocked=extension_blocked,
-                capabilities={"handoff_scope": capture_scope(self.dispatcher)},
-                execute=lambda: self._run_task_body(task, on_progress),
+                capabilities=capabilities,
+                execute=lambda: self._run_task_body(task, on_progress, project),
             )
         finally:
             self._task_active = False
             self.active_model = None
             self.turn_context = []
 
-    async def _run_task_body(self, task: AgentTask, on_progress) -> AgentOutput:
+    async def _run_task_body(self, task: AgentTask, on_progress, project) -> AgentOutput:
         user_text = task.prompt
         history_start = len(self.history) if task.handoff_id else 0
         self.session.append(UserMessage(text=user_text))
@@ -200,6 +223,10 @@ class AgentLoop:
         try:
             from harness.resident import fetch_context
             resident_context = await fetch_context(self.dispatcher) if max_iterations else ()
+            example_context = None
+            if max_iterations and self.dispatcher.owns_primary_coordination():
+                from harness.experience_context import ordinary_examples
+                example_context = await ordinary_examples(self, task, project)
             for iteration in range(1, max_iterations + 1):
                 prefix = [
                     Message.system_text(self.system_prompt),
@@ -214,19 +241,21 @@ class AgentLoop:
                     if policy.response is not None and policy.response.instructions is not None:
                         prefix.append(Message.system_text("Response instructions:\n" + policy.response.instructions))
                     from harness.context import prepare_context
-                    prepared = prepare_context(prefix, self.history[history_start:], self.registry.specs(), policy,
+                    tools = self.dispatcher.conversation_tools(self.registry.specs(), execution_kind_for(self.provider, fallback.model))
+                    prepared = prepare_context(prefix, self.history[history_start:], tools, policy,
                                                max_input_bytes=task.limits.max_input_bytes,
                                                blobs=self.session.blobs)
                     messages = prepared.messages
+                else:
+                    messages = [*prefix, *self.history[history_start:]]
+                if policy is not None:
                     self.session.append(ContextPrepared(
                         task_id=task.id, policy_digest=policy.digest,
                         retained_turns=prepared.retained_turns, omitted_turns=prepared.omitted_turns,
                         omitted_messages=prepared.omitted_messages, input_bytes=prepared.input_bytes,
                         max_input_bytes=task.limits.max_input_bytes,
-                        tools=tuple(str(t.name) for t in self.registry.specs()),
+                        tools=tuple(str(t.name) for t in tools),
                     ))
-                else:
-                    messages = [*prefix, *self.history[history_start:]]
                 runtime = bind_agent_runtime(
                     self.provider, fallback.model, self.dispatcher, prepared_messages=tuple(messages),
                     pricing=self.pricing, pricing_for=self.pricing_for, pinned=fallback.pinned,
@@ -266,6 +295,7 @@ class AgentLoop:
                             timeout_seconds=task.limits.timeout_seconds,
                         ),
                         before_work=iteration == 1,
+                        examples=example_context,
                         on_chunk=chunk_received,
                         on_switch=lambda: progress("fallback", iteration),
                     )
@@ -290,6 +320,16 @@ class AgentLoop:
                     continue
                 assistant = response.message
                 usage = add_usage(usage, response.usage)
+                if example_context is not None and example_context.received:
+                    calls = assistant.tool_calls()
+                    if not calls or response.stop_reason not in ("end_turn", "tool_use"):
+                        output = example_context.deliver(self.session, task, response, usage)
+                        self.history.append(output.response)
+                        from harness.provider import TextDelta
+                        chunk_received(TextDelta(output.text))
+                        return output
+                    # Only the requested calls are visible before a checked reply.
+                    assistant = Message(role=assistant.role, blocks=calls)
                 self.history.append(assistant)
                 if response.stop_reason not in ("end_turn", "tool_use"):
                     self.repair_turn()
@@ -330,6 +370,8 @@ class AgentLoop:
                         pass
                     raise
                 for call, outcome in zip(calls, outcomes):
+                    if example_context is not None and example_context.received:
+                        example_context.observe(self.registry, call, outcome)
                     self.history.append(
                         Message.tool_result(
                             call.call_id,

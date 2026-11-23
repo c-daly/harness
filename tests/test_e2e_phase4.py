@@ -2,7 +2,7 @@
 """Phase 4 milestone: tagged runs (one spawning a subagent) -> rebuild ->
 stats aggregates, run-rollup compare with descendants, user-recorded outcome."""
 
-from harness.cli import build_kernel, run_once
+from harness.cli import build_kernel, run_once, run_workflow_once
 from harness.events import SessionOutcome
 from harness.provider import FakeProvider, Usage, text_turn, tool_call_turn
 from harness.resume import append_events
@@ -24,7 +24,7 @@ async def test_telemetry_end_to_end(tmp_path):
         base_dir=tmp_path, model=ModelId("fake"), pricing=PRICING, tags=["exp:a"],
     )
     sid_a = str(kernel_a.session.id)
-    assert await run_once(kernel_a, "go") == "parent done"
+    assert await run_workflow_once(kernel_a, "go") == "parent done"
 
     # run B: plain, tagged differently
     kernel_b = build_kernel(

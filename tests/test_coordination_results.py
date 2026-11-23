@@ -335,7 +335,6 @@ async def test_workflows_shows_incomplete_aggregate_with_completed_children(
     from harness.tui_panel import ActivityPanel
     from tests.test_tui import make_app
     from tests.test_tui_queue import screen_text
-    from tests.test_tui_tasks import command
 
     if tool != "consult_panel":
         monkeypatch.setattr("harness.mixture.MAX_COORDINATION_OUTPUT", 5)
@@ -343,10 +342,7 @@ async def test_workflows_shows_incomplete_aggregate_with_completed_children(
                              *(text_turn(answer) for answer in answers), text_turn("root finished")])
     app = make_app(tmp_path, provider=provider, model=ModelId("fake"))
     async with app.run_test(size=(140, 45)) as pilot:
-        await command(app, pilot, "Compare the answers")
-        worker = app._turn_worker
-        if worker is not None:
-            await asyncio.wait_for(worker.wait(), 3)
+        await app.kernel.loop.run_task(app.kernel.tasks.prepare("Compare the answers"))
         panel = app.query_one(ActivityPanel)
         async with asyncio.timeout(3):
             while not any(isinstance(e.event, CoordinationFinished) for e in panel._events):

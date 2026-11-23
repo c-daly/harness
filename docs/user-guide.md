@@ -127,13 +127,11 @@ tool calls, and answer permission prompts inline. Key bindings:
   These byte guards are not exact token counts; an endpoint may still reject a
   request. Too many portions or an oversized system prompt requires a larger
   inference alias. No implicit cloud fallback occurs.
-- `/tools [name]` — list tools available to the agent, with short descriptions;
-  give a name for its full description and parameter schema. Tools such as
-  `ensemble` and `consult_panel` are invoked by the agent when you ask in ordinary
-  language (for example, “Use consult_panel to review this plan”). They are not
-  slash commands. Slash commands control the interface directly; `/help` lists
-  those controls and installed plugin commands. Tool execution still uses the
-  normal permission rules.
+- `/tools [name]` lists the tool registry. Give a name to inspect its parameters.
+  Harness reserves `dispatch_agent`, `consult_panel`, `ensemble` and `escalate`
+  for host and workflow calls during ordinary Saoirse conversations. The
+  primary model can still use its permitted task tools. Configured workflows
+  retain coordination under their existing permissions.
 - `/resume` — pick a prior session and reopen it in place (same kernel
   rebuild `/clear` uses, but reopening instead of starting fresh). Shows a
   picker listing every other session under `--base-dir`, newest first, each

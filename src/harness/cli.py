@@ -69,8 +69,7 @@ class Kernel:
 
     @cached_property
     def semantics(self):
-        from harness.semantics import SemanticService
-        return SemanticService(self.loop.dispatcher, lambda: self.provider)
+        return self.loop.semantics
 
     @cached_property
     def compaction(self):
@@ -138,6 +137,7 @@ def build_kernel(
     hooks: HookBus | None = None,
     pricing: dict[str, float] | None = None,
     resume_session_id: SessionId | None = None,
+    require_idle_resume: bool = False,
     permissions: PermissionEngine | None = None,
     tags: list[str] | None = None,
     mcp: Sequence[McpServerSpec] | None = None,
@@ -186,6 +186,11 @@ def build_kernel(
     if resume_session_id is not None:
         def configure(state):
             nonlocal provider, model, model_pinned, pricing, pricing_for, context_policy, execution_limits
+            if require_idle_resume and (state.open_intents or state.open_model_intents or state.open_agent_runs
+                                        or state.open_evaluations):
+                raise ValueError("Automatic failure review requires a settled session.")
+            if require_idle_resume and state.model_selection is not None and state.model_selection.model != model:
+                raise ValueError("The selected model changed before automatic failure review.")
             state.execution_counts.check_root()
             if execution_limits is None:
                 execution_limits = state.execution_limits
@@ -300,6 +305,7 @@ def build_kernel(
         hooks=hooks,
         resolver=resolver,
         model=model,
+        workspace_root=ws_access.root,
         system_prompt=system_prompt,
         pricing=pricing,
         pricing_for=pricing_for,
@@ -377,6 +383,16 @@ def build_kernel(
 
 
 async def run_once(kernel: Kernel, prompt: str) -> str:
+    """Submit an ordinary headless conversation turn."""
+    return await _run_headless(kernel, prompt, kernel.loop.run_conversation)
+
+
+async def run_workflow_once(kernel: Kernel, prompt: str) -> str:
+    """Run a configured workflow task with its own tool policy."""
+    return await _run_headless(kernel, prompt, kernel.loop.run_task)
+
+
+async def _run_headless(kernel, prompt, run_task) -> str:
     from harness.events import CustomEvent
     from harness.plugins import start_subscriber_pumps
 
@@ -412,7 +428,7 @@ async def run_once(kernel: Kernel, prompt: str) -> str:
         async def execute(pending):
             nonlocal result
             kernel.controller.phase = "working"
-            outcome = await kernel.loop.run_task(kernel.tasks.prepare(pending.text))
+            outcome = await run_task(kernel.tasks.prepare(pending.text))
             result = outcome.read_text(kernel.session.blobs)
             return outcome
 
@@ -482,8 +498,37 @@ def _subcommand(argv: list[str]) -> None:
         from harness.blobs import BlobStore
         from harness.improvement_journal import inspect_improvement, read_improvements, render_improvements
         parser.add_argument("session_id")
-        parser.add_argument("--show", metavar="RECORD_ID")
+        modes = parser.add_mutually_exclusive_group()
+        modes.add_argument("--show", metavar="RECORD_ID")
+        modes.add_argument("--feedback", metavar="TEXT", help="Attach explicit feedback to a finished primary turn.")
+        modes.add_argument("--failure", metavar="TEXT", help="Record a confirmed flaw in a finished primary turn.")
+        parser.add_argument("--catalog", type=Path, default=Path.home() / ".config/harness/models.toml",
+                            help="Configured model catalog for local review of a confirmed failure.")
+        parser.add_argument("--turn", type=int, metavar="SEQ", help="Finish event for feedback (default: latest turn).")
         args = parser.parse_args(rest)
+        if args.feedback is not None or args.failure is not None:
+            from harness.improvement_feedback import record_closed_feedback
+            from harness.log import SessionLockedError, TornLogError
+            try:
+                failed = args.failure is not None
+                note = args.failure if failed else args.feedback
+                saved = record_closed_feedback(args.base_dir, SessionId(args.session_id), note, turn=args.turn,
+                                               failure=failed, receipt=failed)
+                print(saved)
+            except SessionLockedError:
+                parser.error("Session is open. Record the observation with /improvements in its terminal.")
+            except (OSError, ValueError, TornLogError) as exc:
+                parser.error(str(exc))
+            if failed:
+                from harness.experience_review import review_closed_confirmation
+                try:
+                    print(asyncio.run(review_closed_confirmation(args.base_dir, saved.evidence, args.catalog)))
+                except Exception as exc:
+                    # Configuration and provider exceptions can contain private endpoint details.
+                    print(f"The failure is saved. Automatic local review was unavailable ({type(exc).__name__}).")
+            return
+        if args.turn is not None:
+            parser.error("--turn requires --feedback or --failure")
         state = read_improvements(args.base_dir, SessionId(args.session_id))
         if args.show:
             root = args.base_dir / "sessions" / args.session_id / "blobs"

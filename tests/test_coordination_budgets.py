@@ -471,9 +471,15 @@ async def test_terminal_grant_preserves_draft_queue_and_protects_core_command(tm
     from tests.test_tui_queue import screen_text
     provider = TeamProvider()
     app = make_app(tmp_path, provider=provider, model="root")
+
+    async def run_workflow(prompt):
+        return await app.kernel.loop.run_task(app.kernel.tasks.prepare(prompt.text))
+
     async with app.run_test(size=(width, 45)) as pilot:
+        app.controller.submit("work")
+        worker = app.run_worker(app.controller.run_next(run_workflow), group="agent")
+        app._turn_worker = worker
         try:
-            await command(app, pilot, "work")
             await asyncio.wait_for(asyncio.gather(*(e.wait() for e in provider.entered.values())), 3)
             await command(app, pilot, "next")
             prompt = app.query_one("#prompt", Input)
@@ -495,3 +501,4 @@ async def test_terminal_grant_preserves_draft_queue_and_protects_core_command(tm
             assert "Usage:" in " ".join(screen_text(app).split())
         finally:
             provider.unblock()
+            await asyncio.wait_for(worker.wait(), 3)

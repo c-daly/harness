@@ -11,6 +11,11 @@ execute tools, or alter the evidence it assesses. This does not enable autonomou
 context selection or task control. Genuine held-out qualification remains required
 before promoting either function into a decision-making role.
 
+Ordinary Saoirse turns have a specific host policy for worked examples. Harness
+can supply suggestions from already scoped private experience as leads for a
+fresh check. The observation remains advisory and cannot certify the answer.
+Changes to the host policy require supervised evaluation and adoption.
+
 ## Terminal workflow
 
 Select an inference alias and start its provisioned local runtime with normal

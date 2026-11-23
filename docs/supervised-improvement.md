@@ -12,6 +12,26 @@ This loop changes **shadow message-prompt data only**. It cannot edit source,
 change routing/context policies, execute tools, or accept tasks. Memory and
 agent-swarm remain plugins.
 
+## Evidence from ordinary tasks
+
+Open `/improvements` or run `harness improvements SESSION_ID` to see observations from recorded primary runs, requirement checks, explicit task acceptance and marked task or session outcomes. A completed run reports execution status. Check the cited requirements and acceptance events to determine what it established. Inspection reads the existing session journal without changing it. When a proposal cites one of these observations, Harness saves its evidence record before the proposal.
+
+Use `/improvements feedback [--turn SEQ] TEXT` to attach a correction to a finished primary turn. For a closed session, use `harness improvements SESSION_ID --feedback TEXT [--turn SEQ]`. The default target is the latest finished primary turn. Repeating the same feedback for the same turn records it once. Use `/improvements show ID` to inspect the cited event and observation.
+
+For a confirmed flawed response, use `/improvements failure [--turn SEQ] TEXT` or `harness improvements SESSION_ID --failure TEXT [--turn SEQ]`. Recording the failure needs no model or semantic service. A predeclared output requirement whose expected digest differs from a verified response artifact also yields native failure evidence. A missing or damaged output leaves correctness unverified.
+
+### Looking up prior experience
+
+An ordinary Saoirse turn can use several earlier situations, actions and outcomes as worked examples. Harness allows this by default after checking the scope of the records. Native context selection proposes relevant examples and can abstain. A selected example can suggest a check. Only fresh evidence can establish the current answer. Look for the assessment in `/semantics` and the `supervised-examples` event to see what reached context preparation for the selected model. Changes to this default go through supervised evaluation and adoption.
+
+In the current branch automatic selection uses an already-ready local inference model with capacity for the foreground call. It skips usage-capped work and history above the automatic scan limit. Optional examples must fit after ordinary context preparation. The original task and evidence records remain inspectable whether or not an example is selected.
+
+Use `/improvements examples` to inspect examples from the session. The source records live in Harness's own session store. Saoirse's experience across tasks belongs to that same private system. Vault project notes document the design and qualification results. Recalling a failure or a worked example carries no permission to publish it to the vault.
+
+For cross-session recall, linked Git worktrees share a locally verified checkout identity. Harness keeps an index of session IDs and journal positions. It checks the original run and the cited records before supplying an example. Two independent clones can have the same remote URL and still retain separate raw histories. Outside an identifiable checkout, Saoirse can use this launch's own examples.
+
+Run `/improvements review-failure FAILURE_ID` to investigate a recorded response failure. The retrospective reconstructs the original request and compares it with examples that existed in that session before the turn began. It reports which examples were eligible, which the selector saw, and whether selected examples had actually been prepared as original context. An incomplete search, abstention, or unavailable model leaves the question open. A complete no-match in that session can motivate proposing new wording. The retrospective does not generate or adopt a lesson.
+
 ## Operator workflow
 
 Select an inference model alias, then use the current terminal session:
@@ -74,6 +94,8 @@ a matching completed paired run, the current incumbent, and exact evaluated
 candidate/configuration/evaluator versions. An older pass cannot override a
 newer failure or inconclusive result. Manually recorded results without a paired
 run cannot qualify. These controls are not model tools; automatic policy is empty.
+
+Both the journal writer and replay check the matching evaluation start, paired result and completion before accepting a selection. Using a selected prompt or launching selected source also checks its supporting result artifact. Rollback can restore an intact original version if the departing candidate's result artifact has been damaged.
 
 `PromptChange` records the alias, preceding selection, exact before/after blobs,
 result, evaluation configuration and policy. Selection persists **within this

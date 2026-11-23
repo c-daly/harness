@@ -8,7 +8,7 @@ the rebuilt transcript into AgentLoop(history=...) and do not call start().
 from pathlib import Path
 from typing import Callable
 
-from harness.events import SessionResumed
+from harness.events import AgentRunStarted, SessionResumed, SessionStarted
 from harness.fold import FoldedState, fold, resume_repairs
 from harness.log import EventLogWriter, SessionLock, read_session
 from harness.messages import Message
@@ -35,6 +35,9 @@ def _reopen(
         writer = EventLogWriter(base, session_id, _lock=lock)
         session = Session(base, session_id, default_model=default_model,
                           start_seq=state.last_seq, _writer=writer)
+        for env in envelopes:
+            if isinstance(env.event, (SessionStarted, SessionResumed, AgentRunStarted)):
+                session.observe_project_scope(env.event)
     except BaseException:
         lock.close()
         raise

@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from harness.cli import Kernel, build_kernel, main, run_once
+from harness.cli import Kernel, build_kernel, main, run_once, run_workflow_once
 from harness.mcp_config import load_mcp_file
 from harness.provider import FakeProvider, text_turn
 from harness.types import ModelId
@@ -26,6 +26,77 @@ async def test_build_kernel_wires_dispatch_agent_tool(tmp_path):
     )
     assert isinstance(kernel, Kernel)
     assert "dispatch_agent" in [s.name for s in kernel.registry.specs()]
+
+
+@pytest.mark.parametrize(("proposed", "rewritten"), [
+    ("consult_panel", None), ("dispatch_agent", "read_file"), ("read_file", "escalate"),
+])
+async def test_primary_conversation_reserves_host_coordination(tmp_path, proposed, rewritten):
+    from harness.context import ContextPolicy
+    from harness.hooks import Allow, ProposedToolCall, Rewrite
+    from harness.log import read_session
+    from harness.provider import tool_call_turn
+
+    tools_seen = []
+
+    class RecordingProvider(FakeProvider):
+        def infer(self, request):
+            tools_seen.append({tool.name for tool in request.tools})
+            return super().infer(request)
+
+    provider = RecordingProvider([tool_call_turn("", proposed, {}, call_id="nomination"), text_turn("Finished")])
+    kernel = build_kernel(provider=provider, model=ModelId("fake"), base_dir=tmp_path / "state",
+                          workspace_root=tmp_path, native_tools=True, context_policy=ContextPolicy())
+    if rewritten:
+        def rewrite(action):
+            if isinstance(action, ProposedToolCall):
+                return Rewrite(ProposedToolCall(action.call_id, rewritten, action.args))
+            return Allow()
+        kernel.hooks.register_dispatch("test-rewrite", rewrite)
+
+    assert await run_once(kernel, "Inspect this project") == "Finished"
+    records = [env.event for env in read_session(kernel.session.base, kernel.session.id)]
+    reserved = {"consult_panel", "dispatch_agent", "ensemble", "escalate"}
+    assert reserved <= {tool.name for tool in kernel.registry.specs()}
+    assert len(tools_seen) == 2 and all("read_file" in names and not names & reserved for names in tools_seen)
+    assert [set(item.tools) for item in records if item.type == "context_prepared"] == tools_seen
+    assert any(item.type == "hook_decided" and item.hook == "saoirse-coordination" for item in records)
+    assert not any(item.type == "dispatch_resolved" and item.call_id == "nomination" for item in records)
+    assert not any(item.type in {"permission_requested", "coordination_started", "subagent_spawned"} for item in records)
+
+
+@pytest.mark.parametrize("routed", [False, True])
+async def test_selected_external_agent_keeps_coordination_inventory_and_dispatch(tmp_path, routed):
+    from harness.agent_runtime import AgentRuntimeInfo
+    from harness.dispatcher import current_dispatch_tool
+    from harness.hooks import Allow, ProposedModelCall, ProposedToolCall, Rewrite
+    from harness.log import read_session
+
+    class External:
+        def execution_kind(self, model):
+            return "agent" if model == "external" else "inference"
+
+        def agent_runtime_info(self, model):
+            return AgentRuntimeInfo(runtime="external") if model == "external" else None
+
+        async def complete(self, *, model, messages, tools):
+            assert "dispatch_agent" in {tool.name for tool in tools}
+            # Unknown configured agent: exercises actual dispatch without starting a child.
+            await current_dispatch_tool.get()(ProposedToolCall(
+                "external-tool", "dispatch_agent", {"agent": "unconfigured", "prompt": "Inspect"}))
+            for chunk in text_turn("External answer"):
+                yield chunk
+
+    model = ModelId("initial" if routed else "external")
+    kernel = build_kernel(provider=External(), model=model, base_dir=tmp_path / "state")
+    if routed:
+        kernel.hooks.register_dispatch("route", lambda action: (
+            Rewrite(ProposedModelCall(action.call_id, ModelId("external")))
+            if isinstance(action, ProposedModelCall) else Allow()))
+    assert await run_once(kernel, "Inspect this project") == "External answer"
+    records = [env.event for env in read_session(kernel.session.base, kernel.session.id)]
+    assert any(e.type == "dispatch_resolved" and e.call_id == "external-tool" for e in records)
+    assert not any(e.type == "hook_decided" and e.hook == "saoirse-coordination" for e in records)
 
 
 async def test_run_once_returns_final_text_and_closes_session(tmp_path):
@@ -196,7 +267,7 @@ async def test_permission_engine_denies_through_kernel(tmp_path):
         permissions=engine,
     )
     sid = kernel.session.id
-    result = await run_once(kernel, "delegate something")
+    result = await run_workflow_once(kernel, "delegate something")
     assert result == "gave up"
     events = [e.event for e in read_session(tmp_path, sid)]
     denied = [
@@ -208,7 +279,7 @@ async def test_permission_engine_denies_through_kernel(tmp_path):
 
 
 async def test_permission_ask_resolves_and_grant_silences(tmp_path):
-    from harness.events import PermissionRequested
+    from harness.events import PermissionRequested, ToolCallCompleted
     from harness.interaction import ScriptedResolver
     from harness.log import read_session
     from harness.permissions import PermissionEngine, PermissionRule, RuleSet
@@ -216,7 +287,7 @@ async def test_permission_ask_resolves_and_grant_silences(tmp_path):
     from harness.types import ToolName
 
     engine = PermissionEngine(
-        [RuleSet(rules=[PermissionRule(action="ask", tool="dispatch_agent")], default="allow")]
+        [RuleSet(rules=[PermissionRule(action="ask", tool="read_file")], default="allow")]
     )
 
     class GrantingResolver(ScriptedResolver):
@@ -231,28 +302,28 @@ async def test_permission_ask_resolves_and_grant_silences(tmp_path):
         async def resolve(self, request):
             answer = await super().resolve(request)
             if answer:
-                self._engine.grant("dispatch_agent")
+                self._engine.grant("read_file")
             return answer
 
+    (tmp_path / "notes.txt").write_text("recorded")
     kernel = build_kernel(
-        provider=FakeProvider(
-            [
-                tool_call_turn("first", ToolName("dispatch_agent"), {"prompt": "a"}),
-                text_turn("child one done"),
-                tool_call_turn("second", ToolName("dispatch_agent"), {"prompt": "b"}),
-                text_turn("child two done"),
-                text_turn("all delegated"),
-            ]
-        ),
+        provider=FakeProvider([
+            tool_call_turn("first", ToolName("read_file"), {"file_path": "notes.txt"}),
+            tool_call_turn("second", ToolName("read_file"), {"file_path": "notes.txt"}),
+            text_turn("both read"),
+        ]),
+        native_tools=True,
+        workspace_root=tmp_path,
         base_dir=tmp_path,
         model=ModelId("fake"),
         permissions=engine,
         resolver=GrantingResolver(engine),
     )
     sid = kernel.session.id
-    result = await run_once(kernel, "delegate twice")
-    assert result == "all delegated"
+    result = await run_once(kernel, "read twice")
+    assert result == "both read"
     events = [e.event for e in read_session(tmp_path, sid)]
+    assert sum(isinstance(e, ToolCallCompleted) and not e.is_error for e in events) == 2
     asks = [e for e in events if isinstance(e, PermissionRequested)]
     assert len(asks) == 1  # second call sailed through on the grant
 

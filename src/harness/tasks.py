@@ -364,11 +364,11 @@ def _review_note(note):
     return note
 
 
-def check_requirement(requirement, task, events, blobs):
+def check_requirement(requirement, task, events, blobs, *, pending_reply=None):
     """Check immutable execution records; model opinions never confirm review."""
     from harness.events import (
         AgentRunFinished, AgentRunStarted, DispatchResolved, ToolCallCompleted, ToolCallProposed,
-        ToolCallAborted, ToolCallCancelled, HookDecided,
+        ToolCallAborted, ToolCallCancelled, HookDecided, ModelCallCompleted,
     )
     details = {"requirement_id": requirement.id}
 
@@ -381,17 +381,32 @@ def check_requirement(requirement, task, events, blobs):
         return result("unverified", "no execution")
     starts = [e for e in events if isinstance(e.event, AgentRunStarted) and e.event.run_id == task.run_id]
     finishes = [e for e in events if isinstance(e.event, AgentRunFinished) and e.event.result.run_id == task.run_id]
-    if len(starts) != 1 or len(finishes) != 1 or starts[0].seq >= finishes[0].seq:
+    if pending_reply is not None:
+        # The actual final model receipt bounds evidence before publication. A
+        # live delivery check neither fabricates a finish nor accepts the task.
+        if finishes or task.open_runs != {task.run_id}:
+            return result("unverified", "execution is no longer the sole active attempt")
+        ends = [e for e in events if isinstance(e.event, ModelCallCompleted)
+                and e.event.call_id == pending_reply and e.event.agent_run_id == task.run_id
+                and e.event.task_id == task.definition.id and e.event.response_deferred
+                and e.event.purpose == "conversation" and e.event.stop_reason == "end_turn"]
+    else:
+        ends = finishes
+    if len(starts) != 1 or len(ends) != 1 or starts[0].seq >= ends[0].seq:
         return result("unverified", "execution boundary is missing or ambiguous")
     if task.declared_at[requirement.id] >= task.run_started_seq:
         return result("unverified", "requirement added after this attempt; run the task again")
     ref, data = None, None
     if isinstance(requirement.check, OutputCheck):
-        source = finishes[0]
-        if source.event.result.output is None:
-            return result("unverified", "no recorded output artifact")
+        source = ends[0]
         details["source_seq"] = source.seq
-        ref = source.event.result.output
+        if pending_reply is None:
+            ref = source.event.result.output
+            if ref is None:
+                return result("unverified", "no recorded output artifact")
+        else:
+            from harness.messages import Message
+            data = Message.model_validate(source.event.message).text().encode()
     else:
         # Match the latest call by proposal order in this root attempt, including
         # its same-session descendants. Unrelated and previous attempts cannot help.
@@ -446,6 +461,8 @@ def check_requirement(requirement, task, events, blobs):
         if source is None or not isinstance(source.event, ToolCallCompleted):
             return result("unverified", "tool did not complete")
         proposal = proposed[call_id]
+        if pending_reply is not None:
+            ended[task.run_id] = ends[0].seq
         last = min(ended.get(task.run_id, 0), ended.get(proposal.event.agent_run_id, 0))
         if not proposal.seq < resolved[call_id].seq < source.seq < last:
             return result("unverified", "tool evidence is outside its execution boundary")

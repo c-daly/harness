@@ -144,15 +144,21 @@ there is no active task with declared requirements. Configured escalation agents
 can set the same boolean in frontmatter. Core provides this behavior with both
 memory and agent-swarm absent; plugin workflow policy can invoke it normally.
 
-For a small reproducible terminal example, declare an exact-output requirement:
+Headless integrations use `harness.cli.run_once(kernel, prompt)` for an ordinary
+Saoirse conversation. A runner executing a configured workflow can call
+`harness.cli.run_workflow_once(kernel, prompt)` to retain its scoped coordination
+tools, permissions and budgets. The agent-swarm runner uses this entry point for
+the single child named by its manifest.
+
+To prepare an exact-output requirement for a configured coordination workflow:
 
 ```text
 /task new Return exactly READY
 /task require-json {"id":"answer","description":"Return READY without extra text","check":{"kind":"output","sha256":"c2e3ac47f4a325469c1a2d5f117e463ec943c721986d5d9f09ac4540b7d80526"}}
 ```
 
-Then ask the agent to call `escalate` with the prompt `Return exactly READY`, your
-catalog's `cheap` and `premium` aliases, and `require_checks: true`. `/tools escalate`
+A configured escalation workflow can call `escalate` with the prompt `Return exactly READY`,
+the catalog's `cheap` and `premium` aliases, and `require_checks: true`. `/tools escalate`
 shows the full parameters. `/coordination` shows the frozen task source and each
 participant's passed/failed/unverified checks, with child event/artifact references.
 An interrupted verifier remains unconfirmed; a late read-only check cannot revive
@@ -198,7 +204,7 @@ untracked call or a task without requirements. Model-provided replacement criter
 are ignored. Configured coordinator participants cannot satisfy a direct child's
 evidence contract; they remain blocked under recorded checks.
 
-After declaring the `READY` requirement above, ask for `ensemble` with
+After declaring the `READY` requirement above, a configured ensemble workflow can use
 `{"prompt":"Return exactly READY","models":["local","gpt"],"require_checks":true}`
 using aliases from your catalog. An optional `judge` names another catalog alias.
 `/tools ensemble` documents the arguments, and `/coordination` shows each grade.

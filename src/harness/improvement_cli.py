@@ -22,8 +22,33 @@ def refusal_message(exc):
     return type(exc).__name__ if isinstance(exc, ProviderError) else str(exc)
 
 
-async def perform(kernel, words):
+def feedback(kernel, argument: str, *, failure=False):
+    """Preserve ordinary punctuation in feedback submitted through the terminal."""
+    from harness.improvement_feedback import record_feedback
+    turn = None
+    parts = argument.split(maxsplit=2)
+    if parts and parts[0] == "--turn":
+        if len(parts) != 3 or not parts[1].isascii() or not parts[1].isdecimal():
+            raise ValueError("Use --turn SEQ followed by the observation.")
+        turn, argument = int(parts[1]), parts[2]
+    return record_feedback(kernel.improvements, kernel.loop.dispatcher._redact(argument), turn=turn, failure=failure,
+                           receipt=failure)
+
+
+def _examples(base, session_id):
+    from harness.improvement_examples import session_examples
+    from harness.telemetry import _safe
+    return "\n".join(_safe(f"{e.id}  event {e.evidence_seq}  {e.action}  {e.outcome}")
+                     for e in session_examples(base, session_id)) or "No native examples are available in this session."
+
+
+async def perform(kernel, words, *, explicit_model=False):
     """Shared CLI/TUI actions. These are not registered as model tools."""
+    if words == ["examples"]:
+        return _examples(kernel.session.base, kernel.session.id)
+    if len(words) == 2 and words[0] == "review-failure":
+        from harness.experience_review import review_failure
+        return await review_failure(kernel, words[1], explicit_model=explicit_model)
     if len(words) == 2 and words[0] == "source-author":
         from harness.source_authorship import SourceAuthorSpec, author_source
         from harness.source_improvement_cli import prepared, read_spec
@@ -73,7 +98,7 @@ async def perform(kernel, words):
         label = words[1] if len(words) == 2 else "message"
         change = service.rollback(model=model, function=_function(label))
         return f"Restored {label} prompt {change.prompt.sha256[:12]}; change {change.id}. Shadow mode."
-    raise ValueError("use propose [message|context|progress], evaluate CANDIDATE EXPERIMENT.json, "
+    raise ValueError("use review-failure FAILURE_ID, propose [message|context|progress], evaluate CANDIDATE EXPERIMENT.json, "
                      "compare ASSESSMENT.json, adopt RESULT [message|context|progress], rollback [message|context|progress], "
                      "source-author SPEC.json, source-finalize AUTHOR_ID, source-prepare SPEC.json, source-evaluate PLAN_ID, "
                      "source-adopt RESULT SLOT MODULE:FUNCTION IMPORT_ROOT, or source-rollback SLOT")
@@ -93,10 +118,13 @@ def main(argv):
     parser = argparse.ArgumentParser(prog="harness improve", description=__doc__)
     parser.add_argument("--base-dir", type=Path, default=Path.home() / ".local/share/harness")
     parser.add_argument("--catalog", type=Path, default=Path.home() / ".config/harness/models.toml")
-    parser.add_argument("--model", required=True)
+    parser.add_argument("--model")
     parser.add_argument("--allow", action="append", default=[])
     parser.add_argument("session_id")
     actions = parser.add_subparsers(dest="action", required=True)
+    actions.add_parser("examples", help="List native historical examples and their source events.")
+    review = actions.add_parser("review-failure", help="Review the original request against eligible earlier examples.")
+    review.add_argument("failure_id")
     propose = actions.add_parser("propose")
     actions.add_parser("source-author", help="Author one bounded source patch using frozen operator scope/checks.").add_argument("spec")
     evaluate = actions.add_parser("evaluate")
@@ -110,6 +138,15 @@ def main(argv):
     for command in (propose, adopt, rollback):
         command.add_argument("--function", choices=tuple(FUNCTIONS), default="message")
     args = parser.parse_args(argv)
+    if args.action == "examples":
+        from harness.log import TornLogError
+        try:
+            print(_examples(args.base_dir, SessionId(args.session_id)))
+        except (OSError, ValueError, TornLogError) as exc:
+            parser.error(f"cannot read the session examples ({type(exc).__name__})")
+        return
+    if not args.model:
+        parser.error("--model is required for this action")
     try:
         catalog = Catalog.load(args.catalog)
         if catalog.resolve(args.model).execution_kind != "inference":
@@ -123,7 +160,9 @@ def main(argv):
     kernel = build_kernel(base_dir=args.base_dir, model=ModelId(args.model), provider=CatalogProvider(catalog),
         permissions=engine, resume_session_id=SessionId(args.session_id))
     words = [args.action]
-    if args.action == "source-author":
+    if args.action == "review-failure":
+        words += [args.failure_id]
+    elif args.action == "source-author":
         words += [args.spec]
     elif args.action == "evaluate":
         words += [args.candidate_id, args.experiment]
@@ -136,7 +175,7 @@ def main(argv):
 
     async def run():
         try:
-            print(await perform(kernel, words))
+            print(await perform(kernel, words, explicit_model=True))
         finally:
             try:
                 await kernel.resources.close(emit=kernel.session.append)

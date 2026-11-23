@@ -162,7 +162,7 @@ async def test_manifest_request_reaches_native_child_and_never_completes_queue(
         "branch_name": "task/test",
         "prompt": "The actual plugin-selected task",
     }
-    execute_once = runner.run_once
+    execute_once = runner.run_workflow_once
 
     async def finish(*values):
         result = await execute_once(*values)
@@ -178,7 +178,7 @@ async def test_manifest_request_reaches_native_child_and_never_completes_queue(
             raise execution_error("original execution outcome")
         return result
 
-    monkeypatch.setattr(runner, "run_once", finish)
+    monkeypatch.setattr(runner, "run_workflow_once", finish)
     if execution_error is None:
         await runner.execute(args, request)
     else:

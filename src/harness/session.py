@@ -6,7 +6,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from harness.blobs import BlobStore
-from harness.events import Envelope, Event, ImprovementRecorded, SessionStarted
+from harness.events import (
+    AgentRunFinished, AgentRunStarted, Envelope, Event, ImprovementRecorded, SessionResumed, SessionStarted, TaskChecked,
+)
 from harness.log import EventLogWriter
 from harness.types import ModelId, SessionId
 
@@ -67,8 +69,19 @@ class Session:
         # One live owner prevents independent dispatchers from resetting admission.
         self._execution_ledger = None
         self._execution_budget = None
+        self._experience_project = None
+        self._experience_run = False
 
-    def start(self) -> Envelope:
+    def observe_project_scope(self, event):
+        """Recover the single-project prefix across starts, including older native bindings."""
+        from harness.project_examples import projected_scope
+        self._experience_project = projected_scope(self._experience_project, event)
+        if isinstance(event, (SessionStarted, SessionResumed)):
+            self._experience_run = False
+        elif isinstance(event, AgentRunStarted) and event.parent_run_id is None:
+            self._experience_run = bool(self._experience_project)
+
+    def start(self, *, project=None) -> Envelope:
         if self._seq != 0:
             raise RuntimeError("Session.start() already called")
         parent_id, parent_seq = self._parent if self._parent else (None, None)
@@ -77,6 +90,7 @@ class Session:
                 parent_session_id=parent_id,
                 parent_seq=parent_seq,
                 default_model=self._default_model,
+                project=project,
             )
         )
 
@@ -90,6 +104,16 @@ class Session:
         self._seq += 1
         envelope = Envelope(session_id=self.id, seq=self._seq, ts=time.time(), event=event)
         self._writer.append(envelope)  # source of truth first
+        if isinstance(event, (SessionStarted, SessionResumed, AgentRunStarted)):
+            self.observe_project_scope(event)
+        elif self._experience_run and (isinstance(event, (AgentRunFinished, TaskChecked)) or
+                isinstance(event, ImprovementRecorded) and event.record.kind == "evidence"):
+            from harness.project_examples import index_prefix
+            try:
+                index_prefix(self.base, self._experience_project, self.id, self._writer.path.stat().st_size, envelope.seq)
+            except (OSError, ValueError):
+                # An unavailable derived index must not invalidate a committed event.
+                pass
         if self._task_state is not None:
             self._task_state.apply(envelope)
         self.bus.publish(envelope)  # observers second; never blocking

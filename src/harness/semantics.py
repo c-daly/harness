@@ -87,6 +87,22 @@ class SemanticObservation(_Observation):
     selection_status: str = "explicit"
 
 
+class FailureReviewOrigin(BaseModel):
+    """Link retrospective context selection to its evidence and historical boundary."""
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    failure_evidence_id: str = Field(min_length=1, max_length=128)
+    run_start_seq: int = Field(ge=1)
+    request_seq: int = Field(ge=1)
+    run_finish_seq: int = Field(ge=1)
+    eligible_examples: int = Field(ge=0)
+    history_floor_seq: int = Field(default=0, ge=0)
+    workspace_key: str | None = None
+    original_selection_seqs: tuple[int, ...] = ()
+    original_context_seqs: tuple[int, ...] = ()
+    omitted_original_ids: tuple[str, ...] = ()
+    unreadable_original_inputs: tuple[int, ...] = ()
+
+
 class AssessmentObservation(_Observation):
     function: Literal["context_selection", "progress_assessment"]
     selection_id: str | None = None
@@ -97,6 +113,7 @@ class AssessmentObservation(_Observation):
     inference_input: BlobRef | None = None  # Filtered payload, if inference was attempted.
     source_seq: int | None = Field(default=None, ge=1)
     evidence: ProgressEvidence | None = None
+    failure_review: FailureReviewOrigin | None = None
     result: Annotated[ContextSelection | ProgressAssessment, Field(discriminator="function")] | None = None
 
 
@@ -155,10 +172,12 @@ class SemanticService:
                 "selection_status": selection, "selection_id": change.id if change else None})
 
     async def select_context(self, data: ContextSelectionInput, *, model: ModelId,
-                             limits: SemanticLimits | None = None, enabled=True):
+                             limits: SemanticLimits | None = None, enabled=True, failure_review=None,
+                             exact_model=False):
         data = ContextSelectionInput.model_validate(data.model_dump())
         return await self._assess(data, model=model, profile=CONTEXT_PROMPT,
-            schema=ContextSelection, validator=validate_selection, limits=limits, enabled=enabled)
+            schema=ContextSelection, validator=validate_selection, limits=limits, enabled=enabled,
+            failure_review=failure_review, exact_model=exact_model)
 
     async def assess_progress(self, *, model: ModelId, task_id=None,
                               limits: SemanticLimits | None = None, enabled=True):
@@ -185,7 +204,7 @@ class SemanticService:
             schema=schema, validator=validator, limits=limits, enabled=True, evaluation_run_id=run_id)
 
     async def _assess(self, data, *, model, profile, schema, validator, limits, enabled,
-                      prompt=None, evaluation_run_id=None):
+                      prompt=None, evaluation_run_id=None, failure_review=None, exact_model=False):
         selection, change = "explicit", None
         if prompt is None:
             from harness.prompt_improvement import prompt_selection
@@ -211,14 +230,16 @@ class SemanticService:
             fields={"function": profile.function, "function_version": function_version(profile.function),
                     "selection_status": selection, "selection_id": change.id if change else None,
                     "evaluation_run_id": evaluation_run_id,
+                    "failure_review": failure_review,
                     "source_seq": getattr(data, "source_seq", None),
                     "evidence": ProgressEvidence.from_snapshot(data) if isinstance(data, ProgressInput) else None},
-            save_input=True, inference_text=filtered.model_dump_json() if filtered is not None else None,
+            save_input=True, exact_model=exact_model, inference_text=filtered.model_dump_json() if filtered is not None else None,
             deterministic=ContextSelection(selected_ids=(), reason="no_match").model_dump()
                 if filtered is not None and not filtered.candidates else None)
 
     async def _observe(self, text, *, model, prompt, profile, schema, validate, limits, enabled,
-                       observation_type, fields, save_input=False, inference_text=None, deterministic=None):
+                       observation_type, fields, save_input=False, inference_text=None, deterministic=None,
+                       exact_model=False):
         from harness.dispatcher import ModelDispatchBlocked
         from harness.errors import ContextOverflow, LocalBusy, MalformedStreamError, ProviderError
         from harness.events import AssessmentObserved, SemanticObserved
@@ -278,6 +299,7 @@ class SemanticService:
                     pricing = resolved.pricing_dict() if resolved else None
                     result = await self.dispatcher.dispatch_inference(
                         provider=provider, request=request, pinned=True, pricing=pricing,
+                        exact_model=exact_model,
                     )
             except asyncio.CancelledError:
                 record("cancelled")
@@ -336,6 +358,14 @@ def render_semantics(observations) -> str:
                 lines.append(_safe("  Remaining: " + (", ".join(item.evidence.remaining_ids) or "none")))
             if isinstance(item.result, ContextSelection):
                 lines.append(_safe("  Suggested context: " + (", ".join(item.result.selected_ids) or "none")))
+            if item.failure_review is not None:
+                origin = item.failure_review
+                lines.append(_safe(f"  Failure review {origin.failure_evidence_id}, original turn events "
+                                   f"{origin.run_start_seq}–{origin.run_finish_seq}, "
+                                   f"{origin.eligible_examples} eligible prior examples in this session."))
+                if origin.omitted_original_ids or origin.unreadable_original_inputs:
+                    lines.append(f"  Original pool coverage is incomplete: {len(origin.omitted_original_ids)} candidates outside the review, "
+                                 f"{len(origin.unreadable_original_inputs)} unreadable inputs.")
             elif isinstance(item.result, ProgressAssessment):
                 if item.evidence is None:
                     lines.append(_safe("  Remaining: " + (", ".join(item.result.remaining_ids) or "none")))

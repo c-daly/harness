@@ -287,6 +287,8 @@ Inspect the same records in either interface:
 harness improvements SESSION_ID --base-dir /path/to/harness-data
 ```
 
-The memory plugin can later retain accepted lessons through its existing write
-contract. Agent-swarm and the proposed experiment plugin may supply workflow or
+Saoirse recalls her own experience through the native Harness journal. An
+explicit export of an accepted lesson to an external memory provider would use
+that provider's normal write contract. Ordinary recall carries no export permission.
+Agent-swarm and the proposed experiment plugin may supply workflow or
 experiment strategies; core owns these records and their enforcement boundary.

@@ -95,6 +95,11 @@ IDs, duplicates, and excess selections cannot enter a successful result.
 memory or inject/prune context. A plugin can supply its scoped candidates to
 `kernel.semantics.select_context(ContextSelectionInput(...), model=...)`.
 
+For ordinary Saoirse turns, Harness can call the same function with examples
+from its native experience records. The host checks the scope and may give the
+selected leads to the current local model. Only a fresh check can establish
+the current answer. This permission is specific to advisory worked examples.
+
 Core filters the supplied set to available, current candidates **before**
 inference. If none remain, an enabled, size-bounded request returns `no_match`
 immediately with `decision_source: eligibility`, no model call, and no runtime

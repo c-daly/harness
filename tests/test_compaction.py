@@ -312,7 +312,7 @@ async def test_tools_explains_agent_invocation_and_shows_panel_details(tmp_path)
         await pilot.press("enter")
         await pilot.pause(0.1)
         screen = " ".join(screen_text(app).split())
-        assert "ask for them in ordinary language" in screen
-        assert "not slash commands" in screen
+        assert "Harness reserves coordination tools for host and workflow calls" in screen
+        assert "/help lists interface commands" in screen
         assert "consult_panel:" in screen and "Parameters:" in screen
         assert not any(e.event.type in ("model_call_proposed", "tool_call_proposed") for e in events(app.kernel))
