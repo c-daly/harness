@@ -13,6 +13,32 @@ from harness.tasks import TaskService
 from harness.types import SessionId
 
 
+async def test_shadow_correction_cannot_be_rebound_to_an_identical_earlier_exchange(tmp_path):
+    from harness.events import SemanticObserved
+    from harness.improvement_journal import project_improvements
+    from tests.test_ordinary_reply_semantics import ReplyProvider, ready_kernel
+
+    kernel = await ready_kernel(tmp_path, ReplyProvider(answer="That is the recorded assignment.", label="correction"))
+    await kernel.loop.start()
+    try:
+        for _ in range(3):
+            await kernel.loop.run_turn("The assignment is different.")
+        rows = read_session(tmp_path, kernel.session.id, repair=False)
+        first, second = [row for row in rows if isinstance(row.event, SemanticObserved)]
+        assert first.event.observation.input_sha256 == second.event.observation.input_sha256
+        assert first.event.observation.reply_origin != second.event.observation.reply_origin
+        evidence = project_improvements(rows, blobs=kernel.session.blobs).evidence.values()
+        assert {e.source_seq for e in evidence if e.category == "correction"} == {first.seq, second.seq}
+        rebound = second.event.observation.model_copy(update={"reply_origin": first.event.observation.reply_origin})
+        changed = [row.model_copy(update={"event": SemanticObserved(observation=rebound)})
+                   if row.seq == second.seq else row for row in rows]
+        evidence = project_improvements(changed, blobs=kernel.session.blobs).evidence.values()
+        assert {e.source_seq for e in evidence if e.category == "correction"} == {first.seq}
+    finally:
+        await kernel.resources.close(emit=kernel.session.append)
+        kernel.session.close()
+
+
 def test_historical_evidence_links_marked_outcomes_checks_and_acceptance(tmp_path):
     with Session(tmp_path, SessionId("ordinary")) as session:
         session.start()

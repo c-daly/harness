@@ -71,6 +71,9 @@ class Session:
         self._execution_budget = None
         self._experience_project = None
         self._experience_run = False
+        from harness.reply_semantics import ReplyHistory
+        self.reply_history = ReplyHistory()
+        self.has_prompt_changes = False if start_seq == 0 else None
 
     def observe_project_scope(self, event):
         """Recover the single-project prefix across starts, including older native bindings."""
@@ -104,6 +107,9 @@ class Session:
         self._seq += 1
         envelope = Envelope(session_id=self.id, seq=self._seq, ts=time.time(), event=event)
         self._writer.append(envelope)  # source of truth first
+        self.reply_history.apply(envelope)
+        if isinstance(event, ImprovementRecorded) and event.record.kind == "prompt_change":
+            self.has_prompt_changes = True
         if isinstance(event, (SessionStarted, SessionResumed, AgentRunStarted)):
             self.observe_project_scope(event)
         elif self._experience_run and (isinstance(event, (AgentRunFinished, TaskChecked)) or

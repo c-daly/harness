@@ -148,16 +148,35 @@ class AgentLoop:
         from harness.semantics import SemanticService
         return SemanticService(self.dispatcher, lambda: self.provider)
 
-    async def run_conversation(self, task: AgentTask, *, on_progress=None) -> AgentResult:
+    async def run_conversation(self, task: AgentTask, *, on_progress=None, reply_before_seq=None) -> AgentResult:
         """Run an ordinary Saoirse turn with host-owned coordination."""
+        from harness.reply_semantics import observe_reply
+        prior = self.session.reply_history.last
+        submission_seq = self.session.last_seq if reply_before_seq is None else reply_before_seq
+        if (task.handoff_id or self.dispatcher.scope.depth or current_agent_run.get() is not None
+                or prior and (prior.finish_seq > submission_seq or prior.agent != task.agent)):
+            prior = None
+        clock = asyncio.get_running_loop()
+        started = clock.time()
+        result = None
         token = primary_conversation.set((self.dispatcher, task.id))
         try:
-            return await self.run_task(task, on_progress=on_progress)
+            result = await self.run_task(task, on_progress=on_progress, _reply_to_seq=prior.finish_seq if prior else None)
+            return result
         finally:
             primary_conversation.reset(token)
+            history = self.session.reply_history
+            if (prior and history.request and history.request.event.reply_to_seq == prior.finish_seq
+                    and history.root is None and not history.ambiguous and not asyncio.current_task().cancelling()
+                    and (result is None or result.status not in {"cancelled", "aborted"})
+                    and execution_kind_for(self.provider, self.model) == "inference"):
+                timeout = self.dispatcher.scope.budget.limits.task_timeout_seconds
+                if "timeout_seconds" in task.limits.model_fields_set:
+                    timeout = min(timeout, task.limits.timeout_seconds)
+                await observe_reply(self, prior, history.request, timeout - (clock.time() - started))
 
     async def run_task(
-        self, task: AgentTask, *, on_progress: Callable[[AgentProgress], None] | None = None,
+        self, task: AgentTask, *, on_progress: Callable[[AgentProgress], None] | None = None, _reply_to_seq=None,
     ) -> AgentResult:
         """Execute one bounded task; completion leaves acceptance unverified."""
         from harness.agent import bound_task
@@ -191,17 +210,17 @@ class AgentLoop:
                 run_controls=self.dispatcher.scope.budget.controls,
                 extension_blocked=extension_blocked,
                 capabilities=capabilities,
-                execute=lambda: self._run_task_body(task, on_progress, project),
+                execute=lambda: self._run_task_body(task, on_progress, project, _reply_to_seq),
             )
         finally:
             self._task_active = False
             self.active_model = None
             self.turn_context = []
 
-    async def _run_task_body(self, task: AgentTask, on_progress, project) -> AgentOutput:
+    async def _run_task_body(self, task: AgentTask, on_progress, project, reply_to_seq=None) -> AgentOutput:
         user_text = task.prompt
         history_start = len(self.history) if task.handoff_id else 0
-        self.session.append(UserMessage(text=user_text))
+        self.session.append(UserMessage(text=user_text, reply_to_seq=reply_to_seq))
         self.history.append(Message.user_text(user_text))
         max_iterations = min(self.max_iterations, task.limits.max_iterations)
         usage = Usage(0, 0, 0, 0)

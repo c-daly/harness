@@ -68,6 +68,8 @@ def default_prompt(session, *, persist=True, function="message_kind"):
 
 def prompt_selection(session, provider, model, *, limits=None, persist_default=True, function="message_kind"):
     """Read a recorded selection; changed declarations suspend it without inference."""
+    if session.has_prompt_changes is False:
+        return default_prompt(session, persist=persist_default, function=function), "builtin", None
     state = read_improvements(session.base, session.id)
     change = state.selected_prompt(model, function)
     if change is None:

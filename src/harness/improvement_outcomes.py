@@ -1,12 +1,15 @@
 """Expose recorded task outcomes as evidence in the existing improvement journal."""
 
+import hashlib
 from collections import Counter
 
 from harness.events import (
-    AgentRunFinished, AgentRunStarted, ImprovementRecorded, SessionOutcome, SessionStarted, TaskAccepted,
-    TaskChecked, TaskOutcome,
+    AgentRunFinished, AgentRunStarted, ImprovementRecorded, ModelCallCompleted, SemanticObserved,
+    SessionOutcome, SessionStarted, TaskAccepted, TaskChecked, TaskOutcome,
 )
 from harness.improvement import Candidate, Evidence, ImprovementState, SourceAuthoring
+from harness.messages import Message, Role
+from harness.semantics import MessageInterpretation
 from harness.tasks import OutputCheck, TaskState, check_requirement
 
 
@@ -67,6 +70,64 @@ def checked_failure_turn(evidence, envelopes, blobs):
     return None
 
 
+def _reply_corrections(envelopes, blobs):
+    """Project a classifier observation only when its exchange and inference receipt agree."""
+    from harness.reply_semantics import ReplyHistory, exchange_for_origin
+
+    history = ReplyHistory()
+    latest_exchange = None
+    by_seq = None
+    calls = {}
+    for row in envelopes:
+        event = row.event
+        if isinstance(event, AgentRunStarted) and event.parent_run_id is None:
+            latest_exchange = None
+        elif (isinstance(event, AgentRunFinished)
+                and history.root and history.root.run_id == event.result.run_id
+                and history.root.task_id == event.result.task_id and not history.ambiguous
+                and history.request is not None and history.pending_prior is not None
+                and history.request.event.reply_to_seq == history.pending_prior.finish_seq
+                and history.pending_prior.agent == history.root.agent):
+            # Only the conversation actually preceding this submitted message
+            # can supply its target, even when two turns contain identical text.
+            prior = history.pending_prior
+            latest_exchange = (prior.request_seq, prior.finish_seq, history.request.seq)
+        history.apply(row)
+        if isinstance(event, ModelCallCompleted) and event.purpose.startswith("semantic:"):
+            calls[event.call_id] = (row, latest_exchange) if event.call_id not in calls else None
+        elif isinstance(event, SemanticObserved):
+            observed = event.observation
+            origin = observed.reply_origin
+            if (origin is None or observed.status != "ok" or observed.reason != "classified"
+                    or observed.kind != "correction" or observed.effective_model != observed.model):
+                continue
+            receipt = calls.get(observed.call_id)
+            if receipt is None or receipt[1] != (origin.request_seq, origin.run_finish_seq, origin.followup_seq):
+                continue
+            call, _ = receipt
+            if (not origin.followup_seq < call.seq < row.seq or call.session_id != row.session_id
+                    or call.event.model != observed.model or call.event.purpose != f"semantic:{observed.id}"
+                    or call.event.stop_reason != "end_turn"):
+                continue
+            try:
+                response = Message.model_validate(call.event.message)
+                label = MessageInterpretation.model_validate_json(response.text())
+            except ValueError:
+                continue
+            if response.role != Role.ASSISTANT or response.tool_calls() or label.kind != observed.kind:
+                continue
+            if by_seq is None:
+                by_seq = {env.seq: env for env in envelopes}
+            packet = exchange_for_origin(by_seq, origin, blobs)
+            if packet is None or hashlib.sha256(packet.encode()).hexdigest() != observed.input_sha256:
+                continue
+            del calls[observed.call_id]
+            description = (f"Shadow classification identified the follow-up at event {origin.followup_seq} "
+                           f"as a correction to the answer ending at event {origin.run_finish_seq} "
+                           f"for the request at event {origin.request_seq}. Response correctness is unverified.")
+            yield row, "reply-correction", "correction", description
+
+
 def _observations(envelopes, blobs):
     finishes = {env.seq: env for env in finished_replies(envelopes)}
     for envelope in finishes.values():
@@ -103,6 +164,10 @@ def _observations(envelopes, blobs):
             task = tasks.items.get(event.task_id)
             if task and task.acceptance and task.acceptance[0] == envelope.seq:
                 yield envelope, "task-accepted", "task_outcome", "The recorded requirements were explicitly accepted."
+
+    if any(isinstance(env.event, SemanticObserved) and env.event.observation.reply_origin is not None
+           and env.event.observation.kind == "correction" for env in envelopes):
+        yield from _reply_corrections(envelopes, blobs)
 
 
 def project_task_outcomes(state: ImprovementState, envelopes, blobs=None) -> None:

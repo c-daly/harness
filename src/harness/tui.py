@@ -1505,7 +1505,8 @@ class HarnessApp(App[None]):
             return False
         try:
             was_empty = not self.controller.pending and self.controller.active is None
-            prompt = self.controller.submit(text, expand_mentions=expand_mentions)
+            prompt = self.controller.submit(text, expand_mentions=expand_mentions,
+                                            reply_before_seq=self.kernel.session.last_seq if was_empty else 0)
         except ValueError as exc:
             self.say("! ", str(exc))
             return False
@@ -1655,7 +1656,8 @@ class HarnessApp(App[None]):
         try:
             result = await self.kernel.loop.run_conversation(self.kernel.tasks.prepare(
                 prompt, context=tuple(self.kernel.loop.turn_context),
-            ), on_progress=self._on_agent_progress)
+            ), on_progress=self._on_agent_progress,
+                reply_before_seq=self.controller.active.reply_before_seq if self.controller.active else None)
             reply = result.read_text(self.kernel.session.blobs)
         except asyncio.CancelledError:
             raise  # _after_interrupt owns cleanup; keep _stream_buffer for it to preserve

@@ -116,7 +116,7 @@ class Dispatcher:
             return tools
         return tuple(tool for tool in tools if tool.name not in HOST_COORDINATION_TOOLS)
 
-    async def _run_chain(self, action, *, purpose=None) -> tuple[object | None, str | None]:
+    async def _run_chain(self, action, *, purpose=None, allow_ask=True) -> tuple[object | None, str | None]:
         """Run hooks + Ask resolution. Returns (effective_action, denial_reason)."""
         outcome = await self.hooks.run_dispatch(action)
         for name, decision in outcome.decisions:
@@ -150,6 +150,8 @@ class Dispatcher:
             if isinstance(decision, Ask) and outcome.ask is None:
                 outcome = replace(outcome, ask=decision)
         if outcome.ask is not None:
+            if not allow_ask:
+                return None, "background observation requires existing permission"
             self.session.append(
                 PermissionRequested(call_id=action.call_id, reason=outcome.ask.reason)
             )
@@ -339,13 +341,13 @@ class Dispatcher:
         pricing: dict[str, float] | None = None,
         pricing_for: Callable[[ModelId], dict[str, float]] | None = None,
         pinned: bool = False, on_chunk: Callable[[Chunk], None] | None = None,
-        exact_model: bool = False,
+        exact_model: bool = False, allow_ask: bool = True,
     ) -> InferenceResult:
         """Bounded, audited inference; routing cannot replace it with an agent."""
         return await self._dispatch_generation(
             provider=provider, request=request, allow_agent=False,
             pricing=pricing, pricing_for=pricing_for, pinned=pinned, on_chunk=on_chunk,
-            exact_model=exact_model,
+            exact_model=exact_model, allow_ask=allow_ask,
         )
 
     async def dispatch_agent_response(
@@ -362,7 +364,7 @@ class Dispatcher:
 
     async def _dispatch_generation(
         self, *, provider, request: InferenceRequest, allow_agent: bool,
-        pricing, pricing_for, pinned, on_chunk, required_runtime=None, exact_model=False, examples=None,
+        pricing, pricing_for, pinned, on_chunk, required_runtime=None, exact_model=False, examples=None, allow_ask=True,
     ) -> InferenceResult:
         with self.scope.budget.activity.track(
             session_id=self.session.id, kind="model", label=str(request.model), phase="dispatch",
@@ -370,12 +372,12 @@ class Dispatcher:
             return await self._generate(
                 provider=provider, request=request, allow_agent=allow_agent, pricing=pricing,
                 pricing_for=pricing_for, pinned=pinned, on_chunk=on_chunk,
-                required_runtime=required_runtime, exact_model=exact_model, examples=examples,
+                required_runtime=required_runtime, exact_model=exact_model, examples=examples, allow_ask=allow_ask,
             )
 
     async def _generate(
         self, *, provider, request: InferenceRequest, allow_agent: bool,
-        pricing, pricing_for, pinned, on_chunk, required_runtime=None, exact_model=False, examples=None,
+        pricing, pricing_for, pinned, on_chunk, required_runtime=None, exact_model=False, examples=None, allow_ask=True,
     ) -> InferenceResult:
         observation = current_activity.get()
         request = InferenceRequest.model_validate(request.model_dump())
@@ -422,7 +424,7 @@ class Dispatcher:
             return (time.monotonic_ns() - started) // 1_000_000 if started is not None else 0
 
         try:
-            effective, denial = await self._run_chain(call)
+            effective, denial = await self._run_chain(call, allow_ask=allow_ask)
             if denial is not None:
                 raise ModelDispatchBlocked(denial)
             if not isinstance(effective, ProposedModelCall):

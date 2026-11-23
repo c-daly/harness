@@ -179,6 +179,7 @@ class ModelSelected(_Event):
 class UserMessage(_Event):
     type: Literal["user_message"] = "user_message"
     text: str
+    reply_to_seq: int | None = Field(default=None, ge=1, strict=True)
 
 
 class UserInterrupt(_Event):
