@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from harness.blobs import BlobStore
-from harness.events import Envelope, Event, SessionStarted
+from harness.events import Envelope, Event, ImprovementRecorded, SessionStarted
 from harness.log import EventLogWriter
 from harness.types import ModelId, SessionId
 
@@ -83,6 +83,9 @@ class Session:
     def append(self, event: Event) -> Envelope:
         for redactor in self._redactors:
             event = redactor(event)  # frozen events: redactors must model_copy(update=...)
+        if isinstance(event, ImprovementRecorded) and event.record.kind in {"prompt_change", "source_change"}:
+            from harness.improvement_journal import validate_selection
+            validate_selection(self, event.record)
         # _seq advances before the write and is not rolled back on failure: a failed write leaves a gap, never a duplicate
         self._seq += 1
         envelope = Envelope(session_id=self.id, seq=self._seq, ts=time.time(), event=event)
@@ -99,6 +102,10 @@ class Session:
     @property
     def closed(self) -> bool:
         return self._closed
+
+    @property
+    def last_seq(self) -> int:
+        return self._seq
 
     def __enter__(self) -> "Session":
         return self

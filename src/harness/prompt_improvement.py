@@ -80,6 +80,8 @@ def prompt_selection(session, provider, model, *, limits=None, persist_default=T
         if (config.model != model or evaluator_version(provider, config) != change.evaluator_version
                 or limits is not None and limits != config.limits):
             return default_prompt(session, persist=persist_default, function=function), "suspended: evaluation configuration changed", change
+        if origin := state.selected_adoption(change):
+            session.blobs.get(state.results[origin.result_id].artifact)
     return change.prompt, change.action, change
 
 

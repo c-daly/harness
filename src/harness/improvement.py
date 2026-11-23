@@ -246,11 +246,24 @@ class ImprovementState:
     source_authorings: dict[str, SourceAuthoring] = field(default_factory=dict)
     source_author_runs: dict[str, str] = field(default_factory=dict)
     source_author_results: dict[str, dict] = field(default_factory=dict)
+    # Once a proposal cites a derived observation the journal persists the
+    # evidence before publishing the proposal.
+    derived_evidence_ids: set[str] = field(default_factory=set)
 
     def selected_prompt(self, model, function="message_kind"):
         identity = (self.active_prompts.get(model) if function == "message_kind"
                     else self.active_assessment_prompts.get((model, function)))
         return self.prompt_changes.get(identity)
+
+    def selected_adoption(self, change):
+        """Return the adoption supplying the current candidate, or None for the initial incumbent."""
+        history = self.source_changes if isinstance(change, SourceChange) else self.prompt_changes
+        while change.action == "rollback":
+            previous = history[change.previous_id]
+            if previous.previous_id is None:
+                return None
+            change = history[previous.previous_id]
+        return change
 
     def apply(self, record: ImprovementRecord) -> None:
         # Snapshot mutable nested data and validate constructed/copied instances.
