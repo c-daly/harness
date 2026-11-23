@@ -40,6 +40,10 @@ The vault artifact `2026-11-23-supervised-experience-ordinary.zip` includes both
 
 ## Experience, supervision and remaining scope
 
+**Tool guidance.** The proposed selector would recommend zero or more available tools. Saoirse could use another permitted tool or answer directly. For a confirmed wrong reply, retrospective review would link the advice actually delivered to the actions Saoirse took and the evidence establishing the error. These records could also support a supervised selector change. Its evaluation would compare task outcomes on held-out cases, including cases where answering directly is appropriate. The selector is pending implementation.
+
+At `01bbb49`, two fresh ordinary CLI sessions with Qwen3 4B sent all seven native tool descriptions and schemas unchanged. The model server's rendered prompt contained each description. In both sessions the model returned a different random code supplied only in a test MCP tool's description, with zero tool calls. This verifies description delivery on that local inference path. Selector quality still needs its own comparison. The project vault receipt is `2026-11-23-saoirse-tool-description-delivery.json`.
+
 A confirmed flawed response leaves a failure record. A retrospective looks for earlier experience that was eligible at the time and distinguishes a possible match from evidence that it reached the turn. The primary response, later correction, and later semantic assessment retain their own event references.
 
 Saved situations, actions and outcomes can serve directly as worked examples. A provisional example can suggest a local check. Its old answer cannot settle a new question. If no eligible earlier example applies, a new description should preserve the useful action, its conditions and its limits as generally as the supporting facts allow. Automated semantic authorship of this wording remains open. The existing message and assessment prompt proposers revise the instructions for their own functions.
