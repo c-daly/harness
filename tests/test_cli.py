@@ -749,6 +749,44 @@ def _make_demo_plugin(plugin_dir):
     )
 
 
+@pytest.mark.parametrize("mode", ["interactive", "headless"])
+@pytest.mark.parametrize("disable_mcp", [False, True], ids=["default", "no-mcp"])
+def test_no_mcp_controls_project_and_plugin_servers_but_keeps_skills(
+    tmp_path, monkeypatch, mode, disable_mcp
+):
+    monkeypatch.chdir(tmp_path)
+    project_config = tmp_path / ".harness"
+    plugin = project_config / "plugins" / "demo"
+    _make_demo_plugin(plugin)
+    with (plugin / "plugin.toml").open("a") as manifest:
+        manifest.write('\n[mcp.servers.extension]\ncommand = "extension-fixture"\n')
+    (project_config / "mcp.toml").write_text('[servers.project]\ncommand = "project-fixture"\n')
+
+    observations = []
+
+    async def inspect_kernel(kernel, *args, **kwargs):
+        try:
+            servers = None if kernel.mcp is None else {s.name for s in kernel.mcp.specs}
+            skill = await kernel.registry.get("invoke_skill")({"name": "hello"})
+            observations.append((servers, skill))
+            return ""
+        finally:
+            kernel.session.close()
+
+    options = ["--demo"]
+    if mode == "headless":
+        options.extend(["-p", "hello"])
+        monkeypatch.setattr("harness.cli._amain", inspect_kernel)
+    else:
+        monkeypatch.setattr("harness.tui.run_tui", inspect_kernel)
+    if disable_mcp:
+        options.append("--no-mcp")
+    run_cli(*options)
+
+    expected = None if disable_mcp else {"extension", "project"}
+    assert observations == [(expected, "# Skill: hello\n\nHello world!")]
+
+
 def test_no_plugins_flag_and_plugin_dir(tmp_path, monkeypatch):
     """--plugin-dir loads plugins (invoke_skill appears); --no-plugins skips loading."""
     import harness.cli as cli_mod

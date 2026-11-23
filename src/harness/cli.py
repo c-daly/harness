@@ -843,7 +843,7 @@ def _run_main() -> None:
                 loaded_plugins = load_plugins(plugin_dirs)
             except PluginError as exc:
                 raise SystemExit(f"plugin error: {exc}") from exc
-            if loaded_plugins.mcp_servers:
+            if not args.no_mcp and loaded_plugins.mcp_servers:
                 plugin_specs = {s.name: s for s in loaded_plugins.mcp_servers}
                 config_specs = {s.name: s for s in mcp_specs}
                 merged = {**plugin_specs, **config_specs}
