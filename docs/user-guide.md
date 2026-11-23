@@ -108,6 +108,9 @@ tool calls, and answer permission prompts inline. Key bindings:
   delimiters inside inline/fenced code, escaped dollars, and ordinary currency
   are left alone. Unsupported or malformed LaTeX falls back to its original
   source instead of breaking the reply.
+- `/links` lists the destinations in the most recent reply or document containing links. Select a link with the arrow keys and press Enter to open it, or C to copy the address. Rendered links also respond to a click. If a browser cannot open a web address, the picker keeps it available to copy.
+- In a displayed Markdown file, relative links start in that file’s directory. Opening another file goes through the normal `read_file` permissions and workspace boundaries. Section links jump to a heading in the displayed text. Press L for links in the document and Esc to go back. Navigation works on resumed replies and requires no model call.
+- `/copy-code` copies a fenced example from the transcript. Press Y in the document reader to copy an example there. When several examples are available, choose one from the list. Copying preserves indentation and line endings.
 - `/clear` — end the current session cleanly and start a fresh one: new
   session id, empty history, but the same provider instance, permission
   engine, and resolver wiring the app started with (kernel rebuild-in-place,
@@ -419,13 +422,17 @@ available to callers of `build_kernel`.
 
 | Tool | What it does |
 |---|---|
-| `read_file` | Read a file, `cat -n` style, with `offset`/`limit` windowing |
+| `read_file` | Read numbered lines for analysis, or present the source with `display=true`. `offset` and `limit` select a line range. |
 | `write_file` | Create or overwrite a file (overwrite requires a prior read) |
 | `edit_file` | Replace an exact string in a file (must be unique unless `replace_all`) |
 | `glob` | Find files by glob pattern, newest first |
 | `grep` | Search file contents with a Python regex |
 | `bash` | Run a shell command with a timeout and output cap |
 | `todo` | Maintain a task list (reconstructed from the event log) |
+
+When you ask to see a file, Saoirse can request it for display as her final action. Harness delivers the authorized UTF-8 text directly, subject to redaction and size limits. In `harness -p`, a pipe receives the text with its original line endings. A normal read lets Saoirse continue working on a question about the file. Tasks with acceptance criteria and turns using advisory examples retain their usual checks before delivery.
+
+A displayed read supports up to 50,000 bytes, with a default limit of 2,000 lines. If a linked file exceeds the limit, ask Saoirse to show a line range, such as “Show lines 200–300 of the guide.”
 
 Native file tools accept absolute paths under the primary workspace or an
 explicitly configured extra root. `read_file`, `glob`, and `grep` can use read

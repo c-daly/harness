@@ -10,7 +10,9 @@ import os
 import re
 import subprocess
 import time
+import webbrowser
 from dataclasses import dataclass
+from itertools import count
 from pathlib import Path
 
 from rich.console import RenderableType
@@ -26,9 +28,9 @@ from textual.widgets.option_list import Option
 from textual.worker import WorkerCancelled, WorkerFailed
 from textual_image.widget.sixel import Image as SixelImage, SixelOptions
 
-from harness.blobs import INLINE_THRESHOLD
+from harness.blobs import BlobIntegrityError, INLINE_THRESHOLD, MissingBlobError
 from harness.agent import AgentResult
-from harness.cli import Kernel, build_kernel
+from harness.cli import Kernel, build_kernel, terminal_text
 from harness.frontmatter import CommandDef
 from harness.events import (
     AgentRunStarted,
@@ -49,9 +51,14 @@ from harness.events import (
 )
 from harness.hooks import ProposedToolCall
 from harness.interaction import PermissionRequest
+from harness.link_screen import (
+    CodeBlockPickerScreen, LinkedDocumentScreen, LinkPickerScreen, code_blocks, copy_code_blocks,
+    document_source, source_text,
+)
+from harness.markdown_links import DocumentMarkdownIt, MarkdownLink, collect_markdown_links, is_web_link, workspace_link
 from harness.math_markdown import MathMarkdown, SIXEL_META_KEY, SixelPlacement
 from harness.mcp_host import McpHost
-from harness.messages import Message, Role
+from harness.messages import Message, Role, ToolResultBlock
 from harness.provider import TextDelta, ThinkingDelta
 from harness.sessions import SessionSummary, list_sessions
 from harness.telemetry import TelemetrySubscriber, open_store_memory, run_rollup
@@ -87,12 +94,32 @@ _MENTION_TRAILING_PUNCT = ".,!?;:'\")}]"
 # _inject_mentions) -- no separate constant to keep in sync with the tool.
 _MENTION_CONTEXT_CAP = INLINE_THRESHOLD
 
+_MARKDOWN_SUFFIXES = {".md", ".markdown", ".mdown", ".mkd"}
+
 # Tab-completion candidate listing (Task 6): directories that are never useful
 # @-mention targets and are worth skipping outright in the non-git fallback walk.
 _MENTION_WALK_SKIP_DIRS = {
     ".git", "node_modules", "__pycache__", ".venv", "venv", ".mypy_cache", ".pytest_cache", ".tox",
 }
 _MENTION_WALK_CAP = 5000  # bounded os.walk: cap file count, not just depth
+
+
+@dataclass(frozen=True)
+class _LinkDocument:
+    source: str
+    path: Path | None
+    links: tuple[MarkdownLink, ...]
+    has_code: bool = False
+
+
+@dataclass(frozen=True)
+class _LinkedReply:
+    body: RenderableType
+    document_id: int
+    document: _LinkDocument
+
+    def __rich_console__(self, console, options):
+        yield self.body
 
 
 @dataclass
@@ -103,10 +130,27 @@ class _TranscriptSixel:
     absolute_y: int
     width: int
     rows: int
+    link: tuple[int, int] | None
 
 
 class MathTranscriptStack(Container):
-    """Transcript stack that preserves scrolling over equation widgets."""
+    """Route interactions over equation widgets back to their transcript."""
+
+    async def on_click(self, event) -> None:
+        if event.button != 1:
+            return
+        transcript = self.query_one(MathTranscript)
+        if not transcript._sixel_widgets:
+            return
+        widget, _ = self.screen.get_widget_at(event.screen_x, event.screen_y)
+        if widget is transcript:
+            return
+        ancestors = widget.ancestors_with_self
+        for image in transcript._sixel_widgets:
+            if image.link is not None and image.widget in ancestors:
+                event.stop()
+                await self.app.run_action(("app", "follow_link", image.link))
+                return
 
     def on_mouse_scroll_down(self, event) -> None:
         self.app.query_one("#transcript", MathTranscript).scroll_down(animate=False)
@@ -127,6 +171,9 @@ class MathTranscript(RichLog):
     """
 
     def __init__(self, *args, **kwargs) -> None:
+        # Keep a source snapshot for exactly as long as its scrollback is retained.
+        self.link_documents: dict[int, _LinkDocument] = {}
+        self._document_ends: dict[int, int] = {}
         self._sixel_widgets: list[_TranscriptSixel] = []
         self._mounted_placement_ids: set[str] = set()
         super().__init__(*args, **kwargs)
@@ -141,6 +188,17 @@ class MathTranscript(RichLog):
         animate: bool = False,
     ):
         result = super().write(content, width, expand, shrink, scroll_end, animate)
+        if not self._size_known:  # RichLog will call write again after its first resize.
+            return result
+        if isinstance(content, _LinkedReply):
+            self.link_documents[content.document_id] = content.document
+            self._document_ends[content.document_id] = self._start_line + len(self.lines)
+            content = content.body
+        while self._document_ends:
+            oldest = next(iter(self._document_ends))
+            if self._document_ends[oldest] > self._start_line:
+                break
+            del self._document_ends[oldest], self.link_documents[oldest]
         if isinstance(content, MathMarkdown) and content.sixel_placements:
             self._mount_sixel_placements(content.sixel_placements)
         return result
@@ -156,7 +214,7 @@ class MathTranscript(RichLog):
         if not wanted or not self.is_mounted:
             return
 
-        located: dict[str, tuple[int, int]] = {}
+        located: dict[str, tuple[int, int, tuple[int, int] | None]] = {}
         for line_index, line in enumerate(self.lines):
             cell_offset = 0
             for segment in line:
@@ -165,15 +223,21 @@ class MathTranscript(RichLog):
                     style.meta.get(SIXEL_META_KEY) if style is not None else None
                 )
                 if placement_id in wanted and placement_id not in located:
+                    action = style.meta.get("@click")
+                    target = (
+                        re.fullmatch(r"app\.follow_link\(([0-9]+),([0-9]+)\)", action)
+                        if isinstance(action, str) else None
+                    )
                     located[placement_id] = (
                         cell_offset,
                         self._start_line + line_index,
+                        (int(target[1]), int(target[2])) if target else None,
                     )
                 cell_offset += segment.cell_length
 
         stack = self.app.query_one("#transcript-stack", Container)
         widgets = []
-        for placement_id, (x, absolute_y) in located.items():
+        for placement_id, (x, absolute_y, link) in located.items():
             placement = wanted[placement_id]
             widget = SixelImage(
                 placement.image,
@@ -190,6 +254,7 @@ class MathTranscript(RichLog):
                 absolute_y,
                 placement.width,
                 placement.rows,
+                link,
             )
             self._sixel_widgets.append(tracked)
             self._mounted_placement_ids.add(placement_id)
@@ -241,6 +306,8 @@ class MathTranscript(RichLog):
         self.call_after_refresh(self._position_sixel_widgets)
 
     def clear(self):
+        self.link_documents.clear()
+        self._document_ends.clear()
         for tracked in self._sixel_widgets:
             tracked.widget.remove()
         self._sixel_widgets.clear()
@@ -329,7 +396,7 @@ def _session_row(summary: "SessionSummary") -> str:
 def _plain(text: str) -> Text:
     """Untrusted strings render as plain Text -- no markup, no
     rendering-unsafe control chars (newline/tab kept)."""
-    return Text("".join(ch for ch in text if ch in "\n\t" or ord(ch) >= 32))
+    return Text(terminal_text(text))
 
 
 class AppBoundAsk:
@@ -771,6 +838,8 @@ class HarnessApp(App[None]):
         # permission engine -- is read back off self.kernel in _rebuild_kernel.
         self._native_tools = native_tools
         self._workspace_root = workspace_root
+        self._document_ids = count(1)
+        self._link_worker = None
         self._workspace_read_roots = tuple(workspace_read_roots)
         self._workspace_write_roots = tuple(workspace_write_roots)
         self._vim_enabled = vim
@@ -882,8 +951,171 @@ class HarnessApp(App[None]):
         if self._markdown_mode:
             theme = self.current_theme
             math_color = theme.foreground or ("#f4f4f4" if theme.dark else "#202020")
-            return MathMarkdown(text, color=math_color, sixel_widgets=True)
+            return MathMarkdown(terminal_text(text), color=math_color, sixel_widgets=True,
+                                link_document=next(self._document_ids))
         return _plain(text)
+
+    def _write_reply(self, source: str, path: str | None = None) -> None:
+        rendered = self._render_reply(source)
+        if isinstance(rendered, MathMarkdown):
+            links, document_id = rendered.links, rendered.link_document
+            tokens = rendered.parsed
+        else:
+            tokens = DocumentMarkdownIt().parse(rendered.plain)
+            links = collect_markdown_links(tokens)
+            document_id = next(self._document_ids)
+        has_code = any(token.type == "fence" for token in tokens)
+        if links or has_code:
+            source_path = None if path is None else (self.kernel.loop.workspace_root or Path.cwd()) / path
+            document = _LinkDocument(document_source(source), source_path, links, has_code)
+            rendered = _LinkedReply(rendered, document_id, document)
+        self.query_one("#transcript", MathTranscript).write(rendered)
+
+    def action_links(self) -> None:
+        if isinstance(self.screen, LinkedDocumentScreen):
+            self.screen.action_links()
+            return
+        documents = self.query_one("#transcript", MathTranscript).link_documents
+        for document_id, document in reversed(documents.items()):
+            if document.links:
+                self._pick_link(document_id, document.links)
+                return
+        self.notify("No links in the displayed Markdown.")
+
+    def action_copy_code(self) -> None:
+        if isinstance(self.screen, LinkedDocumentScreen):
+            self.screen.action_copy_code()
+            return
+        documents = self.query_one("#transcript", MathTranscript).link_documents
+        for document in reversed(documents.values()):
+            if document.has_code:
+                copy_code_blocks(self, code_blocks(document.source))
+                return
+        self.notify("No fenced code in the displayed Markdown.")
+
+    def _pick_link(self, document_id: int, links: tuple[MarkdownLink, ...], index: int = 0) -> None:
+        def selected(choice: int | None):
+            if choice is not None:
+                self.action_follow_link(document_id, choice)
+
+        self.push_screen(LinkPickerScreen(links, initial_index=index), selected)
+
+    def action_follow_link(self, document_id: int, index: int) -> None:
+        screen = self.screen
+        if self._rebuild_in_progress or self._ended:
+            return
+        reader = isinstance(screen, LinkedDocumentScreen)
+        if reader and screen.document_id == document_id:
+            document = _LinkDocument(screen.source, screen.source_path, screen.links)
+        elif not isinstance(screen, ModalScreen):
+            document = self.query_one("#transcript", MathTranscript).link_documents.get(document_id)
+        else:
+            return
+        if not document or not 0 <= index < len(document.links):
+            return
+        href = document.links[index].href
+        if is_web_link(href):
+            if self._link_worker is None or self._link_worker.is_finished:
+                self._link_worker = self.run_worker(self._open_web_link(document_id, document.links, index, screen),
+                                                    group="document-links", exit_on_error=False)
+            return
+        try:
+            destination, fragment = workspace_link(href, self.kernel.loop.workspace_root or Path.cwd(), document.path)
+        except (ValueError, OSError, RuntimeError) as exc:
+            self.notify(terminal_text(str(exc)), severity="warning", markup=False)
+            return
+        if destination is None:
+            if reader:
+                screen.jump_to_heading(fragment)
+            else:
+                title = str(document.path) if document.path else "Reply"
+                self.push_screen(LinkedDocumentScreen(title, document.source, next(self._document_ids),
+                                                      fragment, source_path=document.path))
+            return
+        # A link back to a document already on the reader stack uses that
+        # snapshot, including its saved headings, and releases intervening views.
+        for previous in reversed(self.screen_stack):
+            if not isinstance(previous, LinkedDocumentScreen):
+                break
+            if previous.source_path == destination:
+                while self.screen is not previous:
+                    self.pop_screen()
+                previous.jump_to_heading(fragment)
+                return
+        if self._link_worker is None or self._link_worker.is_finished:
+            self._link_worker = self.run_worker(self._open_document_file(destination, fragment, screen),
+                                                group="document-links", exit_on_error=False)
+
+    async def _open_web_link(self, document_id: int, links: tuple[MarkdownLink, ...], index: int, origin) -> None:
+        href = links[index].href
+        try:
+            if self.is_web:  # Delegate to the connected browser.
+                self.open_url(href)
+                return
+            if await asyncio.to_thread(webbrowser.open, href):
+                return
+        except (OSError, ValueError, webbrowser.Error):
+            pass
+        if self.screen is origin:
+            self._pick_link(document_id, links, index)
+            self.notify("Could not open a browser. Press C to copy the URL.", severity="warning")
+
+    async def _open_document_file(self, path: Path, fragment: str, origin) -> None:
+        from harness.native_tools import ReadFileTool
+        from harness.tools import UnknownToolError
+
+        dispatcher = self.kernel.loop.dispatcher
+        name = ToolName("read_file")
+        call_id = new_call_id()
+        try:
+            if type(dispatcher.registry.get(name)) is not ReadFileTool:
+                raise UnknownToolError(str(name))
+            outcome = await dispatcher.dispatch_tool(
+                ProposedToolCall(call_id, name, {"file_path": str(path), "display": True}),
+                purpose="context", exact=True,
+            )
+            if outcome.is_error:
+                raise ValueError(outcome.read_text() or "The file could not be opened.")
+            if outcome.presented_file is None:
+                raise ValueError("The file could not be displayed.")
+            if self.screen is origin:
+                source_path = Path(outcome.presented_file.file_path)
+                self.push_screen(LinkedDocumentScreen(
+                    self._document_title(source_path), outcome.read_text(), next(self._document_ids),
+                    fragment, markdown=source_path.suffix.lower() in _MARKDOWN_SUFFIXES, source_path=source_path,
+                    highlight=self._markdown_mode,
+                ))
+        except UnknownToolError:
+            self.notify("Opening a workspace link requires the native read_file tool.", severity="warning")
+        except (ValueError, OSError, MissingBlobError, BlobIntegrityError) as exc:
+            self.notify(terminal_text(str(exc)), severity="warning", markup=False)
+        finally:
+            # This operator read has no model turn waiting to recover its result.
+            dispatcher.terminal_tools.pop(call_id, None)
+
+    async def _cancel_link_read(self) -> None:
+        worker = self._link_worker
+        if worker is not None and not worker.is_finished:
+            worker.cancel()
+            try:
+                await worker.wait()
+            except (WorkerCancelled, WorkerFailed):
+                pass
+
+    def _document_title(self, path: Path) -> str:
+        root = self.kernel.loop.workspace_root or Path.cwd()
+        return str(path.relative_to(root) if path.is_relative_to(root) else path)
+
+    def _write_presented_file(self, path: str, source: str) -> None:
+        title = self._document_title(Path(path))
+        if not source:
+            self.say("", f"{title} is empty.")
+            return
+        self.say("", title, style="bold")
+        if Path(path).suffix.lower() in _MARKDOWN_SUFFIXES:
+            self._write_reply(source, path)
+            return
+        self.query_one("#transcript", RichLog).write(source_text(path, source, highlight=self._markdown_mode))
 
     def _clear_live(self) -> None:
         self._stream_buffer = ""
@@ -1099,18 +1331,24 @@ class HarnessApp(App[None]):
         self._toggle_panel()
 
     def _render_resumed_history(self) -> None:
-        """Replay a resumed session's history into the transcript. ASSISTANT
-        replies go through the SAME _render_reply seam a live turn's
-        completed reply uses (parked-2) -- so an old markdown reply matches
-        live rendering under the current /markdown mode -- rather than the
-        always-plain say()/_plain() seam. User lines keep their plain '> '
-        prefix; system/tool lines stay plain, exactly as before."""
+        """Render replies and saved file contents using the live transcript formats."""
         for message in self.kernel.loop.history:
+            if message.role == Role.TOOL:
+                for block in message.blocks:
+                    if isinstance(block, ToolResultBlock) and block.display_path is not None:
+                        try:
+                            source = (self.kernel.session.blobs.get(block.blob).decode("utf-8")
+                                      if block.blob is not None else block.text)
+                        except (MissingBlobError, BlobIntegrityError, UnicodeDecodeError, OSError) as exc:
+                            self.say("! ", f"Could not replay {block.display_path}: {exc}")
+                            continue
+                        if source is not None:
+                            self._write_presented_file(block.display_path, source)
             text = message.text()
             if not text:
                 continue
             if message.role == Role.ASSISTANT:
-                self.query_one("#transcript", RichLog).write(self._render_reply(text))
+                self._write_reply(text)
             else:
                 prefix = "> " if message.role == Role.USER else ""
                 self.say(prefix, text)
@@ -1139,6 +1377,7 @@ class HarnessApp(App[None]):
             self._rebuild_in_progress = False
 
     async def _rebuild_kernel_body(self, resume_session_id: "SessionId | None" = None) -> None:
+        await self._cancel_link_read()
         await self._cancel_semantic_check()
         await self._cancel_resource_check()
         old_kernel = self.kernel
@@ -1435,6 +1674,9 @@ class HarnessApp(App[None]):
                 if event.call_id in self._context_calls:
                     self._context_calls.discard(event.call_id)
                     return
+                if event.presented_file is not None and not is_error:
+                    # Source is shown by the completed turn or the operator's document reader.
+                    return
                 snippet = (text or "(blob)")[:_SNIPPET_CAP]
                 self.say("\u2717 " if is_error else "\u2713 ", snippet)
             case CustomEvent(namespace="mcp", name=name, data=data):
@@ -1482,7 +1724,7 @@ class HarnessApp(App[None]):
             await self._startup_worker.wait()
         command = parse_slash_command(text)
         if command is not None:
-            if command.name in self._plugin_commands and command.name not in {"task", "status", "semantics", "improvements", "handoff", "models", "export", "coordination", "budget", "execution", "activity", "vim"}:
+            if command.name in self._plugin_commands and command.name not in {"task", "status", "semantics", "improvements", "handoff", "models", "export", "coordination", "budget", "execution", "activity", "vim", "links", "copy-code"}:
                 expanded = self._plugin_commands[command.name].body.replace("$ARGUMENTS", command.arg)
                 if not self._enqueue_prompt(expanded, expand_mentions=False):
                     return
@@ -1675,7 +1917,10 @@ class HarnessApp(App[None]):
         if result.status == "cancelled" and self._stream_buffer:
             self.say("~ ", self._stream_buffer)  # Preserve delivered partial text without accepting it.
         self._clear_live()
-        self.query_one("#transcript", RichLog).write(self._render_reply(reply))
+        if result.presented_file is not None:
+            self._write_presented_file(result.presented_file.file_path, reply)
+        elif reply:
+            self._write_reply(reply)
         if result.status != "completed":
             self.say("! ", f"task {result.status}: {result.reason}; follow-ups paused")
         if self._panel is not None:
@@ -1822,12 +2067,18 @@ class HarnessApp(App[None]):
                 "/handoff inspect|record|show|run  /export FILE.zip  /coordination  /budget  /execution  /activity [cancel RUN_ID]  /quit  — @path mentions a file "
                 "(Tab completes), read for the model only; F2 also toggles the activity panel",
             )
+            self.say("", "/links lists destinations in a reply. Enter opens a link and C copies the address.")
+            self.say("", "/copy-code copies a fenced code block. Press Y in an open document.")
             self.say("", "/queue: inspect, edit, remove, pause, resume, clear; queued prompts are memory only")
             if self._plugin_commands:
                 self.say(
                     "",
                     "plugin commands: " + "  ".join(f"/{n}" for n in sorted(self._plugin_commands)),
                 )
+        elif command.name == "links":
+            self.action_links()
+        elif command.name == "copy-code":
+            self.action_copy_code()
         elif command.name == "tools":
             self.say("", "Tool registry. Harness reserves coordination tools for host and workflow calls "
                      "during an ordinary Saoirse conversation. /help lists interface commands.")
@@ -2606,6 +2857,9 @@ class HarnessApp(App[None]):
         if isinstance(self.screen, PermissionScreen):
             self.screen.action_answer("deny")
             return
+        if isinstance(self.screen, (CodeBlockPickerScreen, LinkPickerScreen, LinkedDocumentScreen)):
+            self.screen.action_back()
+            return
         if isinstance(self.screen, SessionPickerScreen):
             self.screen.dismiss(None)
             return
@@ -2683,6 +2937,7 @@ class HarnessApp(App[None]):
         if self._ended:
             return
         self._ended = True
+        await self._cancel_link_read()
         await self._cancel_semantic_check()
         await self._cancel_resource_check()
         if self._stats_timer is not None:

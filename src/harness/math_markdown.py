@@ -26,7 +26,9 @@ from functools import lru_cache
 from io import BytesIO
 from itertools import count
 from typing import TYPE_CHECKING
+from urllib.parse import quote
 
+from markdown_it.common.normalize_url import normalizeLink
 from rich.align import Align
 from rich.console import Console, ConsoleOptions, RenderResult
 from rich.markdown import Markdown, MarkdownContext, MarkdownElement
@@ -34,6 +36,8 @@ from rich.measure import Measurement
 from rich.segment import Segment
 from rich.style import Style
 from rich.text import Text
+
+from .markdown_links import DocumentMarkdownIt, MarkdownLink, collect_markdown_links, is_web_link
 
 if TYPE_CHECKING:
     from PIL import Image
@@ -365,7 +369,11 @@ def extract_math(markup: str) -> tuple[str, dict[str, Formula]]:
                 if source.strip() and inline_spacing_ok and not currency_pair:
                     original = markup[index:after]
                     marker = add_formula(source, display=display, original=original)
-                    if display:
+                    # Blank lines split Markdown blocks. Only insert them for
+                    # a standalone equation, preserving links, tables and list
+                    # items that contain a display-math expression.
+                    if (display and (index == 0 or markup[index - 1] == "\n")
+                            and (after == len(markup) or markup[after] == "\n")):
                         output.append(f"\n\n{marker}\n\n")
                     else:
                         output.append(marker)
@@ -513,9 +521,12 @@ class LatexCellImage:
         *,
         color: str,
         sixel_placements: dict[str, SixelPlacement] | None = None,
+        link: str | None = None,
     ) -> None:
         self.formula = formula
         self.color = color
+        self.ink_style = Style(color=color, link=link)
+        self.link_style = Style(link=link) if link else None
         self.sixel_placements = sixel_placements
         self._cached_image: Image.Image | None = None
         self._placement_id = str(next(_SIXEL_PLACEMENT_IDS))
@@ -564,8 +575,8 @@ class LatexCellImage:
                 if alpha.getpixel((column * 2 + x, row * 4 + y)) >= _ALPHA_VISIBLE:
                     dots |= dot
         if not dots:
-            return Segment(" ")
-        return Segment(chr(0x2800 + dots), style=Style(color=self.color))
+            return Segment(" ", self.link_style)
+        return Segment(chr(0x2800 + dots), self.ink_style)
 
     def _sixel(self, image: Image.Image, width: int, rows: int):
         from textual_image.renderable.sixel import Image as SixelImage, SixelOptions
@@ -583,7 +594,7 @@ class LatexCellImage:
     def _sixel_placeholder(self, image: Image.Image, width: int, rows: int) -> RenderResult:
         assert self.sixel_placements is not None
         self.sixel_placements[self._placement_id] = SixelPlacement(image, width, rows)
-        marker_style = Style(meta={SIXEL_META_KEY: self._placement_id})
+        marker_style = self.ink_style + Style(meta={SIXEL_META_KEY: self._placement_id})
         for _ in range(rows):
             yield Segment(" " * width, marker_style)
             yield Segment.line()
@@ -594,7 +605,7 @@ class LatexCellImage:
         try:
             image = self._image()
         except LatexRenderError:
-            yield Text(self.formula.original)
+            yield Text(self.formula.original, style=self.link_style or "")
             return
         width, rows = self._size(max(1, options.max_width), image)
         if _sixel_available() and not console.no_color:
@@ -668,13 +679,14 @@ class _MathTextElement(MarkdownElement):
             else:
                 inline_text = render_inline_formula_text(formula.source)
                 if inline_text is not None:
+                    style = context.current_style + Style(color=self.color)
                     if formula.display:
                         self._flush_text()
-                        display_text = Text(inline_text, Style(color=self.color))
+                        display_text = Text(inline_text, style)
                         display_text.justify = "center"
                         self.parts.append(display_text)
                     else:
-                        self._text.append(inline_text, Style(color=self.color))
+                        self._text.append(inline_text, style)
                 else:
                     self._flush_text()
                     promoted = not formula.display
@@ -693,6 +705,7 @@ class _MathTextElement(MarkdownElement):
                             formula,
                             color=self.color,
                             sixel_placements=self.sixel_placements,
+                            link=context.current_style.link,
                         )
                     )
                     if promoted:
@@ -765,7 +778,7 @@ class _MathTextElement(MarkdownElement):
             try:
                 width, image_rows = part._size(max_width)
             except LatexRenderError:
-                append_text(Text(part.formula.original, Style(color=self.color)))
+                append_text(Text(part.formula.original, part.ink_style))
                 continue
             if row and used + width > max_width:
                 flush()
@@ -856,6 +869,7 @@ class MathMarkdown(Markdown):
         *,
         color: str = "#f4f4f4",
         sixel_widgets: bool = False,
+        link_document: int | None = None,
         **kwargs,
     ) -> None:
         prepared, self.formulas = extract_math(markup)
@@ -872,7 +886,88 @@ class MathMarkdown(Markdown):
                 "paragraph_open": _MathTextElement,
                 "heading_open": _MathHeading,
             }
-        super().__init__(prepared, **kwargs)
+        # Rich configures its parser internally. Parse the body once using our
+        # HTTP(S) inline rule whenever an explicit URL could occur.
+        if "://" in prepared:
+            super().__init__("", **kwargs)
+            self.markup = prepared
+            self.parsed = DocumentMarkdownIt().parse(prepared)
+        else:
+            super().__init__(prepared, **kwargs)
+        if link_document is not None and type(link_document) is not int:
+            raise TypeError("link_document must be an integer")
+        self.link_document = link_document
+        self._bound_links: dict[str, tuple[str | None, Style]] = {}
+        if self.formulas:
+            # The math pass precedes Markdown parsing. Restore any formula-shaped
+            # substring in a destination to its original URL spelling.
+            replacements = {
+                quote(marker): normalizeLink(formula.original)
+                for marker, formula in self.formulas.items()
+            }
+            auto_label = False
+            for token in self._flatten_tokens(self.parsed):
+                if token.type == "link_open":
+                    auto_label = token.info == "auto"
+                elif token.type == "link_close":
+                    auto_label = False
+                elif auto_label and token.type == "text":
+                    # A pasted URL is also its own label. Keep dollar-delimited
+                    # segments in the visible URL literal, as in its destination.
+                    token.content = self._source_label(token.content)
+                if token.type not in {"link_open", "image"}:
+                    continue
+                attr = "href" if token.type == "link_open" else "src"
+                target = str(token.attrGet(attr) or "")
+                if quote(_MARKER_OPEN) in target:
+                    for marker, original in replacements.items():
+                        target = target.replace(marker, original)
+                    token.attrSet(attr, target)
+        self.links = collect_markdown_links(self.parsed)
+        if self.formulas and self.links:
+            self.links = tuple(
+                MarkdownLink(self._source_label(link.label), link.href)
+                for link in self.links
+            )
+        if link_document is not None and self.hyperlinks and self.links:
+            for token in self._flatten_tokens(self.parsed):
+                if token.type != "link_open":
+                    continue
+                index = token.meta["harness_link_index"]
+                href = self.links[index].href
+                # Rich propagates a URL through nested inline styles and table
+                # cells. A marker with a literal space cannot be a normalized
+                # Markdown URL, so authored targets cannot impersonate a binding.
+                marker = f"harness link {index}"
+                token.attrSet("href", marker)
+                self._bound_links[marker] = (
+                    href if is_web_link(href) else None,
+                    Style.on(click=f"app.follow_link({link_document},{index})"),
+                )
+
+    def _source_label(self, text: str) -> str:
+        return _MARKER_RE.sub(
+            lambda m: self.formulas[m[0]].original if m[0] in self.formulas else m[0],
+            text,
+        )
+
+    def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
+        styles: dict[Style, Style] = {}
+        for segment in super().__rich_console__(console, options):
+            if isinstance(segment, Segment) and segment.style and segment.style.link:
+                style = segment.style
+                if style not in styles:
+                    binding = self._bound_links.get(style.link)
+                    if binding is not None:
+                        terminal_url, action = binding
+                        styles[style] = style.update_link(terminal_url) + action
+                    elif is_web_link(style.link):
+                        styles[style] = style
+                    else:
+                        styles[style] = style.update_link(None)
+                yield Segment(segment.text, styles[style], segment.control)
+            else:
+                yield segment
 
 
 __all__ = [
