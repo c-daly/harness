@@ -1072,7 +1072,7 @@ class HarnessApp(App[None]):
                 raise UnknownToolError(str(name))
             outcome = await dispatcher.dispatch_tool(
                 ProposedToolCall(call_id, name, {"file_path": str(path), "display": True}),
-                purpose="context", exact=True,
+                purpose="context", exact=True, operator_view=True,
             )
             if outcome.is_error:
                 raise ValueError(outcome.read_text() or "The file could not be opened.")

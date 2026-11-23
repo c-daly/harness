@@ -172,6 +172,48 @@ async def test_requested_display_rejects_hook_changes_before_execution(tmp_path,
     assert not any(isinstance(ev, (PermissionRequested, DispatchResolved)) for ev in _events(tmp_path))
 
 
+@pytest.mark.parametrize("deleted", [False, True])
+@pytest.mark.parametrize("agent_purpose", ["conversation", "context"])
+async def test_operator_link_read_cannot_refresh_or_forget_an_agent_file_version(tmp_path, deleted, agent_purpose):
+    from harness.native_tools import ReadFileTool, ReadState, WriteFileTool
+    from harness.types import new_call_id
+
+    path = tmp_path / "notes.txt"
+    path.write_text("A")
+    state = ReadState()
+    session, dispatcher = _kernel_bits(tmp_path)
+    dispatcher.registry.register(ReadFileTool(workspace_root=tmp_path, read_state=state))
+    dispatcher.registry.register(WriteFileTool(workspace_root=tmp_path, read_state=state))
+
+    async def run(tool, *, purpose="conversation", operator_view=False, **args):
+        call = ProposedToolCall(new_call_id(), ToolName(tool), {"file_path": str(path), **args})
+        return await dispatcher.dispatch_tool(call, purpose=purpose, exact=operator_view, operator_view=operator_view)
+
+    try:
+        assert "A" in (await run("read_file")).read_text()
+        if deleted:
+            path.unlink()
+        else:
+            path.write_text("B")
+        link = await run("read_file", purpose="context", display=True, operator_view=True)
+        assert link.is_error == deleted
+        if not deleted:
+            assert link.read_text() == "B"
+        stale = await run("write_file", content="stale overwrite")
+        assert stale.is_error and "File changed" in stale.read_text()
+        if deleted:
+            assert not path.exists()
+        else:
+            assert path.read_text() == "B"
+        # Configured context sources can request display=True for model input.
+        observed = await run("read_file", purpose=agent_purpose, display=agent_purpose == "context")
+        assert observed.is_error == deleted
+        assert not (await run("write_file", content="new revision")).is_error
+        assert path.read_text() == "new revision"
+    finally:
+        session.close()
+
+
 async def test_display_requires_native_reader(tmp_path):
     from harness.native_tools import ReadFileTool
 

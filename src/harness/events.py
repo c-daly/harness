@@ -301,6 +301,7 @@ class ToolCallCompleted(_Event):
     result_blob: BlobRef | None = None
     is_error: bool = False
     presented_file: FilePresentation | None = None
+    operator_view: bool = False
     duration_ms: int = 0
 
 

@@ -59,6 +59,8 @@ def assert_authorized_read(events, path):
     assert any(event.type == "hook_decided" and event.hook == "permissions"
                and event.decision["kind"] == "allow" for event in call[:call.index(resolved)])
     assert call[-1].type == "tool_call_completed" and not call[-1].is_error
+    assert call[-1].operator_view
+    assert call[-1].presented_file.file_path == str(path)
 
 
 async def test_nested_document_link_and_section_still_work_from_an_older_replayed_source(

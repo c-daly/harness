@@ -193,7 +193,8 @@ def exercise(binary, work, width, color):
                 or resolved[0]["args"]["file_path"] != str(path)
                 or not any(e["type"] == "hook_decided" and e["hook"] == "permissions"
                            and e["decision"]["kind"] == "allow" for e in trace[:trace.index(resolved[0])])
-                or trace[-1]["type"] != "tool_call_completed" or trace[-1]["is_error"]):
+                or trace[-1]["type"] != "tool_call_completed" or trace[-1]["is_error"]
+                or not trace[-1].get("operator_view")):
             raise ValueError(f"Missing ordered read authorization for {path.name}")
         if path == shelf:
             blob = trace[-1].get("result_blob") or {}

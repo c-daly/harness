@@ -171,7 +171,7 @@ def fold(envelopes: list[Envelope]) -> FoldedState:
                     state._read_intents[ev.call_id] = str(fp)
         elif isinstance(ev, ToolCallCompleted):
             path = state._read_intents.pop(ev.call_id, None)
-            if path is not None and not ev.is_error:
+            if path is not None and not ev.is_error and not ev.operator_view:
                 state.read_paths.add(path)
             state.open_intents.pop(ev.call_id, None)
             if ev.call_id in state._agent_tool_calls:

@@ -197,15 +197,17 @@ class Dispatcher:
                 return None, "denied by user"
         return effective, None
 
-    async def dispatch_tool(self, call: ProposedToolCall, *, purpose=None, exact: bool = False) -> ToolOutcome:
+    async def dispatch_tool(
+        self, call: ProposedToolCall, *, purpose=None, exact: bool = False, operator_view: bool = False,
+    ) -> ToolOutcome:
         with self.scope.budget.activity.track(
             session_id=self.session.id, kind="tool", label=str(call.tool),
             call_id=str(call.call_id),
             phase="reading context" if purpose == "context" else "tool execution",
         ):
-            return await self._dispatch_tool(call, purpose=purpose, exact=exact)
+            return await self._dispatch_tool(call, purpose=purpose, exact=exact, operator_view=operator_view)
 
-    async def _dispatch_tool(self, call: ProposedToolCall, *, purpose=None, exact=False) -> ToolOutcome:
+    async def _dispatch_tool(self, call: ProposedToolCall, *, purpose=None, exact=False, operator_view=False) -> ToolOutcome:
         self.scope.budget.attach(self.session)
         active_run = current_agent_run.get()
         lineage = {"task_id": active_run.task.id, "agent_run_id": active_run.run_id,
@@ -225,7 +227,9 @@ class Dispatcher:
                     call_id=call.call_id, result_text=result.text, is_error=True,
                 ))
             else:
-                result = await self._dispatch_tool_body(call, purpose=lineage.get("purpose"), exact=exact)
+                result = await self._dispatch_tool_body(
+                    call, purpose=lineage.get("purpose"), exact=exact, operator_view=operator_view,
+                )
         except asyncio.CancelledError:
             text = "(call cancelled; side effects may have occurred)"
             self.session.append(ToolCallCancelled(call_id=call.call_id, result_text=text))
@@ -265,8 +269,11 @@ class Dispatcher:
         # The resolver sees the same canonical source that will be opened.
         return replace(effective, args=canonical)
 
-    async def _dispatch_tool_body(self, call: ProposedToolCall, *, purpose=None, exact=False) -> ToolOutcome:
+    async def _dispatch_tool_body(
+        self, call: ProposedToolCall, *, purpose=None, exact=False, operator_view=False,
+    ) -> ToolOutcome:
         display = call.tool == "read_file" and call.args.get("display") is True
+        operator_display = operator_view and purpose == "context" and display
         approved_args = deepcopy(dict(call.args)) if exact or display else None
         effective, denial = await self._run_chain(call, purpose=purpose, approved_args=approved_args)
         if display and denial is None:
@@ -315,6 +322,8 @@ class Dispatcher:
                     from harness.native_tools import ReadFileTool, ToolError
                     if type(tool) is not ReadFileTool:
                         raise ToolError("File presentation requires the native read_file tool.")
+                    if operator_display:
+                        tool = tool.for_operator()
                 raw = await guard.execute_tool(tool, args) if guard is not None else await tool(args)
                 if display:
                     presented_file = FilePresentation(call_id=call.call_id, file_path=args["file_path"])
@@ -338,6 +347,7 @@ class Dispatcher:
                 result_text=text,
                 result_blob=blob,
                 presented_file=presented_file,
+                operator_view=operator_display and presented_file is not None,
                 is_error=is_error,
                 duration_ms=duration_ms,
             )

@@ -225,6 +225,10 @@ class ReadFileTool:
     def resolve_path(self, raw: str) -> Path:
         return _resolve(self._access, raw)
 
+    def for_operator(self) -> "ReadFileTool":
+        """An operator viewing a link does not observe a new file version for the agent."""
+        return ReadFileTool(workspace_root=self._root, workspace_access=self._access)
+
     async def __call__(self, args: dict[str, Any]) -> str:
         requested = args.get("file_path", "")
         path = self.resolve_path(requested)
