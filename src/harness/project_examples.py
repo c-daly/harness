@@ -41,9 +41,18 @@ def _index_descriptor(base, project, *, write=False):
         os.close(parent)
 
 
-def index_prefix(base, project, session_id, size, seq):
+def index_prefix(base, project, session_id, size, seq, *, if_missing=False):
     if size > _AUTOMATIC_BYTES or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", session_id):
         return
+    if if_missing:
+        try:
+            for source, prior_size, prior_seq in _prior_prefixes(base, project, None):
+                if source == session_id:
+                    if prior_size >= size and prior_seq >= seq:
+                        return
+                    break
+        except FileNotFoundError:
+            pass
     line = f"{session_id} {size} {seq}\n".encode()
     # One O_APPEND write allows concurrent sessions to add whole references.
     with os.fdopen(_index_descriptor(base, project, write=True), "ab", buffering=0) as stream:

@@ -64,5 +64,15 @@ def record_closed_feedback(base: Path, session_id, note: str, *, turn: int | Non
             raise ValueError("This session has no finished conversation turn to review.")
         with Session(base, session_id, start_seq=envelopes[-1].seq,
                      _writer=EventLogWriter(base, session_id, _lock=lock)) as session:
-            return record_feedback(ImprovementJournal(session), note, turn=turn, failure=failure,
-                                   envelopes=envelopes, receipt=receipt)
+            saved = record_feedback(ImprovementJournal(session), note, turn=turn, failure=failure,
+                                    envelopes=envelopes, receipt=True)
+            if failure:
+                for line_number, env in enumerate(envelopes, 1):
+                    session.observe_project_scope(env.event)
+                    if isinstance(env.event, ImprovementRecorded) and env.event.record == saved.evidence:
+                        # Recover an older save at its original scope, even after a later resume.
+                        session.index_experience(recorded=(line_number, env.seq))
+                        break
+                else:
+                    session.index_experience()
+            return saved if receipt else str(saved)

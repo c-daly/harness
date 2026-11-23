@@ -1,9 +1,10 @@
+import asyncio
 import subprocess
 
 import pytest
 
 from harness.agent import AgentTask
-from harness.cli import build_kernel
+from harness.cli import _subcommand, build_kernel
 from harness.improvement_cli import main, perform
 from harness.improvement_examples import session_examples
 from harness.improvement_feedback import record_feedback
@@ -137,6 +138,51 @@ async def test_native_failure_receipt_is_available_after_a_same_project_resume(t
             target.session.close()
     finally:
         resumed.close()
+
+
+@pytest.mark.parametrize("changed_checkout", [False, True], ids=["same-project", "mixed-projects"])
+async def test_closed_failure_is_recalled_only_with_a_single_verified_project(tmp_path, changed_checkout):
+    state = tmp_path / "state"
+    root = checkout(tmp_path, "alpha", "https://github.com/acme/alpha")
+    other = checkout(tmp_path, "clone", "https://github.com/acme/alpha")
+    project = await current_project(root)
+    with Session(state, SessionId("source")) as source:
+        source.start(project=project)
+        _, _, _, finish = record_lookup(source, run="first", project=project)
+    if changed_checkout:
+        resumed, _ = resume_session(state, source.id)
+        with resumed:
+            record_lookup(resumed, run="foreign", project=await current_project(other))
+
+    note = "The governing register was overlooked."
+    command = ["improvements", "--base-dir", str(state), source.id, "--turn", str(finish),
+               "--failure", note, "--catalog", str(tmp_path / "unconfigured")]
+    index, = (state / "project-sessions").iterdir()
+    before = index.read_bytes()
+    await asyncio.to_thread(_subcommand, command)
+    after = index.read_bytes()
+    assert (after != before) == (not changed_checkout)
+    # Recreate a pre-fix or interrupted save: the failure is durable but the index still ends at the run.
+    index.write_bytes(before)
+    # A later review may reopen the session without starting another conversation.
+    review, _ = resume_session(state, source.id)
+    review.close()
+    journal = state / "sessions" / f"{source.id}.jsonl"
+    saved_journal = journal.read_bytes()
+    for _ in range(2):
+        await asyncio.to_thread(_subcommand, command)
+        assert index.read_bytes() == after
+        assert journal.read_bytes() == saved_journal
+    for workspace in (root, other):
+        target = build_kernel(provider=FakeProvider([]), base_dir=state, model=ModelId("fake"), workspace_root=workspace)
+        try:
+            await target.loop.start()
+            examples = await project_examples(target.loop)
+            failures = [e for e in examples if e.evidence_id.startswith("failure:")]
+            assert [e.outcome for e in failures] == (
+                ["Operator-confirmed flawed response: " + note] if workspace == root and not changed_checkout else [])
+        finally:
+            target.session.close()
 
 
 async def test_legacy_origin_only_and_corrupt_indexes_cannot_grant_access(tmp_path):

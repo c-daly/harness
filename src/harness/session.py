@@ -100,6 +100,22 @@ class Session:
             )
         )
 
+    def index_experience(self, *, recorded=None):
+        if self._experience_run:
+            from harness.project_examples import index_prefix
+            try:
+                if recorded is None:
+                    size, seq = self._writer.path.stat().st_size, self.last_seq
+                else:
+                    from itertools import islice
+                    line_number, seq = recorded
+                    with self._writer.path.open("rb") as journal:
+                        size = sum(map(len, islice(journal, line_number)))
+                index_prefix(self.base, self._experience_project, self.id, size, seq, if_missing=recorded is not None)
+            except (OSError, ValueError):
+                # An unavailable derived index must not invalidate a committed event.
+                pass
+
     def append(self, event: Event) -> Envelope:
         for redactor in self._redactors:
             event = redactor(event)  # frozen events: redactors must model_copy(update=...)
@@ -120,14 +136,9 @@ class Session:
             self.prompt_selection_error = None
         if isinstance(event, (SessionStarted, SessionResumed, AgentRunStarted)):
             self.observe_project_scope(event)
-        elif self._experience_run and (isinstance(event, (AgentRunFinished, TaskChecked)) or
+        elif isinstance(event, (AgentRunFinished, TaskChecked)) or (
                 isinstance(event, ImprovementRecorded) and event.record.kind == "evidence"):
-            from harness.project_examples import index_prefix
-            try:
-                index_prefix(self.base, self._experience_project, self.id, self._writer.path.stat().st_size, envelope.seq)
-            except (OSError, ValueError):
-                # An unavailable derived index must not invalidate a committed event.
-                pass
+            self.index_experience()
         if self._task_state is not None:
             self._task_state.apply(envelope)
         self.bus.publish(envelope)  # observers second; never blocking
