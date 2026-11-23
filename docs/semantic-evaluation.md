@@ -14,9 +14,27 @@ function-scoped shadow adoption/rollback. They use the existing inference dispat
 call budget, local-readiness service, session log, and verified artifact store.
 These work with all plugins absent. Memory and agent-swarm retain their own roles.
 
-This is a partial M4 implementation following the measured M3 local workflow gate.
-Normal submission, queueing, task acceptance, cancellation, routing, and recovery
-remain deterministic. No background classifier runs on typing or submission.
+For a follow-up to a delivered Saoirse answer, the CLI and terminal automatically use
+the native `message_kind` shadow function. The input contains the previous request,
+the delivered answer and the follow-up as quoted data. The journal identifies all
+three events and records the selected prompt, model, judgment or abstention.
+Inspect the result with `/semantics` or `harness semantic inspect SESSION_ID`.
+Explicit `classify TEXT` operates on the supplied text alone.
+
+The foreground answer gets the available model calls first. Automatic classification
+uses the local primary or, for a remote inference primary, a single configured local
+alias. With multiple local aliases, it can use the only one already observed ready.
+An ambiguous choice yields an abstention. It uses existing permission and the
+background local scheduler. A missing
+local model, a denied call, exhausted budget, or an oversized exchange leaves
+an abstention. First turns have no prior answer. Inputs queued while another reply
+is outstanding do not acquire a reference to an answer the operator had yet to see.
+The classification can supply advisory evidence for supervised review. Task acceptance,
+cancellation and routing continue to use their own controls.
+
+The terminal displays the settled answer and accepts further input while the
+optional review runs. New work can preempt a pending review. The headless CLI
+flushes the answer to stdout before it finishes journaling the bounded observation.
 
 ## Run or inspect a shadow observation
 

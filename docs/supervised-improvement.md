@@ -14,6 +14,14 @@ agent-swarm remain plugins.
 
 ## Evidence from ordinary tasks
 
+After an ordinary follow-up, `/semantics` shows the classifier's interpretation
+in the context of the previous request and delivered answer. A supported
+`correction` judgment also appears in `/improvements` as advisory correction
+evidence. Replay checks the original exchange, the exact model call and its
+structured response. The observation identifies what the operator may be
+challenging. Confirmed failures still require supporting evidence. Proposals
+that cite a derived correction persist it through the ordinary improvement journal.
+
 Open `/improvements` or run `harness improvements SESSION_ID` to see observations from recorded primary runs, requirement checks, explicit task acceptance and marked task or session outcomes. A completed run reports execution status. Check the cited requirements and acceptance events to determine what it established. Inspection reads the existing session journal without changing it. When a proposal cites one of these observations, Harness saves its evidence record before the proposal.
 
 Use `/improvements feedback [--turn SEQ] TEXT` to attach a correction to a finished primary turn. For a closed session, use `harness improvements SESSION_ID --feedback TEXT [--turn SEQ]`. The default target is the latest finished primary turn. Repeating the same feedback for the same turn records it once. Use `/improvements show ID` to inspect the cited event and observation.
@@ -51,8 +59,9 @@ Select an inference model alias, then use the current terminal session:
 /improvements rollback
 ```
 
-Classification is opt-in and records observations in this session. For local
-classification/evaluation, first run normal work or `/resources start ALIAS`;
+The explicit classification command records an observation for the supplied text.
+Ordinary replies use the same supervised function with their conversation context.
+For local classification/evaluation, first run normal work or `/resources start ALIAS`;
 background calls do not cold-start or displace a resident model. An explicitly
 requested proposal is scheduled as work and can start the selected local runtime.
 
