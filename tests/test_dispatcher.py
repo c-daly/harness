@@ -114,6 +114,172 @@ async def test_ask_approved_executes(tmp_path):
     assert resolved[0].allowed is True
 
 
+@pytest.mark.parametrize("source", ["", "  short\r\n", "Ω" * 10_000])
+async def test_native_presentation_replays_only_the_published_file(tmp_path, source):
+    from harness.agent import AgentResult
+    from harness.events import AgentRunFinished
+    from harness.fold import fold
+    from harness.native_tools import ReadFileTool
+    from harness.workspace import WorkspaceGuard
+
+    path = tmp_path / "notes.txt"
+    path.write_bytes(source.encode())
+    hooks = HookBus()
+    hooks.register_dispatch("workspace", WorkspaceGuard(tmp_path))
+    session, dispatcher = _kernel_bits(tmp_path, hooks)
+    dispatcher.registry.register(ReadFileTool(workspace_root=tmp_path))
+    call = ProposedToolCall(CallId("read"), ToolName("read_file"), {"file_path": path.name, "display": True})
+    result = await dispatcher.dispatch_tool(call, exact=True)
+    assert result.presented_file.call_id == call.call_id
+    assert result.presented_file.file_path == str(path)
+    assert result.read_text() == source
+    run = AgentResult(task_id="task", run_id="run", status="completed", presented_file=result.presented_file,
+                      output=session.blobs.put(source.encode()))
+    path.write_text("different current contents")
+    session.append(AgentRunFinished(result=run, purpose="conversation"))
+    session.close()
+    envelopes = read_session(tmp_path, SessionId("s1"))
+    block = fold(envelopes).messages[-1].blocks[0]
+    assert block.display_path == str(path)
+    assert (block.text, block.blob) == (result.text, result.blob)
+    finish = envelopes[-1]
+    for bad_run in (run.model_copy(update={"output": session.blobs.put(b"unrelated")}),
+                    run.model_copy(update={"status": "incomplete"}),
+                    run.model_copy(update={"presented_file": result.presented_file.model_copy(
+                        update={"file_path": "wrong-title.txt"})})):
+        forged = finish.model_copy(update={"event": AgentRunFinished(result=bad_run, purpose="conversation")})
+        assert fold([*envelopes[:-1], forged]).messages[-1].blocks[0].display_path is None
+
+
+@pytest.mark.parametrize("replacement", [{"file_path": "other"}, {"display": False}, {"offset": 2}])
+async def test_requested_display_rejects_hook_changes_before_execution(tmp_path, replacement):
+    from harness.native_tools import ReadFileTool
+
+    hooks = HookBus()
+    def rewrite(call):
+        # A hook can mutate the args in place, even on the frozen call.
+        call.args.update(replacement)
+        return Rewrite(action=call)
+    hooks.register_dispatch("rewrite", rewrite)
+    hooks.register_dispatch("ask", lambda call: Ask(reason="approve changed call?"))
+    session, dispatcher = _kernel_bits(tmp_path, hooks)
+    dispatcher.registry.register(ReadFileTool(workspace_root=tmp_path))
+    args = {"file_path": "requested", "display": True}
+    outcome = await dispatcher.dispatch_tool(ProposedToolCall(CallId("read"), ToolName("read_file"), args))
+    session.close()
+    assert outcome.is_error and outcome.presented_file is None
+    assert "differs" in outcome.read_text()
+    assert not any(isinstance(ev, (PermissionRequested, DispatchResolved)) for ev in _events(tmp_path))
+
+
+@pytest.mark.parametrize("deleted", [False, True])
+@pytest.mark.parametrize("agent_purpose", ["conversation", "context"])
+async def test_operator_link_read_cannot_refresh_or_forget_an_agent_file_version(tmp_path, deleted, agent_purpose):
+    from harness.native_tools import ReadFileTool, ReadState, WriteFileTool
+    from harness.types import new_call_id
+
+    path = tmp_path / "notes.txt"
+    path.write_text("A")
+    state = ReadState()
+    session, dispatcher = _kernel_bits(tmp_path)
+    dispatcher.registry.register(ReadFileTool(workspace_root=tmp_path, read_state=state))
+    dispatcher.registry.register(WriteFileTool(workspace_root=tmp_path, read_state=state))
+
+    async def run(tool, *, purpose="conversation", operator_view=False, **args):
+        call = ProposedToolCall(new_call_id(), ToolName(tool), {"file_path": str(path), **args})
+        return await dispatcher.dispatch_tool(call, purpose=purpose, exact=operator_view, operator_view=operator_view)
+
+    try:
+        assert "A" in (await run("read_file")).read_text()
+        if deleted:
+            path.unlink()
+        else:
+            path.write_text("B")
+        link = await run("read_file", purpose="context", display=True, operator_view=True)
+        assert link.is_error == deleted
+        if not deleted:
+            assert link.read_text() == "B"
+        stale = await run("write_file", content="stale overwrite")
+        assert stale.is_error and "File changed" in stale.read_text()
+        if deleted:
+            assert not path.exists()
+        else:
+            assert path.read_text() == "B"
+        # Configured context sources can request display=True for model input.
+        observed = await run("read_file", purpose=agent_purpose, display=agent_purpose == "context")
+        assert observed.is_error == deleted
+        assert not (await run("write_file", content="new revision")).is_error
+        assert path.read_text() == "new revision"
+    finally:
+        session.close()
+
+
+async def test_display_requires_native_reader(tmp_path):
+    from harness.native_tools import ReadFileTool
+
+    class OtherReader(ReadFileTool):
+        async def __call__(self, args):
+            pytest.fail("a replacement reader must not run as the authorized native viewer")
+
+    session, dispatcher = _kernel_bits(tmp_path)
+    dispatcher.registry.register(OtherReader(workspace_root=tmp_path))
+    outcome = await dispatcher.dispatch_tool(ProposedToolCall(
+        CallId("read"), ToolName("read_file"), {"file_path": "requested", "display": True}))
+    session.close()
+    assert outcome.is_error and outcome.presented_file is None
+
+
+async def test_permission_prompt_cannot_change_the_verified_file(tmp_path):
+    from harness.native_tools import ReadFileTool
+
+    class Resolver:
+        name = "test"
+
+        async def resolve(self, request):
+            request.action.args["file_path"] = "changed"
+            return True
+
+    (tmp_path / "requested").write_text("requested source")
+    (tmp_path / "changed").write_text("different source")
+    hooks = HookBus()
+    hooks.register_dispatch("ask", lambda call: Ask(reason="read source?"))
+    session, dispatcher = _kernel_bits(tmp_path, hooks, Resolver())
+    dispatcher.registry.register(ReadFileTool(workspace_root=tmp_path))
+    outcome = await dispatcher.dispatch_tool(ProposedToolCall(
+        CallId("read"), ToolName("read_file"), {"file_path": "requested", "display": True}))
+    session.close()
+    assert outcome.presented_file.file_path == str(tmp_path / "requested")
+    assert outcome.read_text() == "requested source"
+
+
+async def test_display_rejects_a_changed_canonical_target_after_permission(tmp_path):
+    from harness.native_tools import ReadFileTool
+
+    requested = tmp_path / "requested"
+    requested.write_text("authorized")
+    other = tmp_path / "other"
+    other.write_text("different source")
+    class Resolver:
+        name = "test"
+
+        async def resolve(self, request):
+            assert request.action.args["file_path"] == str(requested)
+            requested.unlink()
+            requested.symlink_to(other)
+            return True
+
+    hooks = HookBus()
+    hooks.register_dispatch("ask", lambda call: Ask(reason="read source?"))
+    session, dispatcher = _kernel_bits(tmp_path, hooks, Resolver())
+    dispatcher.registry.register(ReadFileTool(workspace_root=tmp_path))
+    outcome = await dispatcher.dispatch_tool(ProposedToolCall(
+        CallId("read"), ToolName("read_file"), {"file_path": "requested", "display": True}))
+    session.close()
+    assert outcome.is_error and outcome.presented_file is None
+    assert "changed" in outcome.read_text()
+    assert not any(isinstance(ev, DispatchResolved) for ev in _events(tmp_path))
+
+
 async def test_ask_denied_headless_returns_error(tmp_path):
     hooks = HookBus()
     hooks.register_dispatch("asker", lambda a: Ask(reason="confirm?"), priority=10)

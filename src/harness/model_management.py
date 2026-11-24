@@ -18,7 +18,7 @@ from urllib.parse import quote
 import httpx
 from pydantic import BaseModel, ConfigDict, Field
 
-from harness.catalog import Catalog
+from harness.catalog import Catalog, CatalogConfigError, read_catalog_source
 from harness.persistence import atomic_write, exchange_paths, sync_directory
 
 
@@ -218,37 +218,45 @@ async def inspect_gguf(path: Path, *, progress=lambda text: None) -> dict:
             "gguf_version": struct.unpack("<I", header[4:8])[0], "checked_at": time.time()}
 
 
-def _catalog_bytes(path: Path) -> bytes:
-    if path.is_symlink():
-        raise ModelSetupError("Choose the catalog's actual path rather than a symlink.")
+def _read_catalog_source(path: Path) -> bytes:
     try:
-        raw = _read_regular(path)
+        return read_catalog_source(path, follow_symlinks=False)
     except FileNotFoundError:
         return b""
+    except CatalogConfigError as exc:
+        raise ModelSetupError(str(exc)) from None
+
+
+def load_setup_catalog(path: Path) -> Catalog:
+    """Inspect an operator catalog under the same file rules used for registration."""
+    return Catalog.from_bytes(_read_catalog_source(path), path=path)
+
+
+def _catalog_bytes(path: Path) -> bytes:
+    raw = _read_catalog_source(path)
     try:
-        data = tomllib.loads(raw.decode())
-        entries = data.get("models", {})
-        if not isinstance(entries, dict) or any(not isinstance(v, dict) for v in entries.values()):
-            raise ValueError
-        for entry in entries.values():
-            if "local" in entry and not isinstance(entry["local"], dict):
-                raise ValueError
-            if not isinstance(entry.get("tags", []), list):
-                raise ValueError
-    except ValueError:
-        raise ModelSetupError("The existing catalog is invalid; repair it before registering a model.") from None
+        Catalog.from_bytes(raw, path=path)
+    except CatalogConfigError as exc:
+        raise ModelSetupError(str(exc)) from None
     return raw
 
 
 def _entry_text(alias: str, entry: dict) -> str:
+    def assignment(key, value):
+        # TOML accepts Unicode scalars, including non-BMP model names and paths.
+        encoded = json.dumps(value, ensure_ascii=False).replace("\x7f", "\\u007f")
+        return f"{key} = {encoded}"
+
     lines = [f"[models.{alias}]"]
     for key, value in entry.items():
         if not isinstance(value, dict):
-            lines.append(f"{key} = {json.dumps(value)}")
+            lines.append(assignment(key, value))
     for section in ("local", "artifact"):
+        if section not in entry:
+            continue
         lines.extend(["", f"[models.{alias}.{section}]"])
         for key, value in entry[section].items():
-            lines.append(f"{key} = {json.dumps(value)}")
+            lines.append(assignment(key, value))
     return "\n".join(lines) + "\n"
 
 
@@ -310,12 +318,30 @@ def _publish_alias(path: Path, expected: bytes, alias: str, entry: dict) -> tupl
         return backup, warning
 
 
+def _validate_new_alias(alias: str) -> None:
+    if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{0,63}", alias):
+        raise ModelSetupError("Alias must start with a letter and use at most 64 letters, digits, hyphens or underscores.")
+
+
+def register_connection(path: Path, alias: str, entry: dict) -> None:
+    """Append a connection using the same conflict-aware publisher as GGUF registration."""
+    _validate_new_alias(alias)
+    original = _catalog_bytes(path)
+    aliases = tomllib.loads(original.decode()).get("models", {})
+    if alias in aliases:
+        if aliases[alias] == entry:
+            return
+        raise ModelSetupError(f"Alias {alias!r} already exists. Choose a new name or use 'harness setup existing'.")
+    _, warning = _publish_alias(path, original, alias, entry)
+    if warning:
+        raise ModelSetupError(warning)
+
+
 async def register_model(*, catalog_path: Path, alias: str, model_file: Path, runtime: Path,
                          library_path: Path | None = None, port=8080, context=8192, gpu_layers=99,
                          threads=4, disable_thinking=False, expected: HubFile | None = None,
                          inventory: HubInventory | None = None, progress=lambda text: None) -> dict:
-    if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{0,63}", alias):
-        raise ModelSetupError("Alias must start with a letter and use at most 64 letters, digits, hyphens or underscores.")
+    _validate_new_alias(alias)
     if (type(port) is not int or not 1 <= port <= 65535 or type(context) is not int
             or not 512 <= context <= 1048576 or type(gpu_layers) is not int or not 0 <= gpu_layers <= 999
             or type(threads) is not int or not 1 <= threads <= 256):
@@ -363,11 +389,13 @@ async def register_model(*, catalog_path: Path, alias: str, model_file: Path, ru
 
 
 def render_catalog(path: Path) -> str:
-    entries = tomllib.loads(_catalog_bytes(path).decode()).get("models", {})
+    entries = load_setup_catalog(path).entries
     lines = []
     for alias, entry in entries.items():
         if entry.get("backend"):
             kind = "agent runtime"
+        elif entry.get("transport") == "claude-cli":
+            kind = "model via Claude CLI subscription (Saoirse)"
         elif "local" in entry:
             kind = "local model; starts on demand" if entry["local"].get("auto_start") else "local model; server started separately"
         elif "local" in entry.get("tags", ()):
@@ -376,4 +404,4 @@ def render_catalog(path: Path) -> str:
             kind = "model endpoint"
         lines.append(f"{json.dumps(alias, ensure_ascii=False)}: {kind}")
     lines.append("/model ALIAS selects a model; /resources checks configured local runtimes.")
-    return "\n".join(lines) if entries else "No models configured. Use /models add to register an installed GGUF."
+    return "\n".join(lines) if entries else "No models configured. Run harness setup in a shell, or use /models add for an installed GGUF."

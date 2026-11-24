@@ -15,6 +15,7 @@ from harness.handoff import HandoffRecord
 from harness.resources import ResourceObservation
 from harness.context import ContextPolicy
 from harness.improvement import ImprovementRecord
+from harness.messages import FilePresentation
 from harness.fallback import FallbackDecision, FallbackPolicy
 from harness.scheduling import LocalRequestObservation
 from harness.semantics import AssessmentObservation, SemanticObservation
@@ -299,6 +300,8 @@ class ToolCallCompleted(_Event):
     result_text: str | None = None
     result_blob: BlobRef | None = None
     is_error: bool = False
+    presented_file: FilePresentation | None = None
+    operator_view: bool = False
     duration_ms: int = 0
 
 
@@ -328,6 +331,9 @@ class ModelCallCompleted(_Event):
     call_id: CallId
     model: ModelId
     message: dict[str, Any]  # Message.model_dump(); assistant turn incl. tool-call blocks
+    # Tools selectable in the final native conversation request, after routing and filtering.
+    # Older journals lack this receipt. An empty tuple is a known empty tool list.
+    offered_tools: tuple[str, ...] | None = None
     # Retain raw evidence while deferring user-visible prose to the native run finish.
     response_deferred: bool = False
     usage: dict[str, int | None]  # absent/None is unknown; zero must be measured

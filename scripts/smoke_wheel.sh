@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Smoke-test a built harness wheel: install it into a throwaway virtualenv, run
-# the console script, and import every module the package ships.
+# the console script, import every shipped module, and check subscription model calls.
 #
 # Usage: scripts/smoke_wheel.sh dist/harness-0.0.1-py3-none-any.whl
 #
@@ -52,7 +52,12 @@ if [ "${#modules[@]}" -eq 0 ]; then
     exit 1
 fi
 
-tmp="$(mktemp -d)"
+# Keep the wheel environment on the cache filesystem for hard links. An
+# explicit TMPDIR still controls the scratch location.
+scratch_dir="${TMPDIR:-$(dirname -- "$(uv cache dir)")}"
+mkdir -p -- "$scratch_dir"
+scratch_dir="$(cd -- "$scratch_dir" && pwd)"
+tmp="$(mktemp -d -- "$scratch_dir/harness-wheel-smoke.XXXXXXXX")"
 cleanup() {
     rm -rf "$tmp"
 }
@@ -82,6 +87,22 @@ cd "$tmp"
 env -u PYTHONPATH -u PYTHONHOME "$tmp/venv/bin/python" - "${modules[@]}" <<"PY"
 import importlib
 import sys
+from importlib.metadata import requires, version
+
+from packaging.requirements import Requirement
+from packaging.utils import canonicalize_name
+
+from harness.provider_cli_model import sdk_available
+
+requirements = (Requirement(item) for item in requires("harness"))
+default_names = {canonicalize_name(req.name) for req in requirements
+                 if req.marker is None or req.marker.evaluate({"extra": ""})}
+if "claude-agent-sdk" not in default_names:
+    sys.exit("FAIL Claude Agent SDK is missing from the default wheel requirements")
+importlib.import_module("claude_agent_sdk")
+if not sdk_available():
+    sys.exit("FAIL the installed Claude subscription connection cannot select the SDK")
+print(f"ok default installation detects Claude Agent SDK {version('claude-agent-sdk')} for model calls")
 
 failed = []
 for name in sys.argv[1:]:
@@ -101,5 +122,11 @@ if failed:
         print(f"  {name}: {err}", file=sys.stderr)
     sys.exit(1)
 PY
+
+echo "== exercising installed subscription transports with an offline Claude executable"
+uv pip install --python "$tmp/venv/bin/python" 'pytest>=8' 'pytest-asyncio>=0.23'
+cp "$repo_root/tests/test_sdk_model_preference.py" "$repo_root/tests/test_cli_model_session.py" "$tmp/"
+"$tmp/venv/bin/python" -I -m pytest -q -o asyncio_mode=auto --import-mode=importlib \
+    test_sdk_model_preference.py test_cli_model_session.py
 
 echo "== wheel smoke OK"

@@ -12,8 +12,8 @@ from harness.resident import render_status
 from harness.resources import ResourceObservation
 from harness.status_cli import main
 from harness.tui_support import SlashCommand
-from harness.provider import FakeProvider
-from harness.types import ModelId
+from harness.provider import FakeProvider, text_turn, tool_call_turn
+from harness.types import ModelId, ToolName
 from tests.test_resident_context import Lookup, make_kernel, policy
 from tests.test_tui import make_app
 from tests.test_tui_queue import screen_text
@@ -129,11 +129,36 @@ async def test_optional_failure_and_status_are_visible_without_source_payload(tm
         await command(app, pilot, "/task new Keep continuity")
         await command(app, pilot, "/task require Review work")
         await command(app, pilot, "work")
+        assert "Context normal-memory: unavailable" in screen_text(app)
         await command(app, pilot, "/status")
         screen = screen_text(app)
         assert "Context normal-memory: unavailable" in screen
         assert "Keep continuity" in screen and "1/1 unresolved" in screen
         assert "No local runtime profiles configured" in screen
+
+
+async def test_routine_context_reads_stay_in_journal_and_requested_lookup_is_visible(tmp_path):
+    lookup = Lookup("Lookup result from the tool.")
+    provider = FakeProvider([
+        text_turn("First answer."),
+        tool_call_turn("requested-lookup", ToolName("memory_lookup"), {"subject": "requested"}),
+        text_turn("Second answer."),
+    ])
+    app = make_app(tmp_path, context_policy=policy(), provider=provider)
+    app.kernel.registry.register(lookup)
+    async with app.run_test(size=(140, 45)) as pilot:
+        await command(app, pilot, "First question")
+        await command(app, pilot, "Look up the requested subject")
+        screen = screen_text(app)
+        assert "Second answer." in screen
+        assert "Context normal-memory: ready" not in screen
+        assert screen.count("memory_lookup") == 1
+        assert screen.count(lookup.text) == 1
+        events = [e.event for e in read_session(tmp_path, app.kernel.session.id)]
+        assert [e.status for e in events if isinstance(e, ContextSourceObserved)] == [
+            "fetching", "ready", "fetching", "ready"]
+        assert [e.purpose for e in events if e.type == "tool_call_proposed"] == [
+            "context", "context", "conversation"]
 
 
 async def test_context_cancellation_preserves_queue_draft_and_status(tmp_path):

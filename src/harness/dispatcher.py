@@ -38,7 +38,7 @@ from harness.interaction import PermissionRequest, Resolver
 from harness.inference import (
     InferenceRequest, InferenceResult, LegacyCompletionAdapter, check_input, collect_bounded, infer,
 )
-from harness.messages import Message, materialize_tool_results
+from harness.messages import FilePresentation, Message, materialize_tool_results
 from harness.provider import Chunk, ModelProvider, Usage
 from harness.callctx import reset_current_call_id, set_current_call_id
 from harness.redaction import StringRedactor, identity_redact
@@ -77,6 +77,7 @@ class ToolOutcome:
     is_error: bool
     _blobs: BlobStore | None = field(default=None, repr=False, compare=False)
     resolved: DispatchResolved | None = field(default=None, repr=False, compare=False)
+    presented_file: FilePresentation | None = None
 
     def read_text(self) -> str:
         if self.blob is not None:
@@ -116,7 +117,9 @@ class Dispatcher:
             return tools
         return tuple(tool for tool in tools if tool.name not in HOST_COORDINATION_TOOLS)
 
-    async def _run_chain(self, action, *, purpose=None, allow_ask=True) -> tuple[object | None, str | None]:
+    async def _run_chain(
+        self, action, *, purpose=None, allow_ask=True, approved_args=None,
+    ) -> tuple[object | None, str | None]:
         """Run hooks + Ask resolution. Returns (effective_action, denial_reason)."""
         outcome = await self.hooks.run_dispatch(action)
         for name, decision in outcome.decisions:
@@ -127,6 +130,11 @@ class Dispatcher:
             )
         if outcome.blocked is not None:
             return None, f"blocked by policy: {outcome.blocked.reason}"
+        if approved_args is not None:
+            approved = self._exact_tool_action(action, approved_args, outcome.effective)
+            if approved is None:
+                return None, "The effective call differs from the approved request."
+            outcome = replace(outcome, effective=approved)
         if (purpose == "conversation" and isinstance(action, ProposedToolCall) and self.owns_primary_coordination()
                 and any(isinstance(call, ProposedToolCall) and call.tool in HOST_COORDINATION_TOOLS
                         for call in (action, outcome.effective))):
@@ -134,7 +142,6 @@ class Dispatcher:
             self.session.append(HookDecided(call_id=action.call_id, hook="saoirse-coordination",
                                             decision={"kind": "block", "reason": reason}))
             return None, reason
-        from dataclasses import replace
         from harness.handoff import current_handoff
         guard = current_handoff.get()
         if guard is not None:
@@ -149,9 +156,14 @@ class Dispatcher:
                 return None, decision.reason
             if isinstance(decision, Ask) and outcome.ask is None:
                 outcome = replace(outcome, ask=decision)
+        effective = outcome.effective
         if outcome.ask is not None:
             if not allow_ask:
                 return None, "background observation requires existing permission"
+            if approved_args is not None:
+                # Hooks and the resolver hold mutable argument dictionaries. Keep
+                # the verified execution arguments private throughout the prompt.
+                effective = replace(effective, args=deepcopy(dict(effective.args)))
             self.session.append(
                 PermissionRequested(call_id=action.call_id, reason=outcome.ask.reason)
             )
@@ -183,17 +195,19 @@ class Dispatcher:
             )
             if not allowed:
                 return None, "denied by user"
-        return outcome.effective, None
+        return effective, None
 
-    async def dispatch_tool(self, call: ProposedToolCall, *, purpose=None) -> ToolOutcome:
+    async def dispatch_tool(
+        self, call: ProposedToolCall, *, purpose=None, exact: bool = False, operator_view: bool = False,
+    ) -> ToolOutcome:
         with self.scope.budget.activity.track(
             session_id=self.session.id, kind="tool", label=str(call.tool),
             call_id=str(call.call_id),
             phase="reading context" if purpose == "context" else "tool execution",
         ):
-            return await self._dispatch_tool(call, purpose=purpose)
+            return await self._dispatch_tool(call, purpose=purpose, exact=exact, operator_view=operator_view)
 
-    async def _dispatch_tool(self, call: ProposedToolCall, *, purpose=None) -> ToolOutcome:
+    async def _dispatch_tool(self, call: ProposedToolCall, *, purpose=None, exact=False, operator_view=False) -> ToolOutcome:
         self.scope.budget.attach(self.session)
         active_run = current_agent_run.get()
         lineage = {"task_id": active_run.task.id, "agent_run_id": active_run.run_id,
@@ -213,7 +227,9 @@ class Dispatcher:
                     call_id=call.call_id, result_text=result.text, is_error=True,
                 ))
             else:
-                result = await self._dispatch_tool_body(call, purpose=lineage.get("purpose"))
+                result = await self._dispatch_tool_body(
+                    call, purpose=lineage.get("purpose"), exact=exact, operator_view=operator_view,
+                )
         except asyncio.CancelledError:
             text = "(call cancelled; side effects may have occurred)"
             self.session.append(ToolCallCancelled(call_id=call.call_id, result_text=text))
@@ -227,8 +243,44 @@ class Dispatcher:
         finally:
             current_scope.reset(scope_token)
 
-    async def _dispatch_tool_body(self, call: ProposedToolCall, *, purpose=None) -> ToolOutcome:
-        effective, denial = await self._run_chain(call, purpose=purpose)
+    def _exact_tool_action(self, proposed, args, effective):
+        if (not isinstance(effective, ProposedToolCall)
+                or (effective.call_id, effective.tool) != (proposed.call_id, proposed.tool)):
+            return None
+        display = proposed.tool == "read_file" and args.get("display") is True
+        if effective.args == args and not display:
+            return effective
+        # WorkspaceGuard canonicalizes the path before the permission check.
+        # Accept only the native reader's own canonical spelling of the original.
+        if proposed.tool != "read_file" or not isinstance(args.get("file_path"), str):
+            return None
+        from harness.native_tools import ReadFileTool, ToolError
+        from harness.tools import UnknownToolError
+        try:
+            reader = self.registry.get(proposed.tool)
+            if type(reader) is not ReadFileTool:
+                return None
+            path = str(reader.resolve_path(args["file_path"]))
+        except (ToolError, UnknownToolError, OSError, RuntimeError):
+            return None
+        canonical = {**args, "file_path": path}
+        if effective.args != args and effective.args != canonical:
+            return None
+        # The resolver sees the same canonical source that will be opened.
+        return replace(effective, args=canonical)
+
+    async def _dispatch_tool_body(
+        self, call: ProposedToolCall, *, purpose=None, exact=False, operator_view=False,
+    ) -> ToolOutcome:
+        display = call.tool == "read_file" and call.args.get("display") is True
+        operator_display = operator_view and purpose == "context" and display
+        approved_args = deepcopy(dict(call.args)) if exact or display else None
+        effective, denial = await self._run_chain(call, purpose=purpose, approved_args=approved_args)
+        if display and denial is None:
+            # An interactive permission prompt can outlive a filesystem change.
+            checked = self._exact_tool_action(call, effective.args, effective)
+            if checked is None or checked.args != effective.args:
+                denial = "The approved file path changed before it could be displayed."
         if denial is not None:
             self.session.append(
                 ToolCallCompleted(call_id=call.call_id, result_text=denial, is_error=True)
@@ -259,13 +311,22 @@ class Dispatcher:
         self.session.append(resolved)
         current_activity.get().update(label=str(effective.tool))
         started = time.monotonic()
+        presented_file = None
         try:
             token = set_current_call_id(call.call_id)
             try:
                 tool = self.registry.get(effective.tool)
-                validate_arguments(tool.spec, dict(effective.args))
-                raw = (await guard.execute_tool(tool, dict(effective.args)) if guard is not None
-                       else await tool(dict(effective.args)))
+                args = dict(effective.args)
+                validate_arguments(tool.spec, args)
+                if display:
+                    from harness.native_tools import ReadFileTool, ToolError
+                    if type(tool) is not ReadFileTool:
+                        raise ToolError("File presentation requires the native read_file tool.")
+                    if operator_display:
+                        tool = tool.for_operator()
+                raw = await guard.execute_tool(tool, args) if guard is not None else await tool(args)
+                if display:
+                    presented_file = FilePresentation(call_id=call.call_id, file_path=args["file_path"])
             finally:
                 reset_current_call_id(token)
             is_error = False
@@ -285,12 +346,14 @@ class Dispatcher:
                 call_id=call.call_id,
                 result_text=text,
                 result_blob=blob,
+                presented_file=presented_file,
+                operator_view=operator_display and presented_file is not None,
                 is_error=is_error,
                 duration_ms=duration_ms,
             )
         )
         return ToolOutcome(text=text, blob=blob, is_error=is_error, _blobs=self.session.blobs,
-                           resolved=resolved)
+                           resolved=resolved, presented_file=presented_file)
 
     async def dispatch_model(
         self,
@@ -602,11 +665,16 @@ class Dispatcher:
                 exc.call_id, exc.model, exc.execution_kind = call.call_id, effective_model, execution_kind
             raise
         # Outside the exception scope: a failing log write cannot emit a second terminal fact.
+        offered_tools = None
+        if purpose == "conversation" and execution_kind == "inference":
+            selectable = request.tool_choice == "auto" and request.response_schema is None
+            offered_tools = tuple(spec.name for spec in request.tools) if selectable else ()
         self.session.append(
             ModelCallCompleted(
                 call_id=call.call_id,
                 model=effective_model,
                 message=message.model_dump(),
+                offered_tools=offered_tools,
                 response_deferred=defer_response,
                 usage=usage.as_dict(),
                 stop_reason=stop_reason,

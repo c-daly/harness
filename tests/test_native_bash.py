@@ -33,8 +33,10 @@ async def test_stderr_merged_into_stdout(tmp_path):
 
 
 async def test_cwd_is_workspace_root(tmp_path):
-    out = await _tool(tmp_path)({"command": 'printf %s "$PWD"'})
+    tool = _tool(tmp_path)
+    out = await tool({"command": 'printf %s "$PWD"'})
     assert out == str(tmp_path.resolve())
+    assert repr(out) in tool.spec.description
 
 
 async def test_timeout_raises_and_kills_process(tmp_path):

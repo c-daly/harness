@@ -1,5 +1,6 @@
 """Owned transcript model. Provider formats are translation targets, never this."""
 
+import hashlib
 from enum import StrEnum
 from typing import Annotated, Any, Literal, Union
 
@@ -57,6 +58,34 @@ class ToolResultBlock(_Block):
     text: str | None = None
     blob: BlobRef | None = None
     is_error: bool = False
+    display_path: str | None = None
+
+
+class FilePresentation(BaseModel):
+    """Origin of an agent result delivered directly from an authorized native read."""
+
+    model_config = ConfigDict(frozen=True)
+    call_id: CallId
+    file_path: str
+
+    def mark_transcript(self, history: list["Message"], *, output: BlobRef | None) -> None:
+        # Only a sole final read can deliver a file. Keep its bytes in the
+        # original tool role, including across resume and the next inference.
+        if output is None or not history or history[-1].role != Role.TOOL:
+            return
+        message = history[-1]
+        block = message.blocks[0] if len(message.blocks) == 1 else None
+        if not isinstance(block, ToolResultBlock) or block.call_id != self.call_id or block.is_error:
+            return
+        if output != block.blob:
+            if block.blob is not None or block.text is None:
+                return
+            data = block.text.encode("utf-8")
+            if len(data) != output.size or hashlib.sha256(data).hexdigest() != output.sha256:
+                return
+        history[-1] = message.model_copy(update={
+            "blocks": (block.model_copy(update={"display_path": self.file_path}),),
+        })
 
 
 Block = Annotated[

@@ -18,7 +18,6 @@ from harness.fallback import FallbackPolicy
 from harness.interaction import HeadlessResolver, Resolver
 from harness.loop import AgentLoop
 from harness.mcp_config import McpConfigError, McpServerSpec, load_mcp_config, load_mcp_file
-from harness.mcp_host import McpHost
 from harness.permissions import PermissionEngine, default_engine
 from harness.provider import FakeProvider, ModelProvider, text_turn
 from harness.resident import RESIDENT_SYSTEM_PROMPT, ResidentConfig, UnconfiguredResidentProvider
@@ -28,6 +27,7 @@ from harness.tools import FilteredRegistry, ToolRegistry
 from harness.types import ModelId, SessionId, new_session_id
 
 if TYPE_CHECKING:
+    from harness.mcp_host import McpHost
     from harness.plugins import LoadedPlugins
     from harness.routing import RoutingRuleSet
 
@@ -42,7 +42,7 @@ class Kernel:
     runner: "SubagentRunner"
     resumed: bool = field(default=False)
     tags: list[str] = field(default_factory=list)
-    mcp: McpHost | None = None
+    mcp: "McpHost | None" = None
     plugins: "LoadedPlugins | None" = None
     plugin_warnings: list[str] = field(default_factory=list)
     _plugin_pumps: list = field(default_factory=list)
@@ -366,6 +366,8 @@ def build_kernel(
         )
     mcp_host = None
     if mcp:
+        from harness.mcp_host import McpHost
+
         mcp_host = McpHost(mcp, registry=registry, hooks=hooks, session=session)
     return Kernel(
         session=session,
@@ -465,6 +467,11 @@ async def _run_headless(kernel, prompt, run_task, *, on_settled=None) -> str:
                 kernel.session.close()
 
 
+def terminal_text(text: str) -> str:
+    """Drop terminal control bytes while keeping readable text, tabs and line breaks."""
+    return "".join(ch for ch in text if ch in "\n\t" or " " <= ch < "\x7f" or ch >= "\xa0")
+
+
 async def _amain(kernel: Kernel, prompt: str) -> str:
     task = asyncio.current_task()
     loop = asyncio.get_running_loop()
@@ -472,7 +479,22 @@ async def _amain(kernel: Kernel, prompt: str) -> str:
 
     def deliver(answer):
         nonlocal settled
-        print(answer, flush=True)
+        result = kernel.controller.last_result
+        is_file = result is not None and result.presented_file is not None
+        terminal = sys.stdout.isatty()
+        if is_file and not terminal:
+            # A pipe receives the exact authorized source, including its line endings.
+            stream = getattr(sys.stdout, "buffer", None)
+            if stream is None:
+                sys.stdout.write(answer)
+                sys.stdout.flush()
+            else:
+                stream.write(answer.encode("utf-8"))
+                stream.flush()
+        else:
+            text = terminal_text(answer) if terminal else answer
+            end = "" if is_file and (not text or text.endswith("\n")) else "\n"
+            print(text, end=end, flush=True)
         settled = True
 
     def interrupt():
@@ -516,8 +538,7 @@ def _subcommand(argv: list[str]) -> None:
         "--base-dir", type=Path, default=Path.home() / ".local" / "share" / "harness"
     )
     if command == "improvements":
-        from harness.blobs import BlobStore
-        from harness.improvement_journal import inspect_improvement, read_improvements, render_improvements
+        from harness.improvement_journal import inspect_session_improvement, read_improvements, render_improvements
         parser.add_argument("session_id")
         modes = parser.add_mutually_exclusive_group()
         modes.add_argument("--show", metavar="RECORD_ID")
@@ -550,17 +571,16 @@ def _subcommand(argv: list[str]) -> None:
             return
         if args.turn is not None:
             parser.error("--turn requires --feedback or --failure")
-        state = read_improvements(args.base_dir, SessionId(args.session_id))
         if args.show:
             root = args.base_dir / "sessions" / args.session_id / "blobs"
             if not root.is_dir():
                 parser.error("session blob directory is missing")
             try:
-                print(inspect_improvement(state, BlobStore(root), args.show))
+                print(inspect_session_improvement(args.base_dir, SessionId(args.session_id), args.show))
             except ValueError as exc:
                 parser.error(str(exc))
         else:
-            print(render_improvements(state))
+            print(render_improvements(read_improvements(args.base_dir, SessionId(args.session_id))))
     elif command == "stats":
         parser.add_argument("--tag", default=None)
         args = parser.parse_args(rest)
@@ -599,11 +619,12 @@ def _subcommand(argv: list[str]) -> None:
 
 
 def _run_main() -> None:
-    parser = argparse.ArgumentParser(prog="harness", epilog=(
-        "Portable continuation: harness export SESSION_ID NEW_FILE.zip [--task ID]. "
-        "Use 'harness export --help' for details. "
-        "Source authorship: harness improve --help. Supervised source changes: harness improve-source --help; "
-        "launch a selected snapshot with harness run-source --help."))
+    commands = "\n".join(f"  {name:<15} {description}" for name, (description, _) in COMMANDS.items())
+    parser = argparse.ArgumentParser(
+        prog="harness", description="Work with Saoirse in your terminal.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=f"Commands (use harness COMMAND --help for options):\n{commands}",
+    )
     parser.add_argument("-p", "--prompt", default=None)
     parser.add_argument("--resident-config", type=Path,
                         help="Resident defaults (normally ~/.config/harness/resident.toml).")
@@ -767,8 +788,10 @@ def _run_main() -> None:
             catalog = Catalog.load(args.catalog)
         except FileNotFoundError:
             raise SystemExit(
-                f"catalog not found at {args.catalog}; create it or pass --catalog <path>"
-            )
+                f"catalog not found at {args.catalog}; run harness setup or pass --catalog <path>"
+            ) from None
+        except OSError as exc:
+            raise SystemExit(f"Cannot read {args.catalog}: {exc.strerror}. Check --catalog.") from None
         try:
             resolved = catalog.resolve(selected_alias)
         except UnknownAliasError:
@@ -793,7 +816,9 @@ def _run_main() -> None:
             raise SystemExit(
                 f"routing default {routing_rules.default!r} needs a catalog; "
                 f"none at {args.catalog} (pass --catalog <path>)"
-            )
+            ) from None
+        except OSError as exc:
+            raise SystemExit(f"Cannot read {args.catalog}: {exc.strerror}. Check --catalog.") from None
         try:
             resolved = catalog.resolve(routing_rules.default)
         except UnknownAliasError:
@@ -843,7 +868,7 @@ def _run_main() -> None:
                 loaded_plugins = load_plugins(plugin_dirs)
             except PluginError as exc:
                 raise SystemExit(f"plugin error: {exc}") from exc
-            if loaded_plugins.mcp_servers:
+            if not args.no_mcp and loaded_plugins.mcp_servers:
                 plugin_specs = {s.name: s for s in loaded_plugins.mcp_servers}
                 config_specs = {s.name: s for s in mcp_specs}
                 merged = {**plugin_specs, **config_specs}
@@ -1175,73 +1200,51 @@ def _resources_subcommand(argv: list[str]) -> None:
         raise SystemExit(1)
 
 
+def _module_command(name: str):
+    """Keep commands discoverable without importing every service on startup."""
+    def run(argv):
+        from importlib import import_module
+        import_module(f"harness.{name}").main(argv)
+    return run
+
+
+COMMANDS = {
+    "setup": ("Connect a model or agent and configure a first session.", _module_command("setup_cli")),
+    "doctor": ("Check local first-session configuration.", _module_command("doctor_cli")),
+    "models": ("List model aliases and register installed local models.", _module_command("models_cli")),
+    "status": ("Inspect resident and task status.", _module_command("status_cli")),
+    "tasks": ("Manage tracked tasks and evidence.", _module_command("task_cli")),
+    "resources": ("Inspect local runtime readiness.", _resources_subcommand),
+    "mcp": ("Manage MCP server connections.", _mcp_subcommand),
+    "plugins": ("Inspect and reconcile plugins.", _module_command("plugin_reconciliation")),
+    "import": ("Convert a Claude Code plugin.", _import_subcommand),
+    "budget": ("Inspect usage budgets.", _module_command("budget_cli")),
+    "coordination": ("Inspect delegated work and results.", _module_command("coordination_cli")),
+    "handoff": ("Reconcile interrupted external work.", _module_command("handoff_cli")),
+    "export": ("Export a task continuation package.", _module_command("export_cli")),
+    "semantic": ("Inspect interpretations and assess context or progress.", _module_command("semantic_cli")),
+    "stats": ("Summarize recorded session activity.", lambda argv: _subcommand(["stats", *argv])),
+    "compare": ("Compare two recorded runs.", lambda argv: _subcommand(["compare", *argv])),
+    "outcome": ("Record a session outcome.", lambda argv: _subcommand(["outcome", *argv])),
+    "improvements": ("Review session evidence or record feedback.", lambda argv: _subcommand(["improvements", *argv])),
+    "improve": ("Evaluate supervised prompt changes.", _module_command("improvement_cli")),
+    "improve-source": ("Evaluate supervised source changes.", _module_command("source_improvement_cli")),
+    "run-source": ("Launch a selected source snapshot.", _module_command("source_promotion")),
+}
+
+
 def main() -> None:
-    argv = sys.argv[1:]
-    if argv and argv[0] == "run-source":
-        from harness.source_promotion import main as source_launch_main
-        source_launch_main(argv[1:])
-        return
-    if argv and argv[0] == "improve-source":
-        from harness.source_improvement_cli import main as source_improve_main
-        source_improve_main(argv[1:])
-        return
-    if argv and argv[0] == "budget":
-        from harness.budget_cli import main as budget_main
-        budget_main(argv[1:])
-        return
-    if argv and argv[0] == "plugins":
-        from harness.plugin_reconciliation import main as plugins_main
-        plugins_main(argv[1:])
-        return
-    if argv and argv[0] == "coordination":
-        from harness.coordination_cli import main as coordination_main
-        coordination_main(argv[1:])
-        return
-    if argv and argv[0] == "export":
-        from harness.export_cli import main as export_main
-        export_main(argv[1:])
-        return
-    if argv and argv[0] == "models":
-        from harness.models_cli import main as models_main
-        models_main(argv[1:])
-        return
-    if argv and argv[0] == "handoff":
-        from harness.handoff_cli import main as handoff_main
-        handoff_main(argv[1:])
-        return
-    if argv and argv[0] == "improve":
-        from harness.improvement_cli import main as improve_main
-        improve_main(argv[1:])
-        return
-    if argv and argv[0] == "status":
-        from harness.status_cli import main as status_main
-        status_main(argv[1:])
-        return
-    if argv and argv[0] == "tasks":
-        from harness.task_cli import main as tasks_main
-        tasks_main(argv[1:])
-        return
-    if argv and argv[0] == "semantic":
-        from harness.semantic_cli import main as semantic_main
-        semantic_main(argv[1:])
-        return
-    if argv and argv[0] == "resources":
-        _resources_subcommand(argv[1:])
-        return
-    if argv and argv[0] in ("stats", "compare", "outcome", "improvements"):
-        _subcommand(argv)
-        return
-    if argv and argv[0] == "mcp":
-        _mcp_subcommand(argv[1:])
-        return
-    if argv and argv[0] == "import":
-        _import_subcommand(argv[1:])
-        return
+    from harness.catalog import CatalogConfigError
     from harness.model_selection import ModelSelectionError
     from harness.execution import BudgetExceeded
+
+    argv = sys.argv[1:]
     try:
-        _run_main()
-    except ModelSelectionError as exc:
+        if argv and argv[0] in COMMANDS:
+            COMMANDS[argv[0]][1](argv[1:])
+        else:
+            _run_main()
+    except (CatalogConfigError, ModelSelectionError) as exc:
         raise SystemExit(str(exc)) from None
     except (BudgetExceeded, UsageBudgetConfigError) as exc:
         raise SystemExit(f"stopped: {exc}") from None

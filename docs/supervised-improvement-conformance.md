@@ -2,6 +2,16 @@
 
 The implementation branch starts at committed main `a3b0eb9`. The earlier polish branch at `4bbe3b3` supplies comparison cases. The first independently evaluated change on this branch is `f3c26a1`. [Original design](https://github.com/c-daly/harness/blob/a3b0eb97580a2a5aa5e8eeb231c516b6af32277e/docs/superpowers/plans/2026-09-06-core-agency-roadmap.md#L155-L191)
 
+### Local 8B checks with the ordinary resident profile
+
+| Request | Earlier observation | Result on the polish branch |
+| --- | --- | --- |
+| Current time | The model declined to check. The profile had prepared `bash`. | With project discovery and both memory sources active, Saoirse called `date` and reported the returned time and zone in 7.87 s. |
+| Files in this directory | The model guessed a parent checkout, hit the workspace guard and stopped. An intermediate change still failed when project discovery supplied competing paths. | With the active workspace identified in task context, Saoirse used `glob` with `./*` and no path. It listed both files and the immediate directory in 7.62 s. A nested file and a file in the launch directory were correctly excluded. The follow-up identified the exact bound root in 7.42 s. |
+| Other live fact, refused permission, arithmetic | Controls distinguish a genuine observation from an answer that happens to sound plausible. | The model obtained the running kernel version through `uname -r`. In a separate trial it respected a denied shell call. It answered the arithmetic control without a task tool. These controls ran with project and memory sources unavailable. |
+
+The real operator session and the controlled trials used Qwen3-8B. Local model runs were serial. The directory trial used an explicit workspace separate from the launch directory and retained the original failed attempts. The native retrospective found zero eligible earlier examples in the original session for both reported failures. A worked example can suggest how to check a new workspace, whose contents and permissions still need current evidence.
+
 **Ordinary reply interpretation.** At `3680746`, ten follow-ups produced zero interpretations and zero linked corrections. The rebuild had excluded the polish branch's fixed feedback prompts without restoring ordinary-input coverage. Starting at `bd3f282`, the CLI and terminal invoke the supervised message function on an eligible follow-up. It uses the preceding request, the delivered answer and the new message. A classified correction can enter the improvement journal with its native sources. What would independently confirm a free-form failure when the reply is ambiguous remains an open design question. [Submitted-message interpretation and evaluation gates](https://github.com/c-daly/harness/blob/a3b0eb97580a2a5aa5e8eeb231c516b6af32277e/docs/superpowers/plans/2026-09-06-core-agency-roadmap.md#L340-L373)
 
 | Comparison | Main or incumbent | Candidate | Interpretation |

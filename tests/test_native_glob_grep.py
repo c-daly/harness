@@ -24,6 +24,43 @@ async def test_glob_recursive_returns_absolute_paths(tmp_path):
     assert str(root / "src" / "b.py") in out
 
 
+async def test_glob_lists_only_immediate_visible_files_and_directories(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    root = tmp_path / "checkout"
+    root.mkdir()
+    _tree(root)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret").touch()
+    (root / "linked-dir").symlink_to(outside, target_is_directory=True)
+    (root / "linked-file").symlink_to(outside / "secret")
+    iterdir = Path.iterdir
+
+    def only_workspace_root(directory):
+        assert directory == root, f"direct listing descended into {directory}"
+        return iterdir(directory)
+
+    monkeypatch.setattr(Path, "iterdir", only_workspace_root)
+    tool = GlobTool(workspace_root=root)
+    header, *entries = (await tool({"pattern": "./*"})).splitlines()
+    assert "Immediate entries" in header and "2 of 2" in header
+    assert entries == [str(root / "README.md"), f"{root}/src/"]
+    with pytest.raises(ToolError, match="outside"):
+        await tool({"pattern": "./*", "path": "linked-dir"})
+
+
+async def test_immediate_listing_filters_names_and_reports_truncation(tmp_path, monkeypatch):
+    import harness.native_tools as native
+
+    root = _tree(tmp_path)
+    monkeypatch.setattr(native, "_GLOB_CAP", 1)
+    tool = GlobTool(workspace_root=root)
+    header, shown = (await tool({"pattern": "./*.py", "path": "src"})).splitlines()
+    assert "1 of 2" in header and shown == str(root / "src" / "a.py")
+    assert "No immediate entries matched" in await tool({"pattern": "./*.py"})
+
+
 async def test_glob_excludes_git_and_node_modules(tmp_path):
     root = _tree(tmp_path)
     out = await GlobTool(workspace_root=root)({"pattern": "**/*.py"})

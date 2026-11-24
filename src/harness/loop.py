@@ -244,7 +244,7 @@ class AgentLoop:
             capabilities = {"handoff_scope": capture_scope(self.dispatcher)}
             if project := await current_project(self.workspace_root):
                 capabilities["project"] = project
-            return await execute_task(
+            result = await execute_task(
                 self.session, task, runtime="harness", model=self.model,
                 purpose="conversation" if primary_conversation.get() == (self.dispatcher, task.id) else "task",
                 activity=self.dispatcher.scope.budget.activity,
@@ -254,6 +254,9 @@ class AgentLoop:
                 capabilities=capabilities,
                 execute=lambda: self._run_task_body(task, on_progress, project, _reply_to_seq),
             )
+            if result.presented_file is not None:
+                result.presented_file.mark_transcript(self.history, output=result.output)
+            return result
         finally:
             self._task_active = False
             self.active_model = None
@@ -282,17 +285,21 @@ class AgentLoop:
                     pass  # observers do not control execution
 
         try:
-            from harness.resident import fetch_context
+            from harness.resident import fetch_context, workspace_context
             resident_context = await fetch_context(self.dispatcher) if max_iterations else ()
             example_context = None
+            workspace = None
             if max_iterations and self.dispatcher.owns_primary_coordination():
                 from harness.experience_context import ordinary_examples
                 example_context = await ordinary_examples(self, task, project)
+                workspace = workspace_context(self.registry)
             for iteration in range(1, max_iterations + 1):
+                execution_kind = execution_kind_for(self.provider, fallback.model)
                 prefix = [
                     Message.system_text(self.system_prompt),
                     *task.context,
                     *resident_context,
+                    *([workspace] if workspace is not None and execution_kind != "agent" else []),
                     *([Message.system_text("Task acceptance criteria:\n" +
                                            "\n".join(f"- {c}" for c in task.acceptance_criteria))]
                       if task.acceptance_criteria else []),
@@ -302,7 +309,7 @@ class AgentLoop:
                     if policy.response is not None and policy.response.instructions is not None:
                         prefix.append(Message.system_text("Response instructions:\n" + policy.response.instructions))
                     from harness.context import prepare_context
-                    tools = self.dispatcher.conversation_tools(self.registry.specs(), execution_kind_for(self.provider, fallback.model))
+                    tools = self.dispatcher.conversation_tools(self.registry.specs(), execution_kind)
                     prepared = prepare_context(prefix, self.history[history_start:], tools, policy,
                                                max_input_bytes=task.limits.max_input_bytes,
                                                blobs=self.session.blobs)
@@ -441,6 +448,13 @@ class AgentLoop:
                             is_error=outcome.is_error,
                         )
                     )
+                # A sole native display read can deliver the source directly. A turn
+                # using advisory examples still follows the checked delivery path above.
+                if (len(outcomes) == 1 and outcomes[0].presented_file is not None
+                        and self.dispatcher.owns_primary_coordination() and not task.acceptance_criteria
+                        and not task.handoff_id and not (example_context and example_context.received)):
+                    source = outcomes[0]
+                    return AgentOutput(source.read_text(), usage=usage, presented_file=source.presented_file)
             self.session.append(
                 ErrorRaised(where="loop", message=f"max iterations ({max_iterations}) reached")
             )

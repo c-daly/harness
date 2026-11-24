@@ -51,6 +51,35 @@ def observations(kernel):
             if env.event.type == "context_source_observed"]
 
 
+@pytest.mark.parametrize("include_glob", [True, False])
+async def test_ordinary_turn_places_its_visible_workspace_after_portfolio_context(tmp_path, include_glob):
+    checkout = tmp_path / "active checkout"
+    checkout.mkdir()
+    lookup = Lookup(f"The project inventory is rooted at {tmp_path / 'portfolio'}.")
+    provider = FakeProvider([text_turn("answer")])
+    tools = ("memory_lookup", "glob") if include_glob else ("memory_lookup",)
+    profile = policy().model_copy(update={"tools": tools})
+    permissions = PermissionEngine([RuleSet(rules=[PermissionRule(action="allow", tool="memory_lookup")])])
+    kernel = await make_kernel(tmp_path / "state", profile=profile, lookup=lookup, provider=provider,
+                               native_tools=True, workspace_root=checkout, permissions=permissions)
+    question = "Which files are here?"
+    try:
+        await kernel.loop.run_conversation(AgentTask(prompt=question))
+        (request,) = provider.calls
+        source_index = next(index for index, message in enumerate(request) if lookup.text in message.text())
+        scope = [message.text() for message in request[source_index + 1:]
+                 if message.role.value == "system" and message.text().startswith("Current workspace:")]
+        if include_glob:
+            assert len(scope) == 1 and repr(str(checkout)) in scope[0] and '"pattern":"./*"' in scope[0]
+        else:
+            assert scope == []
+        assert request[-1].text() == question
+        assert [env.event.text for env in read_session(kernel.session.base, kernel.session.id)
+                if env.event.type == "user_message"] == [question]
+    finally:
+        kernel.session.close()
+
+
 async def test_source_runs_once_before_inference_and_remains_pinned_across_iterations(tmp_path):
     lookup = Lookup()
     provider = FakeProvider([tool_call_turn("step", ToolName("echo"), {}), text_turn("answer")])

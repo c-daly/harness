@@ -546,7 +546,8 @@ async def test_native_sixel_display_uses_textual_widget_not_richlog_controls(
 
     async with app.run_test() as pilot:
         transcript = app.query_one(RichLog)
-        transcript.write(app._render_reply(r"\[\frac{x+1}{y}\]"))
+        source = r"[\[\frac{x+1}{y}\]](#proof)" + "\n\n# Proof\n"
+        app._write_reply(source)
         await pilot.pause(0.1)
         controls = [
             segment.text
@@ -562,6 +563,10 @@ async def test_native_sixel_display_uses_textual_widget_not_richlog_controls(
         assert images[0].image.mode == "RGBA"
         assert images[0].image.getpixel((0, 0))[3] == 0
         assert images[0].children[0].background_colors[1] == transcript.background_colors[1]
+        # The composited Sixel widget receives this click above the RichLog.
+        await pilot.click(offset=images[0].region.offset)
+        await pilot.pause()
+        assert app.screen.query_one("#document-markdown").source == source
 
 
 async def test_sixel_widget_tracks_transcript_scrolling(tmp_path, monkeypatch):

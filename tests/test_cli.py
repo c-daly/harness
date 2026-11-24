@@ -28,6 +28,41 @@ async def test_build_kernel_wires_dispatch_agent_tool(tmp_path):
     assert "dispatch_agent" in [s.name for s in kernel.registry.specs()]
 
 
+async def test_workspace_discovery_supplies_bound_root_and_recovers_from_wrong_checkout(tmp_path):
+    from harness.context import ContextPolicy
+    from harness.provider import tool_call_turn
+
+    checkout = tmp_path / "linked checkout"
+    checkout.mkdir()
+    current_file = checkout / "current.txt"
+    current_file.touch()
+    other = tmp_path / "main"
+    other.mkdir()
+    (other / "unrelated.txt").touch()
+
+    class WorkspaceProvider(FakeProvider):
+        def infer(self, request):
+            (glob,) = request.tools
+            assert glob.name == "glob"
+            assert str(checkout) in glob.parameters["properties"]["path"]["description"]
+            return super().infer(request)
+
+    provider = WorkspaceProvider([
+        tool_call_turn("", "glob", {"pattern": "*", "path": str(other)}, call_id="wrong-root"),
+        tool_call_turn("", "glob", {"pattern": "./*"}, call_id="bound-root"),
+        text_turn("current.txt"),
+    ])
+    kernel = build_kernel(provider=provider, model=ModelId("fake"), base_dir=tmp_path / "state",
+                          workspace_root=checkout, native_tools=True,
+                          context_policy=ContextPolicy(tools=("glob",)))
+    assert await run_once(kernel, "Which files are here?") == "current.txt"
+    wrong_root = provider.calls[1][-1].blocks[0]
+    assert wrong_root.is_error and "outside" in wrong_root.text
+    assert str(checkout) in wrong_root.text and "relative" in wrong_root.text
+    bound_root = provider.calls[2][-1].blocks[0]
+    assert not bound_root.is_error and bound_root.text.splitlines()[1:] == [str(current_file)]
+
+
 @pytest.mark.parametrize(("proposed", "rewritten"), [
     ("consult_panel", None), ("dispatch_agent", "read_file"), ("read_file", "escalate"),
 ])
@@ -724,6 +759,36 @@ def test_explicit_demo_prompt_echoes(tmp_path, capsys):
     assert "echo: hello" in capsys.readouterr().out
 
 
+@pytest.mark.parametrize("source", ["# One Ω\r\n\r\nTwo\r\n", "# No final newline", ""])
+def test_prompt_mode_pipes_the_authorized_source_exactly(tmp_path, monkeypatch, source):
+    import io
+    import sys
+    from harness.provider import tool_call_turn
+
+    (tmp_path / "guide.md").write_bytes(source.encode("utf-8"))
+    provider = FakeProvider([tool_call_turn("", "read_file", {"file_path": "guide.md", "display": True})])
+    monkeypatch.setattr("harness.cli.FakeProvider", lambda script: provider)
+    sink = io.BytesIO()
+    monkeypatch.setattr(sys, "stdout", io.TextIOWrapper(sink, encoding="latin-1", newline="\r\n"))
+    run_cli("--demo", "-p", "Show the guide", "--workspace", str(tmp_path), "--base-dir", str(tmp_path / "state"),
+            "--no-plugins", "--no-mcp")
+    assert sink.getvalue() == source.encode("utf-8")
+    assert len(provider.calls) == 1
+
+
+def test_prompt_mode_terminal_neutralizes_file_controls(tmp_path, monkeypatch, capsys):
+    import sys
+    from harness.provider import tool_call_turn
+
+    (tmp_path / "guide.md").write_bytes("one\r\n\ttwo\x1b]8;;\x07 three\x9b four\x7f".encode())
+    provider = FakeProvider([tool_call_turn("", "read_file", {"file_path": "guide.md", "display": True})])
+    monkeypatch.setattr("harness.cli.FakeProvider", lambda script: provider)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
+    run_cli("--demo", "-p", "Show the guide", "--workspace", str(tmp_path), "--base-dir", str(tmp_path / "state"),
+            "--no-plugins", "--no-mcp")
+    assert capsys.readouterr().out == "one\n\ttwo]8;; three four\n"
+
+
 def test_prompt_mode_incomplete_result_prints_partial_output_and_exits_nonzero(tmp_path, monkeypatch, capsys):
     import pytest
     from harness.provider import StreamStop, TextDelta
@@ -747,6 +812,44 @@ def _make_demo_plugin(plugin_dir):
     (plugin_dir / "skills/hello.md").write_text(
         "---\nname: hello\ndescription: A greeting skill\n---\nHello world!"
     )
+
+
+@pytest.mark.parametrize("mode", ["interactive", "headless"])
+@pytest.mark.parametrize("disable_mcp", [False, True], ids=["default", "no-mcp"])
+def test_no_mcp_controls_project_and_plugin_servers_but_keeps_skills(
+    tmp_path, monkeypatch, mode, disable_mcp
+):
+    monkeypatch.chdir(tmp_path)
+    project_config = tmp_path / ".harness"
+    plugin = project_config / "plugins" / "demo"
+    _make_demo_plugin(plugin)
+    with (plugin / "plugin.toml").open("a") as manifest:
+        manifest.write('\n[mcp.servers.extension]\ncommand = "extension-fixture"\n')
+    (project_config / "mcp.toml").write_text('[servers.project]\ncommand = "project-fixture"\n')
+
+    observations = []
+
+    async def inspect_kernel(kernel, *args, **kwargs):
+        try:
+            servers = None if kernel.mcp is None else {s.name for s in kernel.mcp.specs}
+            skill = await kernel.registry.get("invoke_skill")({"name": "hello"})
+            observations.append((servers, skill))
+            return ""
+        finally:
+            kernel.session.close()
+
+    options = ["--demo"]
+    if mode == "headless":
+        options.extend(["-p", "hello"])
+        monkeypatch.setattr("harness.cli._amain", inspect_kernel)
+    else:
+        monkeypatch.setattr("harness.tui.run_tui", inspect_kernel)
+    if disable_mcp:
+        options.append("--no-mcp")
+    run_cli(*options)
+
+    expected = None if disable_mcp else {"extension", "project"}
+    assert observations == [(expected, "# Skill: hello\n\nHello world!")]
 
 
 def test_no_plugins_flag_and_plugin_dir(tmp_path, monkeypatch):

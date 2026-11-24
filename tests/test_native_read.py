@@ -47,6 +47,106 @@ async def test_empty_file_returns_sentinel_not_error(tmp_path):
     assert out == "File exists but is empty."
 
 
+@pytest.mark.parametrize(("contents", "window", "expected"), [
+    ("", {}, ""),
+    ("\tfirst\r\n\n  last", {}, "\tfirst\r\n\n  last"),
+    ("first\nsecond\nlast", {"offset": 2, "limit": 1}, "second\n"),
+    ("x" * 2400 + "\n", {}, "x" * 2400 + "\n"),
+])
+async def test_display_preserves_source_text(tmp_path, contents, window, expected):
+    (tmp_path / "doc").write_bytes(contents.encode())
+    assert await _tool(tmp_path)({"file_path": "doc", "display": True, **window}) == expected
+
+
+async def test_display_never_silently_truncates_a_whole_file(tmp_path):
+    path = tmp_path / "doc"
+    path.write_text("x\n" * 2001)
+    with pytest.raises(ToolError, match="range"):
+        await _tool(tmp_path)({"file_path": "doc", "display": True})
+    path.write_text("x" * 50_001)
+    with pytest.raises(ToolError, match="over"):
+        await _tool(tmp_path)({"file_path": "doc", "display": True})
+
+
+async def test_missing_platform_support_limits_only_display(tmp_path, monkeypatch):
+    import os
+
+    (tmp_path / "notes").write_text("current\n")
+    monkeypatch.delattr(os, "O_NONBLOCK", raising=False)
+    read = _tool(tmp_path)
+    with pytest.raises(ToolError, match="platform"):
+        await read({"file_path": "notes", "display": True})
+    assert await read({"file_path": "notes"}) == "     1\tcurrent"
+
+
+async def test_display_rejects_a_named_pipe_without_opening_it(tmp_path):
+    import os
+
+    if not hasattr(os, "mkfifo"):
+        pytest.skip("named pipes require POSIX")
+    os.mkfifo(tmp_path / "stream")
+    with pytest.raises(ToolError, match="regular text file"):
+        await _tool(tmp_path)({"file_path": "stream", "display": True})
+
+
+async def test_sparse_read_hashes_the_entire_file_with_bounded_reads(tmp_path, monkeypatch):
+    import hashlib
+    import io
+    from harness import native_tools
+    from harness.native_tools import ReadState
+
+    path = tmp_path / "sparse.txt"
+    with path.open("wb") as source:
+        source.write(b"first\n")
+        source.seek(8 * 1024 * 1024)
+        source.write("\n  café\r\nunshown".encode())
+    with path.open("rb") as source:
+        version = hashlib.file_digest(source, "sha256").hexdigest()
+
+    class BoundedReader(io.BufferedReader):
+        def read(self, size=-1):
+            assert 0 < size <= 256 * 1024, "unbounded file read"
+            return super().read(size)
+
+        def readline(self, size=-1):
+            assert 0 < size <= 256 * 1024, "unbounded line read"
+            return super().readline(size)
+
+    opened = []
+    original_open = native_tools._open_display_file
+
+    def checked_open(target):
+        opened.append(target)
+        return BoundedReader(original_open(target).detach())
+
+    monkeypatch.setattr(native_tools, "_open_display_file", checked_open)
+    state = ReadState()
+    reader = ReadFileTool(workspace_root=tmp_path, read_state=state)
+    assert await reader({"file_path": path.name, "offset": 3, "limit": 1, "display": True}) == "  café\r\n"
+    assert opened == [path] and state.version(str(path)) == version
+
+
+@pytest.mark.parametrize("swap_directory", [False, True])
+async def test_display_open_refuses_changed_path_components(tmp_path, monkeypatch, swap_directory):
+    from harness import native_tools
+
+    for directory in ("source", "other"):
+        (tmp_path / directory).mkdir()
+        (tmp_path / directory / "doc").write_text(directory)
+    source = tmp_path / "source" / "doc"
+    original_open = native_tools._open_display_file
+    def after_check(path):
+        selected = path.parent if swap_directory else path
+        replacement = tmp_path / "other" if swap_directory else tmp_path / "other" / "doc"
+        selected.rename(tmp_path / "original")
+        selected.symlink_to(replacement, target_is_directory=swap_directory)
+        return original_open(path)
+
+    monkeypatch.setattr(native_tools, "_open_display_file", after_check)
+    with pytest.raises(ToolError, match="could not read"):
+        await _tool(tmp_path)({"file_path": str(source), "display": True})
+
+
 async def test_offset_past_eof_raises(tmp_path):
     (tmp_path / "a.txt").write_text("one\ntwo\n")
     with pytest.raises(ToolError) as exc:
@@ -66,6 +166,8 @@ async def test_non_utf8_decodes_with_replacement(tmp_path):
     (tmp_path / "b.bin").write_bytes(b"ok\xff\xfetext\n")
     out = await _tool(tmp_path)({"file_path": "b.bin"})
     assert "ok" in out and "text" in out  # replacement chars, no crash
+    with pytest.raises(ToolError, match="invalid UTF-8"):
+        await _tool(tmp_path)({"file_path": "b.bin", "display": True})
 
 
 async def test_oversize_file_refuses_with_guidance(tmp_path):

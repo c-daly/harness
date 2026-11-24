@@ -2,6 +2,7 @@
 
 from harness.events import Envelope, ToolCallCompleted, ToolCallProposed
 from harness.fold import fold
+from harness.messages import FilePresentation
 from harness.types import CallId, SessionId, ToolName
 
 S = SessionId("s1")
@@ -43,6 +44,23 @@ def test_read_paths_excludes_errored_read(tmp_path):
         ),
     ]
     assert "/w/missing.txt" not in fold(envs).read_paths
+
+
+def test_operator_links_do_not_seed_agent_read_paths_on_resume():
+    events = []
+    for purpose, display, operator_view, path in (
+        ("context", True, True, "/w/operator.txt"),
+        ("context", False, False, "/w/resident.txt"),
+        ("context", True, False, "/w/context-display.txt"),
+        ("conversation", True, False, "/w/agent.txt"),
+    ):
+        call = CallId(path)
+        events.append(ToolCallProposed(call_id=call, tool=ToolName("read_file"), purpose=purpose,
+                                       args={"file_path": path, "display": display}))
+        events.append(ToolCallCompleted(call_id=call, result_text="source", operator_view=operator_view, presented_file=(
+            FilePresentation(call_id=call, file_path=path) if display else None)))
+    state = fold([_env(seq, event) for seq, event in enumerate(events, start=1)])
+    assert state.read_paths == {"/w/resident.txt", "/w/context-display.txt", "/w/agent.txt"}
 
 
 def test_write_completion_marks_path_read(tmp_path):

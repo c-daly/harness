@@ -162,7 +162,13 @@ def render_improvements(state: ImprovementState) -> str:
     return "\n".join(lines)
 
 
-def inspect_improvement(state: ImprovementState, blobs, record_id: str) -> str:
+def inspect_session_improvement(base: Path, session_id: SessionId, record_id: str) -> str:
+    envelopes = read_session(base, session_id, repair=False)
+    blobs = BlobStore(Path(base) / "sessions" / str(session_id) / "blobs", create=False)
+    return inspect_improvement(project_improvements(envelopes, blobs=blobs), blobs, record_id, envelopes=envelopes)
+
+
+def inspect_improvement(state: ImprovementState, blobs, record_id: str, *, envelopes=()) -> str:
     """Show immutable claims, prompt bytes, gates and measurements without inference."""
     from harness.prompt_improvement import load_function_prompt
     from harness.telemetry import _safe
@@ -175,6 +181,12 @@ def inspect_improvement(state: ImprovementState, blobs, record_id: str) -> str:
         from harness.source_authorship import inspect_authoring
         return _safe(inspect_authoring(state, blobs, record))
     lines = [record.model_dump_json(indent=2)]
+    if isinstance(record, Evidence) and record.category == "failure" and envelopes and record.source_session == envelopes[0].session_id:
+        from harness.improvement_outcomes import checked_failure_turn, failure_tool_choices
+        finish_seq = (record.source_seq if record.id.startswith("failure:")
+                      else checked_failure_turn(record, envelopes, blobs))
+        if finish_seq is not None:
+            lines += failure_tool_choices(envelopes, finish_seq)
     from harness.source_improvement import is_source_patch
 
     def source_candidate(candidate):

@@ -73,6 +73,57 @@ def test_confirmed_flaw_records_failure_once_and_keeps_the_original_reply(tmp_pa
     assert read_improvements(tmp_path, sid).evidence[error.id] == error
 
 
+@pytest.mark.parametrize("blocked", [False, True])
+async def test_failure_inspection_shows_the_tools_offered_and_chosen_in_that_turn(tmp_path, blocked):
+    from harness.events import ModelCallCompleted
+    from harness.improvement_feedback import record_feedback
+    from harness.improvement_journal import inspect_session_improvement
+    from harness.improvement_outcomes import failure_tool_choices
+    from harness.provider import FakeProvider, text_turn, tool_call_turn
+    from tests.test_semantics import kernel_for
+
+    args = {"pattern": "confidential-pattern", "path": str(tmp_path.parent) if blocked else "."}
+    provider = FakeProvider([tool_call_turn("", "glob", args), text_turn("I cannot check.")])
+    kernel = await kernel_for(tmp_path / "state", provider, native_tools=True, workspace_root=tmp_path)
+    try:
+        await kernel.loop.run_conversation(kernel.tasks.prepare("Which file is active?"))
+        saved = record_feedback(kernel.improvements, "The reply ignored the listing.", failure=True, receipt=True)
+        base, sid = kernel.session.base, kernel.session.id
+        rows = read_session(base, sid)
+        calls = [r.event for r in rows if isinstance(r.event, ModelCallCompleted)]
+        assert len(calls) == 2
+        assert all(call.offered_tools and "glob" in call.offered_tools for call in calls)
+        report = inspect_session_improvement(base, sid, saved.evidence.id)
+        assert report.count("Harness offered") == 2
+        assert "Model requested glob." in report and "Model requested none." in report
+        proposal, = [r for r in rows if r.event.type == "tool_call_proposed"]
+        terminal, = [r for r in rows if r.event.type == "tool_call_completed"]
+        assert f"glob native proposal at event {proposal.seq}" in report
+        if blocked:
+            gate, = [r for r in rows if r.event.type == "hook_decided" and r.event.decision.get("kind") == "block"]
+            assert f"blocked by workspace-guard at event {gate.seq}, error at event {terminal.seq}" in report
+        else:
+            assert f"completed without error at event {terminal.seq}" in report
+        assert args["pattern"] not in report and str(tmp_path.parent) not in report
+        # Older sessions only recorded the tools that passed context preparation.
+        historical = [r.model_copy(update={"event": r.event.model_copy(update={"offered_tools": None})})
+                      if isinstance(r.event, ModelCallCompleted) else r for r in rows]
+        legacy = "\n".join(failure_tool_choices(historical, saved.evidence.source_seq))
+        assert "Harness offered" not in legacy and "Model requested glob." in legacy
+        assert "final offer unrecorded" in legacy or "tool inventory unrecorded" in legacy
+        foreign = proposal.model_copy(update={"event": proposal.event.model_copy(update={"agent_run_id": "other"})})
+        for events in ([foreign if r is proposal else r for r in rows],
+                       [*rows[:rows.index(proposal)], foreign, *rows[rows.index(proposal):]]):
+            choices = "\n".join(failure_tool_choices(events, saved.evidence.source_seq))
+            assert "Model requested glob." in choices and "native proposal at event" not in choices
+        malformed = calls[0].model_copy(update={"message": {**calls[0].message, "role": "user"}})
+        events = [r.model_copy(update={"event": malformed}) if r.event is calls[0] else r for r in rows]
+        choices = "\n".join(failure_tool_choices(events, saved.evidence.source_seq))
+        assert "Model requested unavailable." in choices and "native proposal at event" not in choices
+    finally:
+        kernel.session.close()
+
+
 async def test_terminal_feedback_keeps_literal_prose_and_applies_the_active_redactor(tmp_path):
     from tests.test_tui import make_app
     from tests.test_tui_improvements import submit

@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from harness.catalog import Catalog, ResolvedModel, UnknownAliasError, UnknownBackendError
+from harness.catalog import Catalog, CatalogConfigError, ResolvedModel, UnknownAliasError
 from harness.events import ModelSelected
 from harness.fold import fold
 from harness.log import SessionLock, read_session
@@ -37,7 +37,9 @@ def load_selected_catalog(
         raise ModelSelectionError(
             f"saved model {selection.model!r} is absent from the catalog. {remedy}"
         ) from None
-    except (OSError, ValueError, KeyError, TypeError, AttributeError, UnknownBackendError) as exc:
+    except CatalogConfigError as exc:
+        raise ModelSelectionError(f"{exc}. {remedy}") from None
+    except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
         # Catalog errors can include raw TOML/endpoint text; don't expose it here.
         raise ModelSelectionError(
             f"saved model {selection.model!r} cannot be configured ({type(exc).__name__}). {remedy}"

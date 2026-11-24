@@ -26,6 +26,10 @@ uv run harness --help   # run the CLI through uv
 `uv run harness` is the entry point throughout this guide. If you install the
 package (`uv pip install -e .`), the `harness` command is available directly.
 
+Run `uv run harness setup` to connect a local endpoint, a subscription, or an
+API model. Setup prints a launch command for the configured alias.
+`uv run harness doctor` checks the configuration locally before the first prompt.
+
 ---
 
 ## Running a session
@@ -104,6 +108,9 @@ tool calls, and answer permission prompts inline. Key bindings:
   delimiters inside inline/fenced code, escaped dollars, and ordinary currency
   are left alone. Unsupported or malformed LaTeX falls back to its original
   source instead of breaking the reply.
+- `/links` lists the destinations in the most recent reply or document containing links. Select a link with the arrow keys and press Enter to open it, or C to copy the address. Rendered links also respond to a click. If a browser cannot open a web address, the picker keeps it available to copy.
+- In a displayed Markdown file, relative links start in that file’s directory. Opening another file goes through the normal `read_file` permissions and workspace boundaries. Saoirse must still read the current version herself before overwriting it, even if you just viewed it. Section links jump to a heading in the displayed text. Press L for links in the document and Esc to go back. Navigation works on resumed replies and requires no model call.
+- `/copy-code` copies a fenced example from the transcript. Press Y in the document reader to copy an example there. When several examples are available, choose one from the list. Copying preserves indentation and line endings.
 - `/clear` — end the current session cleanly and start a fresh one: new
   session id, empty history, but the same provider instance, permission
   engine, and resolver wiring the app started with (kernel rebuild-in-place,
@@ -235,7 +242,7 @@ uv run harness --model sonnet -p "..."
 uv run harness --model gpt -p "..."
 ```
 
-The `route` is a [LiteLLM](https://docs.litellm.ai/) model string. It selects
+These `route` values are [LiteLLM](https://docs.litellm.ai/) model strings. Each selects
 Anthropic, OpenAI-compatible endpoints, local servers, or another supported
 adapter; actual compatibility still requires a working endpoint and suitable
 model. Point at a different catalog with `--catalog PATH`.
@@ -272,10 +279,11 @@ models and quantization comparisons remain on the
 
 | Field | Meaning |
 |---|---|
-| `route` (required) | The LiteLLM model string the alias maps to. |
+| `route` (required) | Model identifier for the selected connection. The default transport takes a LiteLLM model string. |
+| `transport` | `"claude-cli"` with `route = "claude-cli/default"` or a specific Claude model connects Saoirse to a signed-in subscription through the SDK with direct CLI fallback. |
 | `api_base` | Custom endpoint base URL — for OpenAI-compatible or local servers. |
-| `api_key_env` | Name of the env var holding the API key (a *name*, never the key itself). |
-| `backend` | Selects a non-LiteLLM provider implementation: `"claude-code"` runs turns through the local, logged-in Claude Code CLI on subscription auth (see [Claude on your Claude Code subscription](#claude-on-your-claude-code-subscription)); `"codex"` runs turns through the local, logged-in Codex CLI on subscription auth (see [Codex on your ChatGPT subscription](#codex-on-your-chatgpt-subscription)); `"antigravity"` runs turns through the local, logged-in Antigravity (`agy`) CLI on Google-account subscription auth (see [Antigravity (Gemini) backend](#antigravity-gemini-backend)). Either way `route` becomes `<backend>/<model>` instead of a LiteLLM string. Absent → the LiteLLM route above. |
+| `api_key_env` | Name of the environment variable holding this connection's API key. A missing or blank value stops the request before contacting the provider. |
+| `backend` | Runs an external agent through the signed-in `claude-code`, `codex` or `antigravity` backend. Its `route` is `<backend>/<model>`. |
 | `tags` | Free-form capability labels you can use to organize aliases. |
 | `input_cost_per_token` / `output_cost_per_token` | Pricing overrides. |
 | `max_input_tokens` | Context-window override. |
@@ -414,13 +422,17 @@ available to callers of `build_kernel`.
 
 | Tool | What it does |
 |---|---|
-| `read_file` | Read a file, `cat -n` style, with `offset`/`limit` windowing |
+| `read_file` | Read numbered lines for analysis, or present the source with `display=true`. `offset` and `limit` select a line range. |
 | `write_file` | Create or overwrite a file (overwrite requires a prior read) |
 | `edit_file` | Replace an exact string in a file (must be unique unless `replace_all`) |
 | `glob` | Find files by glob pattern, newest first |
 | `grep` | Search file contents with a Python regex |
 | `bash` | Run a shell command with a timeout and output cap |
 | `todo` | Maintain a task list (reconstructed from the event log) |
+
+When you ask to see a file, Saoirse can request it for display as her final action. Harness delivers the authorized UTF-8 text directly, subject to redaction and size limits. In `harness -p`, a pipe receives the text with its original line endings. A normal read lets Saoirse continue working on a question about the file. Tasks with acceptance criteria and turns using advisory examples retain their usual checks before delivery.
+
+A displayed read supports up to 50,000 bytes, with a default limit of 2,000 lines. If a linked file exceeds the limit, ask Saoirse to show a line range, such as “Show lines 200–300 of the guide.”
 
 Native file tools accept absolute paths under the primary workspace or an
 explicitly configured extra root. `read_file`, `glob`, and `grep` can use read
@@ -611,6 +623,31 @@ model and last observed call cannot reliably reconstruct `/model` choices or pin
 
 ## Claude on your Claude Code subscription
 
+### Use Claude as Saoirse's model
+
+On Linux or WSL, install the Claude CLI and sign in with a subscription. These
+commands register the account's default model, check the connection settings,
+and start a Saoirse task.
+
+```bash
+uv run harness setup cli my-claude
+uv run harness doctor --model my-claude
+uv run harness --model my-claude -p "Read the README and summarize how to run this project."
+```
+
+The standard Harness installation includes the Claude Agent SDK. Saoirse sends
+one model request at a time through the SDK and the signed-in CLI. Harness
+executes permitted tool calls and supplies their results to the next request.
+The same alias works in the terminal and in headless sessions.
+
+If the SDK is unavailable, or the CLI rejects SDK initialization as incompatible
+before receiving a prompt, Harness uses the same executable and model directly.
+Once submission begins, a failed request ends that attempt. Account limits and
+charges depend on the subscription. Use `harness setup api` to configure a
+separate API-key connection.
+
+### Run the external Claude Code agent
+
 Entries with `backend = "claude-code"` run turns through your locally
 installed, logged-in Claude Code CLI (headless `claude -p`) instead of an
 API. The harness serves its own tools to Claude over MCP and requests that
@@ -625,8 +662,6 @@ with `claude` once and the backend uses that.
 [models.claude]
 backend = "claude-code"
 route = "claude-code/default"   # "claude-code/<model>" passes --model <model>
-input_cost_per_token = 0.0      # subscription: flat-rate, no per-token cost
-output_cost_per_token = 0.0
 tags = ["anthropic", "subscription", "tool-calling", "frontier"]
 ```
 

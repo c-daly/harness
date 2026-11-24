@@ -384,6 +384,16 @@ async def _acomplete(
                     await owned_http.aclose()
 
 
+def _configured_api_key(env_name: str | None) -> str | None:
+    if env_name is None:
+        return None
+    key = os.environ.get(env_name)
+    if not key or not key.strip():
+        raise AuthFailed("Set the credential environment variable named by api_key_env, "
+                         "then start Harness from that environment and retry.")
+    return key
+
+
 @dataclass
 class LiteLLMProvider:
     api_base: str | None = None
@@ -392,7 +402,7 @@ class LiteLLMProvider:
     def infer(self, request: "InferenceRequest") -> AsyncIterator[Chunk]:
         return _acomplete(model=request.model, messages=request.messages, tools=request.tools,
                           api_base=self.api_base,
-                          api_key=os.environ.get(self.api_key_env) if self.api_key_env else None,
+                          api_key=_configured_api_key(self.api_key_env),
                           request=request)
 
     async def complete(
@@ -404,7 +414,7 @@ class LiteLLMProvider:
     ) -> AsyncIterator[Chunk]:
         async with aclosing(_acomplete(
             model=model, messages=messages, tools=tools, api_base=self.api_base,
-            api_key=os.environ.get(self.api_key_env) if self.api_key_env else None,
+            api_key=_configured_api_key(self.api_key_env),
         )) as source:
             async for chunk in source:
                 yield chunk
@@ -447,16 +457,29 @@ class CatalogProvider:
         except UnknownAliasError:
             return "unknown"
 
-    async def infer(self, request: "InferenceRequest") -> AsyncIterator[Chunk]:
+    def _model_connection(self, model: ModelId):
         try:
-            resolved = self.catalog.resolve(str(request.model))
+            return self.catalog.resolve(str(model))
         except UnknownAliasError:
-            resolved = None
+            if str(model).startswith("claude-cli/"):
+                raise ProviderError("Register a CLI model with 'harness setup cli' and select its alias.") from None
+            return None  # Other literal provider routes use the caller's ambient configuration.
+
+    async def infer(self, request: "InferenceRequest") -> AsyncIterator[Chunk]:
+        resolved = self._model_connection(request.model)
         if resolved is not None and resolved.execution_kind != "inference":
             raise ProviderError(f"{request.model!r} is an agent runtime, not a model inference route")
+        if resolved is not None and resolved.transport == "claude-cli":
+            from harness.provider_cli_model import ClaudeCliModelProvider
+            routed = request.model_copy(update={"model": resolved.route})
+            async with aclosing(ClaudeCliModelProvider().infer(routed)) as stream:
+                async for chunk in stream:
+                    yield chunk
+            return
         from contextlib import nullcontext
         from harness.execution import current_model_call_id, current_scope
         from harness.scheduling import request_priority
+        key = _configured_api_key(resolved.api_key_env) if resolved is not None else None
         readiness = nullcontext()
         started = time.monotonic()
         if resolved is not None and resolved.local is not None:
@@ -466,7 +489,6 @@ class CatalogProvider:
             readiness = scope.resources.use(resolved, emit=scope.session.append,
                 priority=request_priority(request.purpose, scope.depth), timeout_seconds=request.timeout_seconds,
                 call_id=current_model_call_id.get())
-        key = os.environ.get(resolved.api_key_env) if resolved and resolved.api_key_env else None
         if resolved and resolved.api_base and key is None:
             key = "local-no-key"
         async with readiness:
@@ -497,10 +519,8 @@ class CatalogProvider:
         messages: Sequence[Message],
         tools: Sequence[ToolSpec] = (),
     ) -> AsyncIterator[Chunk]:
-        try:
-            resolved = self.catalog.resolve(str(model))
-        except UnknownAliasError:
-            # not a catalog alias: treat the string as a literal route on ambient env
+        resolved = self._model_connection(model)
+        if resolved is None:
             async with aclosing(_acomplete(model=model, messages=messages, tools=tools)) as source:
                 async for chunk in source:
                     yield chunk
@@ -514,6 +534,14 @@ class CatalogProvider:
                 model=resolved.route, messages=messages, tools=tools
             )) as source:
                 async for chunk in source:
+                    yield chunk
+            return
+        if resolved.transport == "claude-cli":
+            from harness.inference import InferenceRequest
+            request = InferenceRequest(model=model, messages=tuple(messages), tools=tuple(tools),
+                                       tool_choice="auto" if tools else "none", purpose="completion")
+            async with aclosing(self.infer(request)) as stream:
+                async for chunk in stream:
                     yield chunk
             return
         if resolved.backend == "codex":
@@ -540,7 +568,7 @@ class CatalogProvider:
             return
         if resolved.local is not None:
             raise ProviderError("local profiles require bounded inference through a dispatcher")
-        api_key = os.environ.get(resolved.api_key_env) if resolved.api_key_env else None
+        api_key = _configured_api_key(resolved.api_key_env)
         if resolved.api_base and api_key is None:
             # litellm openai/* routes refuse to run without SOME api_key, even
             # against a local api_base; local servers ignore the value. Local

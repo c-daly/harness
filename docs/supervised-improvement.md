@@ -30,6 +30,8 @@ For a confirmed flawed response, use `/improvements failure [--turn SEQ] TEXT` o
 
 Both failure commands save the observation first. They then attempt a retrospective using the selected local inference model if it is ready and permitted. Repeating the command preserves the existing evidence and assessment. The explicit review command below can revisit the failure later.
 
+Use `/improvements show FAILURE_ID` to see which tools Harness offered on each completed native model call and which tools Saoirse requested. A matching dispatch receipt identifies a block, permission denial or execution outcome by journal event. This inspection works offline. Older journals can show which tools passed context preparation even when they lack a record of the final offer. A tool's availability and an advisor's explicit recommendation are separate facts. A response that passes up a useful check can be investigated without assigning the model a motive.
+
 ### Looking up prior experience
 
 An ordinary Saoirse turn can use several earlier situations, actions and outcomes as worked examples. Harness allows this by default after checking the scope of the records. Native context selection proposes relevant examples and can abstain. A selected example can suggest a check. Only fresh evidence can establish the current answer. Look for the assessment in `/semantics` and the `supervised-examples` event to see what reached context preparation for the selected model. Changes to this default go through supervised evaluation and adoption.
