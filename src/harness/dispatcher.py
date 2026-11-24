@@ -665,11 +665,16 @@ class Dispatcher:
                 exc.call_id, exc.model, exc.execution_kind = call.call_id, effective_model, execution_kind
             raise
         # Outside the exception scope: a failing log write cannot emit a second terminal fact.
+        offered_tools = None
+        if purpose == "conversation" and execution_kind == "inference":
+            selectable = request.tool_choice == "auto" and request.response_schema is None
+            offered_tools = tuple(spec.name for spec in request.tools) if selectable else ()
         self.session.append(
             ModelCallCompleted(
                 call_id=call.call_id,
                 model=effective_model,
                 message=message.model_dump(),
+                offered_tools=offered_tools,
                 response_deferred=defer_response,
                 usage=usage.as_dict(),
                 stop_reason=stop_reason,

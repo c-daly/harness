@@ -9,7 +9,7 @@ from harness.events import (
 )
 from harness.improvement_examples import select_examples, session_examples
 from harness.improvement_journal import project_improvements
-from harness.improvement_outcomes import finished_replies
+from harness.improvement_outcomes import failure_tool_choices, finished_replies
 from harness.log import read_session
 from harness.semantic_assessment import ContextSelection, ContextSelectionInput
 from harness.semantics import ASSESSMENT_LIMITS, FailureReviewOrigin
@@ -224,6 +224,7 @@ async def review_failure(kernel, failure_id, *, explicit_model=False):
     scope = (f"Eligible examples from this session's {location} before event {start}: {len(examples)}. "
              f"Examples in the recorded assessment input: {submitted if submitted is not None else 'unavailable'}.")
     lines = [f"Failure {failure_id} remains recorded. Semantic observation {observation.id}.", scope]
+    lines.extend(_safe(line) for line in failure_tool_choices(rows, finish_seq))
     if unreadable:
         lines.append("The original candidate input could not be verified at event(s) " + ", ".join(map(str, unreadable)) + ".")
     for identity in omitted:

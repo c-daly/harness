@@ -27,6 +27,24 @@ def request(**kwargs):
                             purpose="intent", **kwargs)
 
 
+@pytest.mark.parametrize(("choice", "schema"), [("none", None), ("auto", {"type": "string"})])
+async def test_conversation_receipt_excludes_unselectable_tools(tmp_path, choice, schema):
+    from harness.events import ModelCallCompleted
+    from harness.log import read_session
+    from harness.session import Session
+    from harness.tools import ToolSpec
+    from harness.types import SessionId, ToolName
+
+    spec = ToolSpec(name=ToolName("lookup"), description="Read a fact", parameters={"type": "object"})
+    query = request(tools=(spec,), tool_choice=choice, response_schema=schema).model_copy(
+        update={"purpose": "conversation"})
+    with Session(tmp_path, SessionId("selection")) as session:
+        session.start()
+        await make_dispatcher(session).dispatch_inference(provider=FakeProvider([text_turn('"ok"')]), request=query)
+        receipt, = [r.event for r in read_session(tmp_path, session.id) if isinstance(r.event, ModelCallCompleted)]
+        assert receipt.offered_tools == ()
+
+
 async def test_input_limit_rejects_before_provider_call():
     provider = FakeProvider([text_turn("unused")])
     with pytest.raises(ContextOverflow):

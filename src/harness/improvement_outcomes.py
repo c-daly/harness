@@ -1,11 +1,12 @@
 """Expose recorded task outcomes as evidence in the existing improvement journal."""
 
 import hashlib
-from collections import Counter
+from collections import Counter, defaultdict
 
 from harness.events import (
-    AgentRunFinished, AgentRunStarted, ImprovementRecorded, ModelCallCompleted, ModelCallProposed, SemanticObserved,
-    SessionOutcome, SessionStarted, TaskAccepted, TaskChecked, TaskOutcome,
+    AgentRunFinished, AgentRunStarted, ContextPrepared, DispatchResolved, HookDecided, ImprovementRecorded,
+    ModelCallCompleted, ModelCallProposed, PermissionResolved, SemanticObserved, SessionOutcome, SessionStarted,
+    TaskAccepted, TaskChecked, TaskOutcome, ToolCallAborted, ToolCallCancelled, ToolCallCompleted, ToolCallProposed,
 )
 from harness.improvement import Candidate, Evidence, ImprovementState, SourceAuthoring
 from harness.messages import Message, Role
@@ -68,6 +69,102 @@ def checked_failure_turn(evidence, envelopes, blobs):
         failures = _output_failures(tasks.items.get(env.event.task_id), env, prefix, finishes, blobs)
         return next((finish for _, observation, finish in failures if observation == evidence.observation), None)
     return None
+
+
+def _dispatch_receipt(block, facts, run, response_seq, before_seq):
+    """A model proposal alone proves neither dispatch nor a successful tool result."""
+    intents = [row for row in facts if isinstance(row.event, (ToolCallProposed, ModelCallProposed))]
+    if len(intents) != 1:
+        return None
+    intent, = intents
+    call = intent.event
+    if (not isinstance(call, ToolCallProposed) or call.purpose != "conversation"
+            or call.agent_run_id != run.run_id or call.task_id != run.task_id
+            or not response_seq < intent.seq < before_seq or call.tool != block.tool or call.args != block.args):
+        return None
+    # No receipt can precede the native intent or cross into the next model response.
+    if any(not intent.seq <= row.seq < before_seq for row in facts):
+        return None
+    terminals = [row for row in facts if isinstance(row.event, (ToolCallCompleted, ToolCallAborted, ToolCallCancelled))]
+    if len(terminals) > 1 or (terminals and terminals[0].seq != facts[-1].seq):
+        return None
+    details = [f"{call.tool} native proposal at event {intent.seq}"]
+    for row in facts:
+        event = row.event
+        if isinstance(event, HookDecided) and event.decision.get("kind") == "block":
+            details.append(f"blocked by {event.hook} at event {row.seq}")
+        elif isinstance(event, PermissionResolved) and not event.allowed:
+            details.append(f"permission denied at event {row.seq}")
+        elif isinstance(event, DispatchResolved) and event.kind == "tool":
+            details.append(f"dispatch resolved at event {row.seq}")
+        elif isinstance(event, ToolCallCompleted):
+            status = "error" if event.is_error else "completed without error"
+            details.append(f"{status} at event {row.seq}")
+        elif isinstance(event, (ToolCallCancelled, ToolCallAborted)):
+            status = "cancelled" if isinstance(event, ToolCallCancelled) else "aborted"
+            details.append(f"{status} at event {row.seq}")
+    if not terminals:
+        details.append("terminal status unrecorded")
+    return ", ".join(details) + "."
+
+
+def failure_tool_choices(envelopes, finish_seq):
+    """Describe the failed primary's decisions without inferring a recommendation or intent."""
+    from pydantic import ValidationError
+
+    finish = next((row for row in finished_replies(envelopes) if row.seq == finish_seq), None)
+    if finish is None:
+        return []
+    run = finish.event.result
+    started = False
+    prepared = None
+    facts = defaultdict(list)
+    responses = []
+    for row in envelopes:
+        if row.seq >= finish_seq:
+            break
+        event = row.event
+        if isinstance(event, (ToolCallProposed, ModelCallProposed, HookDecided, PermissionResolved, DispatchResolved,
+                              ToolCallCompleted, ToolCallCancelled, ToolCallAborted)):
+            facts[event.call_id].append(row)
+        if isinstance(event, AgentRunStarted) and event.run_id == run.run_id and event.task_id == run.task_id:
+            started = True
+            prepared = None
+            responses.clear()
+        if not started:
+            continue
+        if isinstance(event, ContextPrepared) and event.task_id == run.task_id:
+            prepared = event
+        if (not isinstance(event, ModelCallCompleted) or event.purpose != "conversation"
+                or event.execution_kind == "agent" or event.agent_run_id != run.run_id or event.task_id != run.task_id):
+            continue
+        try:
+            message = Message.model_validate(event.message)
+        except ValidationError:
+            proposals = None
+        else:
+            proposals = message.tool_calls() if message.role == Role.ASSISTANT else None
+        requested = "unavailable" if proposals is None else (", ".join(block.tool for block in proposals) or "none")
+        if event.offered_tools is not None:
+            inventory = "Harness offered " + (", ".join(event.offered_tools) or "no tools")
+        elif prepared is not None:
+            inventory = "context prepared " + (", ".join(prepared.tools) or "no tools") + " (final offer unrecorded)"
+        else:
+            inventory = "tool inventory unrecorded"
+        summary = f"Model response at event {row.seq} — {inventory}. Model requested {requested}."
+        responses.append((row.seq, proposals or (), summary))
+    lines = []
+    next_response_seqs = [response[0] for response in responses[1:]] + [finish_seq]
+    for (response_seq, proposals, summary), before_seq in zip(responses, next_response_seqs):
+        lines.append(summary)
+        counts = Counter(block.call_id for block in proposals)
+        for block in proposals:
+            if counts[block.call_id] != 1:
+                continue
+            receipt = _dispatch_receipt(block, facts[block.call_id], run, response_seq, before_seq)
+            if receipt:
+                lines.append(receipt)
+    return lines
 
 
 def _reply_corrections(envelopes, blobs):

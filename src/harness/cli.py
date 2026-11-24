@@ -538,8 +538,7 @@ def _subcommand(argv: list[str]) -> None:
         "--base-dir", type=Path, default=Path.home() / ".local" / "share" / "harness"
     )
     if command == "improvements":
-        from harness.blobs import BlobStore
-        from harness.improvement_journal import inspect_improvement, read_improvements, render_improvements
+        from harness.improvement_journal import inspect_session_improvement, read_improvements, render_improvements
         parser.add_argument("session_id")
         modes = parser.add_mutually_exclusive_group()
         modes.add_argument("--show", metavar="RECORD_ID")
@@ -572,17 +571,16 @@ def _subcommand(argv: list[str]) -> None:
             return
         if args.turn is not None:
             parser.error("--turn requires --feedback or --failure")
-        state = read_improvements(args.base_dir, SessionId(args.session_id))
         if args.show:
             root = args.base_dir / "sessions" / args.session_id / "blobs"
             if not root.is_dir():
                 parser.error("session blob directory is missing")
             try:
-                print(inspect_improvement(state, BlobStore(root), args.show))
+                print(inspect_session_improvement(args.base_dir, SessionId(args.session_id), args.show))
             except ValueError as exc:
                 parser.error(str(exc))
         else:
-            print(render_improvements(state))
+            print(render_improvements(read_improvements(args.base_dir, SessionId(args.session_id))))
     elif command == "stats":
         parser.add_argument("--tag", default=None)
         args = parser.parse_args(rest)

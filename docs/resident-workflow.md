@@ -5,6 +5,8 @@ model call. The model does not have to remember to request those sources. Each
 new root attempt retrieves them again, under normal tool permissions, limits and
 cancellation. Memory and agent-swarm remain plugins; the core owns this workflow.
 
+Successful background reads appear in `/status`. Failures and tools requested during the conversation appear in the transcript. In a linked worktree, the default workspace is the directory where Harness was launched. An explicit `--workspace` sets the root for native tools. Saoirse can list the immediate entries there using `glob` with the pattern `./*`, or check a live machine fact using the shell under its configured permissions.
+
 The [M3 local assistant](local-assistant.md) supplies a runnable offline profile
 and the completed CUDA workflow gate. The 4B pilot below remains historical
 failure evidence.

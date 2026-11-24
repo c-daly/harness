@@ -519,27 +519,30 @@ def _safe_mtime(p: Path) -> float:
         return 0.0
 
 
+def _workspace_entries(directory: Path):
+    """Files and directories visible to native search. Never follow child symlinks."""
+    for entry in directory.iterdir():
+        if entry.is_symlink():
+            continue
+        if entry.is_dir():
+            if entry.name not in _IGNORE_DIRS:
+                yield entry, True
+        elif entry.is_file():
+            yield entry, False
+
+
 def _walk_workspace(base: Path):
-    """Yield files under base, skipping the shared ignore set. The ONE walk glob and
-    grep share so their world-views never diverge (R-C6)."""
+    """Yield files recursively for glob and grep."""
     stack = [base]
     while stack:
-        d = stack.pop()
         try:
-            entries = list(d.iterdir())
+            for entry, is_dir in _workspace_entries(stack.pop()):
+                if is_dir:
+                    stack.append(entry)
+                else:
+                    yield entry
         except OSError:
             continue
-        for entry in entries:
-            # the walk never follows symlinks — a link pointing outside the root would
-            # leak content past the L2 confinement (file links included: grep reads what
-            # the walk yields).
-            if entry.is_symlink():
-                continue
-            if entry.is_dir():
-                if entry.name not in _IGNORE_DIRS:
-                    stack.append(entry)
-            elif entry.is_file():
-                yield entry
 
 
 class GlobTool:
@@ -550,32 +553,52 @@ class GlobTool:
         self.spec = ToolSpec(
             name=ToolName("glob"),
             description=(
-                "Find files by glob pattern, newest first. Patterns: *, ?, [..] match "
-                "within a path component; a bare name pattern like *.py matches files "
-                "by name at any depth; **/ matches one or more leading directories (not "
-                "zero). Searches the workspace root (or path). Skips .git, node_modules, "
-                "__pycache__, .venv. Returns absolute paths."
+                "List the immediate files and directories with pattern './*'. Use './*.py' "
+                "to filter that listing. Omit path to list the current workspace. A bare "
+                "pattern such as '*' or '*.py' instead searches files at any depth, newest "
+                "first. **/ matches one or more leading directories. Skips symlinks and "
+                "the .git, node_modules, __pycache__ and .venv directories. Returns absolute paths."
             ),
             parameters={
                 "type": "object",
                 "properties": {
-                    "pattern": {"type": "string"},
-                    "path": {"type": "string"},
+                    "pattern": {"type": "string", "description":
+                        "Use './*' and omit path to list the current directory's immediate files and directories."},
+                    "path": {"type": "string", "description":
+                        f"Directory to inspect. Relative paths start at the workspace root {str(self._access.root)!r}."},
                 },
                 "required": ["pattern"],
             },
         )
 
+    @property
+    def workspace_root(self) -> Path:
+        return self._access.root
+
     async def __call__(self, args: dict[str, Any]) -> str:
         pattern = str(args.get("pattern", ""))
         if not pattern:
             raise ToolError("pattern is required; pass a glob pattern like '*.py'.")
-        base = _resolve(self._access, args["path"]) if args.get("path") else self._root.resolve()
+        base = _resolve(self._access, args["path"]) if args.get("path") else self.workspace_root
         return await asyncio.to_thread(self._glob, base, pattern)
 
     def _glob(self, base: Path, pattern: str) -> str:
         if not base.exists():
             raise ToolError(f"search path does not exist: {base}")
+        if pattern.startswith("./") and "/" not in pattern[2:]:
+            try:
+                matches = sorted(
+                    str(path) + ("/" if is_dir else "")
+                    for path, is_dir in _workspace_entries(base)
+                    if _fnmatch.fnmatch(path.name, pattern[2:])
+                )
+            except OSError as exc:
+                raise ToolError(f"could not list {base}: {exc.strerror or exc}") from exc
+            if not matches:
+                return f"No immediate entries matched {pattern!r} in {base}."
+            shown = matches[:_GLOB_CAP]
+            header = f"Immediate entries in {base} (showing {len(shown)} of {len(matches)} matches, alphabetical):"
+            return "\n".join([header, *shown])
         matched = [
             p
             for p in _walk_workspace(base)
@@ -741,13 +764,14 @@ def _truncate_output(text: str) -> str:
 
 class BashTool:
     def __init__(self, *, workspace_root: Path) -> None:
-        self._root = workspace_root
+        self._root = workspace_root.resolve()
         self.spec = ToolSpec(
             name=ToolName("bash"),
             description=(
-                "Run a shell command via bash -c at the workspace root. The working directory "
-                "resets each call (stateless) \u2014 use absolute paths or cd dir && your-command "
-                "compounds. stderr is merged into stdout. Default timeout 120s, max 600s."
+                "Run a local shell command to check live facts such as the system clock (date), "
+                "working directory (pwd), or OS (uname). Each call starts at the workspace root "
+                f"{str(self._root)!r}. Relative paths start there. stderr is merged "
+                "into stdout. Default timeout 120s, max 600s."
             ),
             parameters={
                 "type": "object",
@@ -786,7 +810,7 @@ class BashTool:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
                 stdin=asyncio.subprocess.DEVNULL,
-                cwd=str(self._root.resolve()),
+                cwd=str(self._root),
                 env=_scrubbed_env(),
                 start_new_session=True,
             )

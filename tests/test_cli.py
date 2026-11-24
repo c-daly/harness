@@ -28,6 +28,41 @@ async def test_build_kernel_wires_dispatch_agent_tool(tmp_path):
     assert "dispatch_agent" in [s.name for s in kernel.registry.specs()]
 
 
+async def test_workspace_discovery_supplies_bound_root_and_recovers_from_wrong_checkout(tmp_path):
+    from harness.context import ContextPolicy
+    from harness.provider import tool_call_turn
+
+    checkout = tmp_path / "linked checkout"
+    checkout.mkdir()
+    current_file = checkout / "current.txt"
+    current_file.touch()
+    other = tmp_path / "main"
+    other.mkdir()
+    (other / "unrelated.txt").touch()
+
+    class WorkspaceProvider(FakeProvider):
+        def infer(self, request):
+            (glob,) = request.tools
+            assert glob.name == "glob"
+            assert str(checkout) in glob.parameters["properties"]["path"]["description"]
+            return super().infer(request)
+
+    provider = WorkspaceProvider([
+        tool_call_turn("", "glob", {"pattern": "*", "path": str(other)}, call_id="wrong-root"),
+        tool_call_turn("", "glob", {"pattern": "./*"}, call_id="bound-root"),
+        text_turn("current.txt"),
+    ])
+    kernel = build_kernel(provider=provider, model=ModelId("fake"), base_dir=tmp_path / "state",
+                          workspace_root=checkout, native_tools=True,
+                          context_policy=ContextPolicy(tools=("glob",)))
+    assert await run_once(kernel, "Which files are here?") == "current.txt"
+    wrong_root = provider.calls[1][-1].blocks[0]
+    assert wrong_root.is_error and "outside" in wrong_root.text
+    assert str(checkout) in wrong_root.text and "relative" in wrong_root.text
+    bound_root = provider.calls[2][-1].blocks[0]
+    assert not bound_root.is_error and bound_root.text.splitlines()[1:] == [str(current_file)]
+
+
 @pytest.mark.parametrize(("proposed", "rewritten"), [
     ("consult_panel", None), ("dispatch_agent", "read_file"), ("read_file", "escalate"),
 ])

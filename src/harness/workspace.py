@@ -69,7 +69,11 @@ class WorkspaceAccess:
         if any(resolved == root or resolved.is_relative_to(root) for root in roots):
             return resolved
         scope = "writable workspace roots" if write else "workspace root or configured access roots"
-        raise WorkspaceError(f"path resolves outside the {scope}: {resolved}. Pass an allowed path.")
+        raise WorkspaceError(
+            f"path resolves outside the {scope}: {str(resolved)!r}. "
+            f"The session workspace root is {str(self.root)!r}. For a workspace item, "
+            "use its path relative to that root, or '.' for the root itself."
+        )
 
 
 def resolve_in_workspace(root: Path, raw: object) -> Path:

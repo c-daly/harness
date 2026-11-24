@@ -331,6 +331,9 @@ class ModelCallCompleted(_Event):
     call_id: CallId
     model: ModelId
     message: dict[str, Any]  # Message.model_dump(); assistant turn incl. tool-call blocks
+    # Tools selectable in the final native conversation request, after routing and filtering.
+    # Older journals lack this receipt. An empty tuple is a known empty tool list.
+    offered_tools: tuple[str, ...] | None = None
     # Retain raw evidence while deferring user-visible prose to the native run finish.
     response_deferred: bool = False
     usage: dict[str, int | None]  # absent/None is unknown; zero must be measured

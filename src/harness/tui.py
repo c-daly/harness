@@ -1658,7 +1658,10 @@ class HarnessApp(App[None]):
                     self._context_calls.add(event.call_id)
                 else:
                     self._context_calls.discard(event.call_id)
-                    self.say("", f"Context {source}: {status}" + (f"; {event.reason}" if event.reason else ""))
+                    # Configured reads report progress in the live phase. Their
+                    # successful receipts remain available through /status.
+                    if status != "ready" or event.call_id is None:
+                        self.say("", f"Context {source}: {status}" + (f"; {event.reason}" if event.reason else ""))
             case ModelCorrectionRequested(attempt=attempt):
                 self.say("", f"Model proposed too many tools; requesting one next call (correction {attempt}).")
             case ContextPrepared(omitted_turns=count) if count:
@@ -2239,14 +2242,14 @@ class HarnessApp(App[None]):
             except Exception as exc:
                 self.say("! ", f"Handoff inspection refused: {exc}")
         elif command.name == "improvements":
-            from harness.improvement_journal import inspect_improvement, read_improvements, render_improvements
+            from harness.improvement_journal import inspect_session_improvement, read_improvements, render_improvements
             if command.arg.split()[:1] == ["show"]:
                 words = command.arg.split()
                 try:
                     if len(words) != 2:
                         raise ValueError("use /improvements show RECORD_ID")
-                    state = read_improvements(self.kernel.session.base, self.kernel.session.id)
-                    for line in inspect_improvement(state, self.kernel.session.blobs, words[1]).splitlines():
+                    report = inspect_session_improvement(self.kernel.session.base, self.kernel.session.id, words[1])
+                    for line in report.splitlines():
                         self.say("", line)
                 except Exception as exc:
                     self.say("! ", f"Improvement inspection failed: {exc}")
